@@ -109,10 +109,15 @@ export function buildPositions({ txns = [], eriTxns = [], secMeta = {} } = {}) {
     const { poolQty, poolCost } = matchWithPool(rows);
     if (poolQty <= EPS) continue; // closed position — not a current holding
     const info = classifyInstrument(ticker, secMeta);
+    // Native trading currency: taken from the most recent BUY/SELL row (ERI
+    // rows carry no currency). Falls back to GBP.
+    let currency = "GBP", curDate = "";
+    for (const r of rows) if (r.side !== "ERI" && r.nativeCurrency && r.date >= curDate) { currency = r.nativeCurrency; curDate = r.date; }
     positions.push({
       wrapper, ticker,
       isin: info.isin, name: info.name, domicile: info.domicile,
       kind: info.kind, eri: info.eri, cgtExempt: info.cgtExempt, incomeKind: info.incomeKind,
+      currency,
       qty: poolQty,
       bookCost: poolCost,
       avgCost: poolQty > 0 ? poolCost / poolQty : 0,
@@ -236,6 +241,7 @@ const _dimKey = {
   assetClass: (p) => p.kind || "unknown",
   geography: (p) => p.domicile || "unknown",
   wrapper: (p) => normWrapper(p.wrapper),
+  currency: (p) => p.currency || "unknown",
 };
 export function allocation(valued, dimension = "assetClass") {
   const keyOf = _dimKey[dimension] || _dimKey.assetClass;
@@ -271,6 +277,7 @@ export function buildWealthModel({
       assetClass: allocation(positions, "assetClass"),
       geography: allocation(positions, "geography"),
       wrapper: allocation(positions, "wrapper"),
+      currency: allocation(positions, "currency"),
     },
   };
 }

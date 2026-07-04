@@ -3,11 +3,20 @@ import Papa from "papaparse";
 import {
   Plus, Trash2, Download, Upload, Wand2, RefreshCw, Moon, Sun,
   TableProperties, Receipt, FlaskConical, FileUp, AlertTriangle, Check,
-  Wallet, TrendingUp, TrendingDown, FileText, Printer, AlertCircle, PoundSterling,
+  Wallet, TrendingUp, TrendingDown, FileText, Printer, AlertCircle, PoundSterling, PieChart, Percent, Landmark,
 } from "lucide-react";
 // The CGT matching engine now lives in a standalone, node-tested module so the
 // CGT view and the wealth core share one source of truth (see core/cgt-engine.mjs).
 import { matchPortfolio, ukTaxYear } from "./core/cgt-engine.mjs";
+// Wealth core (build step 1): wrapper-aware unified holdings model. Pure and
+// node-tested (portfolio.test.mjs); the Wealth tab is a thin view over it.
+import { buildWealthModel } from "./core/portfolio.mjs";
+// Returns engine (build step 3): XIRR, per-holding TWR, snapshot-based
+// portfolio TWR, income yields. Node-tested (returns.test.mjs).
+import { computeReturns } from "./core/returns.mjs";
+// Gilt engine (build step 4): coupon schedule, accrued interest, clean/dirty,
+// GRY, Accrued Income Scheme. DMO/HMRC-verified conventions (gilts.test.mjs).
+import { giltAnalytics } from "./core/gilts.mjs";
 // xlsx (SheetJS) is ~120kb gzipped and only needed for the iShares ERI
 // importer, so it's loaded on demand (see readWorkbookFile) rather than
 // bundled into the initial page load.
@@ -300,9 +309,9 @@ const SECURITY_SEED = {
   HSTC: { isin: "IE00BMWXKN31", name: "HSBC Hang Seng TECH UCITS ETF", domicile: "IE", eri: true },
   IITU: { isin: "IE00B3WJKG14", name: "iShares S&P 500 Information Technology Sector UCITS ETF (Acc)", domicile: "IE", eri: true },
   SPXL: { isin: "IE000XZSV718", name: "SPDR S&P 500 UCITS ETF (Acc)", domicile: "IE", eri: true },
-  SMT: { isin: "GB00BLDYK618", name: "Scottish Mortgage Investment Trust plc", domicile: "GB", eri: false },
-  ATT: { isin: "GB00BNG2M159", name: "Allianz Technology Trust plc", domicile: "GB", eri: false },
-  BNKR: { isin: "GB00BN4NDR39", name: "Bankers Investment Trust plc", domicile: "GB", eri: false },
+  SMT: { isin: "GB00BLDYK618", name: "Scottish Mortgage Investment Trust plc", domicile: "GB", eri: false, kind: "investment_trust" },
+  ATT: { isin: "GB00BNG2M159", name: "Allianz Technology Trust plc", domicile: "GB", eri: false, kind: "investment_trust" },
+  BNKR: { isin: "GB00BN4NDR39", name: "Bankers Investment Trust plc", domicile: "GB", eri: false, kind: "investment_trust" },
   AIAG: { isin: "IE00BK5BCD43", name: "iShares AI & Automation Growth UCITS ETF", domicile: "IE", eri: true },
   CYSE: { isin: "IE00BLPK3577", name: "iShares Cybersecurity UCITS ETF", domicile: "IE", eri: true },
   DFEU: { isin: "IE000IAXNM41", name: "Defense Europe UCITS ETF", domicile: "IE", eri: true },
@@ -315,7 +324,15 @@ const SECURITY_SEED = {
   CNX1: { isin: "IE00B53SZB19", name: "iShares NASDAQ 100 UCITS ETF (Acc)", domicile: "IE", eri: true },
   DGIT: { isin: "IE00BYZK4883", name: "iShares Digitalisation UCITS ETF (Acc)", domicile: "IE", eri: true },
   USDV: { isin: "IE00B6YX5D40", name: "SPDR S&P US Dividend Aristocrats UCITS ETF (Dist)", domicile: "IE", eri: true },
-  SAIC: { isin: "GB0007873697", name: "Scottish American Investment Company plc", domicile: "GB", eri: false },
+  SAIC: { isin: "GB0007873697", name: "Scottish American Investment Company plc", domicile: "GB", eri: false, kind: "investment_trust" },
+  // Individual gilts (kind: "gilt" -> CGT-exempt via TCGA 1992 s115; coupons
+  // taxable as interest in taxable wrappers). coupon = annual %, semi-annual
+  // payments on the cycle anchored at maturity. Identifiers verified 2026-07
+  // against multiple sources (LSE/TradingView/broker listings). Register any
+  // other gilt from the Gilts tab.
+  TN28: { isin: "GB00BMBL1G81", name: "0⅛% Treasury Gilt 2028", domicile: "GB", eri: false, kind: "gilt", coupon: 0.125, maturity: "2028-01-31" },
+  TG31: { isin: "GB00BMGR2809", name: "0¼% Treasury Gilt 2031", domicile: "GB", eri: false, kind: "gilt", coupon: 0.25, maturity: "2031-07-31" },
+  T26A: { isin: "GB00BNNGP668", name: "0⅜% Treasury Gilt 2026", domicile: "GB", eri: false, kind: "gilt", coupon: 0.375, maturity: "2026-10-22" },
 };
 
 /* ---- iShares/BlackRock "UK Reportable Income" workbook parser (one per fund
@@ -522,9 +539,11 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 export default function App() {
   const [dark, setDark] = useState(() => store.get("cgt.dark", true));
   const [txns, setTxns] = useState(() => store.get("cgt.txns", SAMPLE));
-  const [tab, setTab] = useState("cgt");
+  const [tab, setTab] = useState(() => store.get("cgt.tab", "wealth"));
   const [income, setIncome] = useState(() => store.get("cgt.income", 200000));
   const [carried, setCarried] = useState(() => store.get("cgt.carried", 0));
+  const [cash, setCash] = useState(() => store.get("cgt.cash", {})); // { wrapper: GBP balance }
+  const [valuations, setValuations] = useState(() => store.get("cgt.valuations", [])); // [{date, value, byWrapper}]
   const [incomeEntries, setIncomeEntries] = useState(() => store.get("cgt.incomeEntries", [])); // dividends/interest ledger
   const [eriEntries, setEriEntries] = useState(() => store.get("cgt.eriEntries", []));           // excess reportable income
   const [prices, setPrices] = useState(() => store.get("cgt.prices", {}));
@@ -546,6 +565,9 @@ export default function App() {
   React.useEffect(() => store.set("cgt.incomeEntries", incomeEntries), [incomeEntries]);
   React.useEffect(() => store.set("cgt.eriEntries", eriEntries), [eriEntries]);
   React.useEffect(() => store.set("cgt.dark", dark), [dark]);
+  React.useEffect(() => store.set("cgt.cash", cash), [cash]);
+  React.useEffect(() => store.set("cgt.tab", tab), [tab]);
+  React.useEffect(() => store.set("cgt.valuations", valuations), [valuations]);
 
   // Only unsheltered (GIA) holdings are within scope for CGT and income tax;
   // ISA / SIPP / LISA are tax-free and excluded from every tax computation.
@@ -564,6 +586,42 @@ export default function App() {
     try { setError(null); return matchPortfolio([...giaTxns, ...eriTxns]); }
     catch (e) { setError(e.message); return { disposals: [], pools: {} }; }
   }, [giaTxns, eriTxns]);
+
+  // The wealth model reads ALL wrappers — the whole point of the wealth core.
+  // (eriTxns stay GIA-scoped: ERI only arises on unsheltered holdings.)
+  const wealthModel = useMemo(() => {
+    try { return buildWealthModel({ txns, eriTxns, incomeEntries, secMeta, prices, cash }); }
+    catch { return null; } // a malformed ledger shows its error via `matched` above
+  }, [txns, eriTxns, incomeEntries, secMeta, prices, cash]);
+
+  // Record a securities-only valuation snapshot (one per day, last write wins)
+  // whenever every open position is priced. This series is what makes an
+  // EXACT portfolio-level TWR possible over time — no snapshots, no TWR,
+  // rather than a stale-price approximation.
+  React.useEffect(() => {
+    if (!wealthModel || !wealthModel.positions.length || wealthModel.total.unpriced > 0) return;
+    const value = +wealthModel.total.marketValue.toFixed(2);
+    const date = todayISO();
+    setValuations((v) => {
+      const last = v.length && v[v.length - 1].date === date ? v[v.length - 1] : null;
+      if (last && last.value === value) return v; // no change — bail to avoid re-render churn
+      const rest = v.filter((s) => s.date !== date);
+      const byWrapper = Object.fromEntries(Object.entries(wealthModel.byWrapper).map(([w, a]) => [w, +a.marketValue.toFixed(2)]));
+      return [...rest, { date, value, byWrapper }].sort((a, b) => (a.date < b.date ? -1 : 1));
+    });
+  }, [wealthModel]);
+
+  // Returns & income analytics (build step 3) — all wrappers, pre-tax.
+  const returns = useMemo(() => {
+    try { return computeReturns({ txns, incomeEntries, eriTxns, prices, valuations }); }
+    catch { return null; }
+  }, [txns, incomeEntries, eriTxns, prices, valuations]);
+
+  // Gilt ladder analytics (build step 4) — driven by secMeta kind: "gilt".
+  const giltData = useMemo(() => {
+    try { return giltAnalytics({ txns, secMeta, prices }); }
+    catch { return null; }
+  }, [txns, secMeta, prices]);
 
   const taxYears = useMemo(() => {
     const s = new Set(matched.disposals.map((d) => d.taxYear));
@@ -596,8 +654,8 @@ export default function App() {
 
   const exportJSON = async () => {
     const backup = {
-      __cgtBackup: true, version: 2, exportedAt: new Date().toISOString(),
-      txns, incomeEntries, eriEntries, income, carried,
+      __cgtBackup: true, version: 4, exportedAt: new Date().toISOString(),
+      txns, incomeEntries, eriEntries, income, carried, cash, valuations,
       prices, priceMeta, avKey, avMeta, secMeta,
     };
     const text = JSON.stringify(backup, null, 2);
@@ -632,6 +690,8 @@ export default function App() {
           if (Array.isArray(d.eriEntries)) setEriEntries(d.eriEntries.map((x) => ({ ...x, id: x.id || uid() })));
           if (typeof d.income === "number") setIncome(d.income);
           if (typeof d.carried === "number") setCarried(d.carried);
+          if (d.cash && typeof d.cash === "object" && !Array.isArray(d.cash)) setCash(d.cash);
+          if (Array.isArray(d.valuations)) setValuations(d.valuations);
           if (d.prices && typeof d.prices === "object") setPrices(d.prices);
           if (d.priceMeta && typeof d.priceMeta === "object") setPriceMeta(d.priceMeta);
           if (typeof d.avKey === "string") setAvKey(d.avKey);
@@ -677,9 +737,9 @@ export default function App() {
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <div>
               <h1 className="text-xl font-semibold tracking-tight flex items-center gap-2">
-                <Receipt size={20} className="text-[var(--accent)]" /> UK Capital Gains Ledger
+                <Receipt size={20} className="text-[var(--accent)]" /> Wealth &amp; UK Capital Gains
               </h1>
-              <p className="text-sm text-[var(--muted)] mt-0.5">Same-day · 30-day · Section 104 matching, with per-disposal audit trail. All figures GBP.</p>
+              <p className="text-sm text-[var(--muted)] mt-0.5">Total wealth across GIA · ISA · SIPP · LISA, with HMRC-precise CGT (same-day · 30-day · S104). All figures GBP.</p>
             </div>
             <div className="flex items-center gap-2">
               {status && <span className="text-xs text-[var(--muted)] mr-1 max-w-[220px] text-right leading-tight">{status}</span>}
@@ -692,7 +752,7 @@ export default function App() {
 
           {/* tabs */}
           <div className="flex flex-wrap gap-1 mt-5 border-b border-[var(--border)]">
-            {[["cgt", "CGT summary", TableProperties], ["holdings", "Holdings", Wallet], ["income", "Income", PoundSterling], ["planning", "Planning", TrendingUp], ["report", "Report", FileText], ["ledger", "Transactions", Receipt], ["whatif", "What-if sale", FlaskConical], ["import", "Import CSV", FileUp]].map(([k, label, Icon]) => (
+            {[["wealth", "Wealth", PieChart], ["returns", "Returns", Percent], ["gilts", "Gilts", Landmark], ["cgt", "CGT summary", TableProperties], ["holdings", "Holdings", Wallet], ["income", "Income", PoundSterling], ["planning", "Planning", TrendingUp], ["report", "Report", FileText], ["ledger", "Transactions", Receipt], ["whatif", "What-if sale", FlaskConical], ["import", "Import CSV", FileUp]].map(([k, label, Icon]) => (
               <button key={k} onClick={() => setTab(k)}
                 className={"px-3 py-2 text-sm font-medium flex items-center gap-1.5 border-b-2 -mb-px transition " +
                   (tab === k ? "border-[var(--accent)] text-[var(--fg)]" : "border-transparent text-[var(--muted)] hover:text-[var(--fg)]")}>
@@ -709,6 +769,9 @@ export default function App() {
           )}
 
           <div className="mt-5">
+            {tab === "wealth" && <WealthTab {...{ model: wealthModel, cash, setCash, prices, setPrices, avKey, setAvKey, avMeta, setAvMeta, priceMeta, setPriceMeta, txns, secMeta, setSecMeta }} />}
+            {tab === "returns" && <ReturnsTab {...{ returns, valuations }} />}
+            {tab === "gilts" && <GiltsTab {...{ data: giltData, secMeta, setSecMeta, prices, setPrices }} />}
             {tab === "cgt" && <CgtTab {...{ taxYears, activeYear, setYear, yearDisposals, liab, income, setIncome, carried, setCarried, carryForward: allYears.carriedForward }} />}
             {tab === "income" && <IncomeTab {...{ incomeEntries, setIncomeEntries, eriEntries, setEriEntries, eriTxns, incomeByYear, income, setIncome, txns: giaTxns, secMeta, setSecMeta }} />}
             {tab === "holdings" && <HoldingsTab {...{ pools: matched.pools, prices, setPrices, avKey, setAvKey, avMeta, setAvMeta, priceMeta, setPriceMeta, txns: giaTxns, secMeta, setSecMeta }} />}
@@ -1278,6 +1341,428 @@ function LivePricesPanel({ tickers, avKey, setAvKey, avMeta, setAvMeta, prices, 
           </p>
         </div>
       )}
+    </div>
+  );
+}
+
+/* --------------------------- Wealth tab ----------------------------- */
+// The "see everything" home view (build step 2): total wealth, per-wrapper and
+// consolidated holdings, allocation. Pure view — every figure comes from the
+// node-tested wealth core (core/portfolio.mjs), not from view-side arithmetic.
+const KIND_LABEL = { equity: "Equities", fund: "Funds (ETF)", investment_trust: "Investment trusts", gilt: "Gilts", bond_fund: "Bond funds", cash: "Cash", unknown: "Unclassified" };
+const ALLOC_COLORS = ["var(--accent)", "var(--m-same)", "var(--m-bb)", "var(--gain)", "var(--m-pool)", "var(--loss)"];
+
+function AllocBar({ title, buckets, labelOf = (k) => k }) {
+  if (!buckets.length) return null;
+  return (
+    <div>
+      <div className="text-xs font-medium text-[var(--muted)] mb-1.5">{title}</div>
+      <div className="flex h-2.5 rounded-full overflow-hidden bg-[var(--panel2)]">
+        {buckets.map((b, i) => (
+          <div key={b.key} title={`${labelOf(b.key)}: ${gbp(b.marketValue)} (${num(b.pct * 100, 1)}%)`}
+            style={{ width: `${Math.max(b.pct * 100, 0.5)}%`, background: ALLOC_COLORS[i % ALLOC_COLORS.length] }} />
+        ))}
+      </div>
+      <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-1.5 text-xs">
+        {buckets.map((b, i) => (
+          <span key={b.key} className="flex items-center gap-1 text-[var(--muted)]">
+            <span className="w-2 h-2 rounded-full inline-block" style={{ background: ALLOC_COLORS[i % ALLOC_COLORS.length] }} />
+            {labelOf(b.key)} <span className="num">{num(b.pct * 100, 1)}%</span>
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function WealthTab({ model, cash, setCash, prices, setPrices, avKey, setAvKey, avMeta, setAvMeta, priceMeta, setPriceMeta, txns }) {
+  if (!model) return <Empty msg="Couldn't build the portfolio model — check the Transactions tab for ledger errors." />;
+  const { positions, byWrapper, total, income } = model;
+  if (!positions.length && !Object.keys(cash).length)
+    return <Empty msg="No holdings yet. Add transactions (any wrapper — GIA, ISA, SIPP, LISA) on the Transactions or Import tab, and cash balances below will appear here." />;
+
+  const tickers = [...new Set(positions.map((p) => p.ticker))].sort();
+  const wrapperOrder = ["GIA", "ISA", "SIPP", "LISA", ...Object.keys(byWrapper).filter((w) => !["GIA", "ISA", "SIPP", "LISA"].includes(w))].filter((w) => byWrapper[w]);
+  const setWrapperCash = (w, v) => setCash((c) => { const n = { ...c }; if (v === "" || isNaN(+v)) delete n[w]; else n[w] = +v; return n; });
+
+  return (
+    <div className="space-y-4">
+      {/* headline */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <Stat label="Total wealth" value={gbp(total.total)} sub={`${total.positions} holding${total.positions === 1 ? "" : "s"} + cash across ${wrapperOrder.length} wrapper${wrapperOrder.length === 1 ? "" : "s"}`} big />
+        <Stat label="Invested (priced)" value={total.priced ? gbp(total.marketValue) : "—"} sub={total.unpriced ? `${total.priced}/${total.positions} priced` : "all priced"} />
+        <Stat label="Cash" value={gbp(total.cash)} />
+        <Stat label="Unrealised gain" value={total.priced ? gbp(total.unrealised) : "—"} sub={total.bookCostPriced ? `${total.unrealised >= 0 ? "+" : ""}${num((total.unrealised / total.bookCostPriced) * 100)}% on priced book cost` : undefined} tone={total.unrealised >= 0 ? "gain" : "loss"} />
+      </div>
+
+      {total.unpriced > 0 && (
+        <div className="flex items-start gap-2 text-xs rounded-lg px-3 py-2 border border-[var(--border)] bg-[var(--panel)] text-[var(--muted)]">
+          <AlertCircle size={14} className="mt-0.5 shrink-0 text-[var(--m-bb)]" />
+          <span>{total.unpriced} holding{total.unpriced === 1 ? "" : "s"} without a price ({total.unpricedTickers.join(", ")}) — excluded from market value and allocation until priced. Fetch live prices below or type a price into the table.</span>
+        </div>
+      )}
+
+      <LivePricesPanel {...{ tickers, avKey, setAvKey, avMeta, setAvMeta, prices, setPrices, priceMeta, setPriceMeta, txns }} />
+
+      {/* per-wrapper roll-up with editable cash */}
+      <div className="rounded-xl border border-[var(--border)] overflow-hidden">
+        <table className="w-full text-sm">
+          <thead className="bg-[var(--panel2)] text-[var(--muted)] text-xs uppercase tracking-wide">
+            <tr>{["Wrapper", "Holdings", "Book cost", "Market value", "Unrealised", "Cash", "Total"].map((h, i) => (
+              <th key={i} className={"px-3 py-2 font-medium " + (i === 0 ? "text-left" : "text-right")}>{h}</th>
+            ))}</tr>
+          </thead>
+          <tbody className="divide-y divide-[var(--border)] bg-[var(--panel)]">
+            {wrapperOrder.map((w) => {
+              const a = byWrapper[w];
+              return (
+                <tr key={w} className="hover:bg-[var(--panel2)]">
+                  <td className="px-3 py-2">
+                    <span className="font-medium">{w}</span>
+                    <span className={"ml-2 text-[10px] font-semibold px-1.5 py-0.5 rounded " + (a.taxable ? "bg-[var(--chip)] text-[var(--fg)]" : "bg-[color:color-mix(in_srgb,var(--gain)_18%,transparent)] text-[var(--gain)]")}>{a.taxable ? "taxable" : "sheltered"}</span>
+                  </td>
+                  <td className="px-3 py-2 num text-right">{a.positions}{a.unpriced ? <span className="text-[var(--m-bb)]" title={`${a.unpriced} unpriced`}> *</span> : null}</td>
+                  <td className="px-3 py-2 num text-right text-[var(--muted)]">{gbp(a.bookCost)}</td>
+                  <td className="px-3 py-2 num text-right">{a.priced ? gbp(a.marketValue) : "—"}</td>
+                  <td className={"px-3 py-2 num text-right " + (a.priced ? (a.unrealised >= 0 ? "text-[var(--gain)]" : "text-[var(--loss)]") : "text-[var(--muted)]")}>{a.priced ? gbp(a.unrealised) : "—"}</td>
+                  <td className="px-3 py-2 text-right">
+                    <input type="number" value={cash[w] ?? ""} placeholder="0"
+                      onChange={(e) => setWrapperCash(w, e.target.value)}
+                      className="input num w-28 text-right py-1" />
+                  </td>
+                  <td className="px-3 py-2 num text-right font-medium">{gbp(a.total)}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+          <tfoot className="bg-[var(--panel2)]">
+            <tr className="font-medium">
+              <td className="px-3 py-2">Total</td>
+              <td className="px-3 py-2 num text-right">{total.positions}</td>
+              <td className="px-3 py-2 num text-right text-[var(--muted)]">{gbp(total.bookCost)}</td>
+              <td className="px-3 py-2 num text-right">{total.priced ? gbp(total.marketValue) : "—"}</td>
+              <td className={"px-3 py-2 num text-right " + (total.unrealised >= 0 ? "text-[var(--gain)]" : "text-[var(--loss)]")}>{total.priced ? gbp(total.unrealised) : "—"}</td>
+              <td className="px-3 py-2 num text-right">{gbp(total.cash)}</td>
+              <td className="px-3 py-2 num text-right">{gbp(total.total)}</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+
+      {/* allocation */}
+      <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 space-y-4">
+        <div className="text-sm font-medium flex items-center gap-2"><PieChart size={15} className="text-[var(--accent)]" /> Allocation <span className="text-xs font-normal text-[var(--muted)]">— by priced market value; unpriced holdings excluded</span></div>
+        <AllocBar title="By wrapper" buckets={model.allocation.wrapper} />
+        <AllocBar title="By asset class" buckets={model.allocation.assetClass} labelOf={(k) => KIND_LABEL[k] || k} />
+        <AllocBar title="By native currency" buckets={model.allocation.currency} />
+        <AllocBar title="By fund domicile" buckets={model.allocation.geography} labelOf={(k) => (k === "unknown" ? "Unset" : k)} />
+        <p className="text-xs text-[var(--muted)] leading-relaxed">
+          Currency is each line's native trading currency (a proxy for listing, not look-through exposure — a USD-quoted S&amp;P 500 ETF and a GBP-quoted one hold the same underlying). Domicile comes from the ISIN registry (IE = Irish-domiciled fund, GB = UK). Look-through asset/geography exposure would need fund-holdings data — out of scope for now.
+        </p>
+      </div>
+
+      {/* consolidated holdings */}
+      <div className="rounded-xl border border-[var(--border)] overflow-hidden">
+        <table className="w-full text-sm">
+          <thead className="bg-[var(--panel2)] text-[var(--muted)] text-xs uppercase tracking-wide">
+            <tr>{["Wrapper", "Ticker", "Quantity", "Avg cost", "Book cost", "Price now", "Market value", "Unrealised", "%"].map((h, i) => (
+              <th key={i} className={"px-3 py-2 font-medium " + (i <= 1 ? "text-left" : "text-right")}>{h}</th>
+            ))}</tr>
+          </thead>
+          <tbody className="divide-y divide-[var(--border)] bg-[var(--panel)]">
+            {positions.map((p) => (
+              <tr key={p.wrapper + p.ticker} className="hover:bg-[var(--panel2)]">
+                <td className="px-3 py-2">
+                  <span className={"text-[10px] font-semibold px-1.5 py-0.5 rounded " + (p.wrapper === "GIA" ? "bg-[var(--chip)] text-[var(--fg)]" : "bg-[color:color-mix(in_srgb,var(--gain)_18%,transparent)] text-[var(--gain)]")}>{p.wrapper}</span>
+                </td>
+                <td className="px-3 py-2 font-medium" title={p.name}>
+                  {p.ticker}
+                  {p.cgtExempt && <span title="CGT-exempt instrument (individual gilt, TCGA 1992 s115)" className="ml-1.5 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-[color:color-mix(in_srgb,var(--m-same)_18%,transparent)] text-[var(--m-same)] align-middle">CGT-free</span>}
+                </td>
+                <td className="px-3 py-2 num text-right">{num(p.qty, p.qty % 1 ? 4 : 0)}</td>
+                <td className="px-3 py-2 num text-right text-[var(--muted)]">{gbp(p.avgCost)}</td>
+                <td className="px-3 py-2 num text-right">{gbp(p.bookCost)}</td>
+                <td className="px-3 py-2 text-right">
+                  <input type="number" value={prices[p.ticker] ?? ""} placeholder="—"
+                    onChange={(e) => setPrices((pr) => ({ ...pr, [p.ticker]: e.target.value === "" ? undefined : +e.target.value }))}
+                    className="input num w-24 text-right py-1" />
+                </td>
+                <td className="px-3 py-2 num text-right">{p.priced ? gbp(p.marketValue) : "—"}</td>
+                <td className={"px-3 py-2 num text-right font-medium " + (!p.priced ? "text-[var(--muted)]" : p.unrealised >= 0 ? "text-[var(--gain)]" : "text-[var(--loss)]")}>{p.priced ? gbp(p.unrealised) : "—"}</td>
+                <td className={"px-3 py-2 num text-right " + (!p.priced || p.unrealisedPct == null ? "text-[var(--muted)]" : p.unrealisedPct >= 0 ? "text-[var(--gain)]" : "text-[var(--loss)]")}>{p.priced && p.unrealisedPct != null ? `${p.unrealisedPct >= 0 ? "+" : ""}${num(p.unrealisedPct * 100)}%` : "—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* income strip */}
+      {income.total.total > 0 && (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <Stat label="Income (all wrappers)" value={gbp(income.total.total)} sub="dividends + interest + ERI, gross" />
+          <Stat label="of which dividends" value={gbp(income.total.dividends)} />
+          <Stat label="of which interest" value={gbp(income.total.interest)} />
+          <Stat label="Taxable (GIA only)" value={gbp(income.total.taxableTotal)} sub="what the Income tab computes tax on" />
+        </div>
+      )}
+
+      <p className="text-xs text-[var(--muted)] leading-relaxed">
+        This view rolls up every wrapper; a price entered here is the same price the GIA-only Holdings tab uses (prices are per ticker, GBP). Cash balances are per wrapper, entered manually, and count toward total wealth. Tax stays gated where it belongs: only GIA holdings feed the CGT and Income tabs, and CGT-exempt instruments are flagged. Same ticker in two wrappers = two independent Section 104 pools, as HMRC requires only for the unsheltered one — sheltered pools reuse the same engine purely for book-cost consistency.
+      </p>
+    </div>
+  );
+}
+
+/* --------------------------- Returns tab ---------------------------- */
+// Returns & income analytics (build step 3). Pure view over computeReturns()
+// (core/returns.mjs) — XIRR everywhere, per-holding TWR, snapshot-based
+// portfolio TWR, trailing vs forward income yields. Everything pre-tax.
+const pct = (x, dp = 1) => (x == null ? "—" : `${x >= 0 ? "+" : ""}${num(x * 100, dp)}%`);
+const pctPlain = (x, dp = 2) => (x == null ? "—" : `${num(x * 100, dp)}%`);
+const toneOf = (x) => (x == null ? undefined : x >= 0 ? "gain" : "loss");
+const SHORT_SPAN = 90; // days below which an annualised rate is mostly noise
+
+function RateCell({ r }) {
+  if (!r || r.rate == null) return <span className="text-[var(--muted)]" title={r?.reason || ""}>—</span>;
+  const shortSpan = (r.spanDays ?? 9999) < SHORT_SPAN;
+  return (
+    <span className={"num " + (r.rate >= 0 ? "text-[var(--gain)]" : "text-[var(--loss)]")}
+      title={shortSpan ? `Only ${r.spanDays} days of history — annualised figures this young are noise` : `${r.spanDays} days of history`}>
+      {pct(r.rate)}{shortSpan && <span className="text-[var(--m-bb)]" title="Short history">†</span>}
+    </span>
+  );
+}
+
+function ReturnsTab({ returns, valuations }) {
+  if (!returns) return <Empty msg="Couldn't compute returns — check the Transactions tab for ledger errors." />;
+  const { perHolding, byWrapper, total, portfolioTWR } = returns;
+  if (!perHolding.length) return <Empty msg="No transactions yet. Returns appear once you have holdings (any wrapper)." />;
+
+  const wrapperOrder = ["GIA", "ISA", "SIPP", "LISA", ...Object.keys(byWrapper).filter((w) => !["GIA", "ISA", "SIPP", "LISA"].includes(w))].filter((w) => byWrapper[w]);
+  const openH = perHolding.filter((h) => h.open), closedH = perHolding.filter((h) => !h.open);
+
+  return (
+    <div className="space-y-4">
+      {/* headline */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <Stat label="Money-weighted return (XIRR)" value={total.xirr.rate != null ? pct(total.xirr.rate) : "—"} sub={total.xirr.rate != null ? "annualised, since first transaction" : total.xirr.reason} tone={toneOf(total.xirr.rate)} big />
+        <Stat label="Total profit" value={total.profit != null ? gbp(total.profit) : "—"} sub={total.profit != null && total.moneyIn > 0 ? `${pct(total.simpleReturn)} simple, on ${gbp(total.moneyIn)} in` : undefined} tone={toneOf(total.profit)} />
+        <Stat label="Income yield (trailing 12m)" value={pctPlain(total.actualYield)} sub={total.trailing12m ? `${gbp(total.trailing12m)} received incl. ERI` : "no income in the last year"} />
+        <Stat label="Income yield (forward)" value={pctPlain(total.forwardYield)} sub={total.forwardIncome ? `${gbp(total.forwardIncome)} est. on current units` : undefined} />
+      </div>
+
+      {/* portfolio TWR from snapshots */}
+      <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4">
+        <div className="text-sm font-medium flex items-center gap-2"><Percent size={15} className="text-[var(--accent)]" /> Portfolio time-weighted return
+          <span className="text-xs font-normal text-[var(--muted)]">— exact, from valuation snapshots</span>
+        </div>
+        {portfolioTWR.twr != null ? (
+          <div className="mt-2 flex items-baseline gap-4 flex-wrap">
+            <span className={"text-lg font-semibold num " + (portfolioTWR.twr >= 0 ? "text-[var(--gain)]" : "text-[var(--loss)]")}>{pct(portfolioTWR.twr)}</span>
+            <span className="text-xs text-[var(--muted)] num">{portfolioTWR.from} → {portfolioTWR.to} ({portfolioTWR.spanDays}d, {portfolioTWR.periods.length} period{portfolioTWR.periods.length === 1 ? "" : "s"})
+              {portfolioTWR.annualised != null && portfolioTWR.spanDays >= SHORT_SPAN && <> · {pct(portfolioTWR.annualised)} annualised</>}
+            </span>
+          </div>
+        ) : (
+          <p className="text-xs text-[var(--muted)] mt-2 leading-relaxed">
+            Not available yet — {portfolioTWR.reason}. The app records a snapshot of total market value each day all your holdings are priced (currently {valuations.length} snapshot{valuations.length === 1 ? "" : "s"}); portfolio TWR appears once two or more exist and is exact between them, rather than approximated from stale prices. Per-holding TWR below doesn't need this — it's exact from your trade prices.
+          </p>
+        )}
+      </div>
+
+      {/* per-wrapper */}
+      <div className="rounded-xl border border-[var(--border)] overflow-hidden">
+        <table className="w-full text-sm">
+          <thead className="bg-[var(--panel2)] text-[var(--muted)] text-xs uppercase tracking-wide">
+            <tr>{["Wrapper", "Money in", "Money out + income", "Value now", "Profit", "Simple", "XIRR", "Yield 12m", "Yield fwd"].map((h, i) => (
+              <th key={i} className={"px-3 py-2 font-medium " + (i === 0 ? "text-left" : "text-right")}>{h}</th>
+            ))}</tr>
+          </thead>
+          <tbody className="divide-y divide-[var(--border)] bg-[var(--panel)]">
+            {wrapperOrder.map((w) => {
+              const a = byWrapper[w];
+              return (
+                <tr key={w} className="hover:bg-[var(--panel2)]">
+                  <td className="px-3 py-2 font-medium">{w}{a.unpricedOpen > 0 && <span className="text-[var(--m-bb)]" title={`${a.unpricedOpen} open holding(s) unpriced — profit/XIRR unavailable`}> *</span>}</td>
+                  <td className="px-3 py-2 num text-right">{gbp(a.moneyIn)}</td>
+                  <td className="px-3 py-2 num text-right">{gbp(a.moneyOut + a.income)}</td>
+                  <td className="px-3 py-2 num text-right">{a.unpricedOpen ? "—" : gbp(a.value)}</td>
+                  <td className={"px-3 py-2 num text-right font-medium " + (a.profit == null ? "text-[var(--muted)]" : a.profit >= 0 ? "text-[var(--gain)]" : "text-[var(--loss)]")}>{a.profit != null ? gbp(a.profit) : "—"}</td>
+                  <td className="px-3 py-2 num text-right">{pct(a.simpleReturn)}</td>
+                  <td className="px-3 py-2 text-right"><RateCell r={a.xirr} /></td>
+                  <td className="px-3 py-2 num text-right text-[var(--muted)]">{pctPlain(a.actualYield)}</td>
+                  <td className="px-3 py-2 num text-right text-[var(--muted)]">{pctPlain(a.forwardYield)}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      {/* per-holding */}
+      <div className="rounded-xl border border-[var(--border)] overflow-hidden">
+        <table className="w-full text-sm">
+          <thead className="bg-[var(--panel2)] text-[var(--muted)] text-xs uppercase tracking-wide">
+            <tr>{["", "Ticker", "Since", "Money in", "Out + income", "Value", "Profit", "XIRR", "TWR (episode)", "Yield 12m", "Yield fwd"].map((h, i) => (
+              <th key={i} className={"px-3 py-2 font-medium " + (i <= 2 ? "text-left" : "text-right")}>{h}</th>
+            ))}</tr>
+          </thead>
+          <tbody className="divide-y divide-[var(--border)] bg-[var(--panel)]">
+            {[...openH, ...closedH].map((h) => (
+              <tr key={h.wrapper + h.ticker} className={"hover:bg-[var(--panel2)]" + (h.open ? "" : " opacity-60")}>
+                <td className="px-3 py-2"><span className={"text-[10px] font-semibold px-1.5 py-0.5 rounded " + (h.wrapper === "GIA" ? "bg-[var(--chip)] text-[var(--fg)]" : "bg-[color:color-mix(in_srgb,var(--gain)_18%,transparent)] text-[var(--gain)]")}>{h.wrapper}</span></td>
+                <td className="px-3 py-2 font-medium">{h.ticker}{!h.open && <span className="ml-1.5 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-[var(--chip)] text-[var(--muted)] align-middle">closed</span>}</td>
+                <td className="px-3 py-2 num text-[var(--muted)]">{h.firstDate || "—"}</td>
+                <td className="px-3 py-2 num text-right">{gbp(h.moneyIn)}</td>
+                <td className="px-3 py-2 num text-right">{gbp(h.moneyOut + h.incomeReceived)}</td>
+                <td className="px-3 py-2 num text-right">{h.open ? (h.priced ? gbp(h.marketValue) : "—") : gbp(0)}</td>
+                <td className={"px-3 py-2 num text-right font-medium " + (h.profit == null ? "text-[var(--muted)]" : h.profit >= 0 ? "text-[var(--gain)]" : "text-[var(--loss)]")}>{h.profit != null ? gbp(h.profit) : "—"}</td>
+                <td className="px-3 py-2 text-right"><RateCell r={h.xirr} /></td>
+                <td className="px-3 py-2 text-right">{h.twr.twr == null ? <span className="text-[var(--muted)]" title={h.twr.reason || ""}>—</span> : <span className={"num " + (h.twr.twr >= 0 ? "text-[var(--gain)]" : "text-[var(--loss)]")} title={`Since ${h.twr.episodeStart} (${h.twr.spanDays}d)${h.twr.annualised != null && h.twr.spanDays >= SHORT_SPAN ? ` · ${pct(h.twr.annualised)} annualised` : ""}`}>{pct(h.twr.twr)}</span>}</td>
+                <td className="px-3 py-2 num text-right text-[var(--muted)]">{h.open ? pctPlain(h.income.actualYield) : "—"}</td>
+                <td className="px-3 py-2 num text-right text-[var(--muted)]">{h.open ? pctPlain(h.income.forwardYield) : "—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <p className="text-xs text-[var(--muted)] leading-relaxed">
+        Everything here is pre-tax and in GBP. <span className="font-medium">XIRR</span> is your money-weighted annual return — cashflow-timing included — computed from every trade, cash distribution, and the current value (365-day count; † marks histories under {SHORT_SPAN} days, where annualised rates are noise). <span className="font-medium">TWR (episode)</span> is the cumulative time-weighted return on the current holding episode, exact from your own trade prices, with distributions treated as reinvested — compare it to a benchmark; compare XIRR to your own expectations. ERI counts toward income yields (it's real accumulation) but is never an XIRR cashflow (no cash moves). Cash balances sit outside all return figures. Forward yield applies the last 12 months' per-unit distributions to your current unit count — an estimate, not a promise.
+      </p>
+    </div>
+  );
+}
+
+/* ---------------------------- Gilts tab ----------------------------- */
+// Gilt ladder view (build step 4). Pure view over giltAnalytics()
+// (core/gilts.mjs, DMO/HMRC-verified conventions).
+function GiltsTab({ data, secMeta, setSecMeta, prices, setPrices }) {
+  const [form, setForm] = React.useState({ ticker: "", name: "", coupon: "", maturity: "", isin: "" });
+  const registered = Object.entries(secMeta).filter(([, m]) => m && m.kind === "gilt");
+  const registerGilt = () => {
+    const tk = form.ticker.toUpperCase().trim();
+    if (!tk || !Number.isFinite(+form.coupon) || !/^\d{4}-\d{2}-\d{2}$/.test(form.maturity)) return;
+    setSecMeta((m) => ({
+      ...m,
+      [tk]: { ...m[tk], kind: "gilt", coupon: +form.coupon, maturity: form.maturity, domicile: "GB", eri: false,
+        name: form.name.trim() || tk, isin: form.isin.toUpperCase().trim() || (m[tk] && m[tk].isin) || "" },
+    }));
+    setForm({ ticker: "", name: "", coupon: "", maturity: "", isin: "" });
+  };
+
+  if (!data) return <Empty msg="Couldn't compute gilt analytics — check the Transactions tab for ledger errors." />;
+  const live = data.holdings.filter((h) => h.nominal > 1e-9);
+  const aisYears = Object.keys(data.ais.byYear).sort();
+  const upcoming = data.cashflows.slice(0, 12);
+
+  return (
+    <div className="space-y-4">
+      {live.length === 0 && (
+        <Empty msg={`No gilt holdings yet. Buy an individual gilt in any wrapper using a registered ticker (${registered.map(([t]) => t).join(", ") || "none registered"}) on the Transactions tab, or register another gilt below. Quantity = £ nominal (face value); price = clean price per £1 nominal (e.g. £94.23 per £100 → 0.9423 — the live price feed for LSE gilt lines already lands in this unit).`} />
+      )}
+
+      {live.length > 0 && (
+        <>
+          {/* headline */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <Stat label="Gilt ladder (dirty value)" value={live.every((h) => h.dirtyValue != null) ? gbp(live.reduce((s, h) => s + h.dirtyValue, 0)) : "—"} sub={`${live.length} holding${live.length === 1 ? "" : "s"}; par at maturity ${gbp(live.reduce((s, h) => s + h.nominal, 0))}`} big />
+            <Stat label="of which accrued interest" value={gbp(live.reduce((s, h) => s + h.accruedValue, 0))} sub="actual/actual, to today" />
+            <Stat label="Coupon income next 12m" value={gbp(live.reduce((s, h) => s + h.couponIncomeNext12m, 0))} sub="taxable as interest where unsheltered" />
+            <Stat label="Next cashflow" value={upcoming[0] ? gbp(upcoming[0].amount) : "—"} sub={upcoming[0] ? `${upcoming[0].ticker} ${upcoming[0].type} · ${upcoming[0].date}` : undefined} />
+          </div>
+
+          {/* ladder */}
+          <div className="rounded-xl border border-[var(--border)] overflow-hidden">
+            <table className="w-full text-sm">
+              <thead className="bg-[var(--panel2)] text-[var(--muted)] text-xs uppercase tracking-wide">
+                <tr>{["Gilt", "Wrapper", "Maturity", "Nominal", "Clean /£100", "Accrued /£100", "Dirty value", "Next coupon", "GRY (semi)", "12m coupons"].map((h, i) => (
+                  <th key={i} className={"px-3 py-2 font-medium " + (i <= 2 ? "text-left" : "text-right")}>{h}</th>
+                ))}</tr>
+              </thead>
+              <tbody className="divide-y divide-[var(--border)] bg-[var(--panel)]">
+                {live.map((h) => (
+                  <tr key={h.wrapper + h.ticker} className="hover:bg-[var(--panel2)]">
+                    <td className="px-3 py-2 font-medium" title={`${h.name} · ${h.isin}`}>
+                      {h.ticker}
+                      {h.exDiv && <span className="ml-1.5 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-[color:color-mix(in_srgb,var(--m-bb)_18%,transparent)] text-[var(--m-bb)] align-middle" title="In the ex-dividend window (7 business days before the coupon; bank holidays not modelled) — accrued is negative (rebate); the registered holder at ex-div gets the coupon">ex-div</span>}
+                    </td>
+                    <td className="px-3 py-2"><span className={"text-[10px] font-semibold px-1.5 py-0.5 rounded " + (h.wrapper === "GIA" ? "bg-[var(--chip)] text-[var(--fg)]" : "bg-[color:color-mix(in_srgb,var(--gain)_18%,transparent)] text-[var(--gain)]")}>{h.wrapper}</span></td>
+                    <td className="px-3 py-2 num text-[var(--muted)]">{h.maturity}</td>
+                    <td className="px-3 py-2 num text-right">{gbp(h.nominal)}</td>
+                    <td className="px-3 py-2 text-right">
+                      <input type="number" step="0.0001" value={prices[h.ticker] != null ? +(prices[h.ticker] * 100).toFixed(4) : ""} placeholder="—"
+                        onChange={(e) => setPrices((pr) => ({ ...pr, [h.ticker]: e.target.value === "" ? undefined : +e.target.value / 100 }))}
+                        className="input num w-24 text-right py-1" title="Clean price per £100 nominal (stored per £1 for consistency with the rest of the app)" />
+                    </td>
+                    <td className={"px-3 py-2 num text-right " + (h.accruedPer100 < 0 ? "text-[var(--m-bb)]" : "text-[var(--muted)]")}>{num(h.accruedPer100, 4)}</td>
+                    <td className="px-3 py-2 num text-right">{h.dirtyValue != null ? gbp(h.dirtyValue) : "—"}</td>
+                    <td className="px-3 py-2 num text-right">{h.nextCoupon ? <>{gbp(h.nextCoupon.amount)} <span className="text-[var(--muted)] text-xs">on {h.nextCoupon.date}</span></> : "—"}</td>
+                    <td className="px-3 py-2 num text-right">{h.gry && h.gry.semiAnnual != null ? <span title={`Effective annual ${num(h.gry.effectiveAnnual * 100, 3)}% · dirty ${num(h.gry.dirty, 4)}/£100`}>{num(h.gry.semiAnnual * 100, 2)}%</span> : "—"}</td>
+                    <td className="px-3 py-2 num text-right text-[var(--muted)]">{gbp(h.couponIncomeNext12m)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* coupon calendar */}
+          <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4">
+            <div className="text-sm font-medium flex items-center gap-2 mb-2"><Landmark size={15} className="text-[var(--accent)]" /> Upcoming cashflows <span className="text-xs font-normal text-[var(--muted)]">— next {upcoming.length} of {data.cashflows.length} to final maturity</span></div>
+            <div className="grid sm:grid-cols-2 gap-x-6 gap-y-1">
+              {upcoming.map((f, i) => (
+                <div key={i} className="flex items-baseline justify-between text-sm border-b border-[var(--border)] last:border-0 py-1">
+                  <span className="num text-[var(--muted)]">{f.date}</span>
+                  <span className="font-medium">{f.ticker}<span className={"ml-1.5 text-[10px] px-1 py-0.5 rounded " + (f.type === "redemption" ? "bg-[color:color-mix(in_srgb,var(--accent)_18%,transparent)] text-[var(--accent)]" : "bg-[var(--chip)] text-[var(--muted)]")}>{f.type}</span></span>
+                  <span className="num">{gbp(f.amount)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* AIS */}
+          <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 space-y-2">
+            <div className="text-sm font-medium">Accrued Income Scheme (GIA trades only)</div>
+            {aisYears.length === 0 ? (
+              <p className="text-xs text-[var(--muted)]">No GIA gilt transfers — nothing to adjust.</p>
+            ) : (
+              <table className="w-full text-sm">
+                <thead className="text-[var(--muted)] text-xs uppercase tracking-wide">
+                  <tr><th className="text-left py-1 font-medium">Tax year of next coupon</th><th className="text-right font-medium">Transfers</th><th className="text-right font-medium">Net adjustment to taxable interest</th></tr>
+                </thead>
+                <tbody>
+                  {aisYears.map((y) => (
+                    <tr key={y} className="border-t border-[var(--border)]">
+                      <td className="py-1.5 num">{y}</td>
+                      <td className="py-1.5 num text-right text-[var(--muted)]">{data.ais.byYear[y].items.length}</td>
+                      <td className={"py-1.5 num text-right font-medium " + (data.ais.byYear[y].net >= 0 ? "text-[var(--loss)]" : "text-[var(--gain)]")}>{data.ais.byYear[y].net >= 0 ? "+" : "−"}{gbp(Math.abs(data.ais.byYear[y].net)).slice(1)} {data.ais.byYear[y].net >= 0 ? "profit" : "relief"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+            <p className="text-xs text-[var(--muted)] leading-relaxed">
+              Estimates from trade dates (gilts settle T+1, so a trade near a coupon or the ex-div boundary can shift a day's accrual or flip cum/ex — check contract notes). Adjustments are taxed in the tax year the <em>next coupon</em> falls, pooled across all your AIS securities. {data.ais.smallHoldingsLikelyExcluded ? "Your peak GIA gilt nominal is within the £5,000 small-holdings limit, so the scheme likely doesn't apply to you at all — figures shown for completeness." : "The £5,000 small-holdings exclusion doesn't apply to you (peak GIA nominal " + gbp(data.ais.maxNominalGIA) + "), so these adjustments belong on your return alongside the coupons themselves."} These figures are not yet folded into the Income tab's tax computation — they're the disclosure-ready numbers for boxes on the Ai pages.
+            </p>
+          </div>
+        </>
+      )}
+
+      {/* register */}
+      <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 space-y-2">
+        <div className="text-sm font-medium">Register a gilt</div>
+        <div className="flex flex-wrap gap-2">
+          <input className="input w-24" placeholder="Ticker" value={form.ticker} onChange={(e) => setForm({ ...form, ticker: e.target.value })} />
+          <input className="input flex-1 min-w-40" placeholder="Name (optional)" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+          <input className="input w-28" type="number" step="0.001" placeholder="Coupon %" value={form.coupon} onChange={(e) => setForm({ ...form, coupon: e.target.value })} />
+          <input className="input w-40" type="date" title="Maturity date" value={form.maturity} onChange={(e) => setForm({ ...form, maturity: e.target.value })} />
+          <input className="input w-40" placeholder="ISIN (optional)" value={form.isin} onChange={(e) => setForm({ ...form, isin: e.target.value })} />
+          <button className="btn-accent" onClick={registerGilt}>Add</button>
+        </div>
+        <p className="text-xs text-[var(--muted)] leading-relaxed">
+          Registered: {registered.length ? registered.map(([t, m]) => `${t} (${m.coupon}% ${m.maturity})`).join(" · ") : "none"}. Registering marks the ticker CGT-exempt (TCGA 1992 s115) and interest-paying, and drives the coupon schedule — coupon and maturity must come from the DMO/your broker, not memory. Conventions: semi-annual coupons anchored at maturity, actual/actual accrued, ex-div 7 business days (weekends only — UK bank holidays not modelled). Index-linked gilts are NOT supported: schedules here assume fixed cash coupons and par redemption, so an IL gilt's figures would be wrong — leave those unregistered.
+        </p>
+      </div>
     </div>
   );
 }

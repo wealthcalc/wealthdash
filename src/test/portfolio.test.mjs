@@ -226,6 +226,36 @@ test("ERI income defaults to the GIA wrapper", () => {
 });
 
 /* ---------------------------- allocation ---------------------------- */
+test("positions carry the native currency of the latest trade row", () => {
+  const positions = buildPositions({
+    txns: [
+      { ...buy("GIA", "2020-01-01", "CSP1", 100, 1000), nativeCurrency: "GBP" },
+      { ...buy("GIA", "2021-01-01", "CSP1", 50, 800), nativeCurrency: "USD" }, // later row wins
+      buy("GIA", "2020-01-01", "SMT", 10, 100),                                // no currency -> GBP
+    ],
+    secMeta,
+  });
+  assert.equal(positions.find((p) => p.ticker === "CSP1").currency, "USD");
+  assert.equal(positions.find((p) => p.ticker === "SMT").currency, "GBP");
+});
+
+test("allocation by currency splits on the position currency", () => {
+  const valued = valuePositions(
+    buildPositions({
+      txns: [
+        { ...buy("GIA", "2020-01-01", "CSP1", 100, 1000), nativeCurrency: "USD" },
+        { ...buy("GIA", "2020-01-01", "SMT", 100, 800), nativeCurrency: "GBP" },
+      ],
+      secMeta,
+    }),
+    { CSP1: 25, SMT: 12 }, // 2500 USD-line + 1200 GBP-line
+  );
+  const cur = allocation(valued, "currency");
+  assert.ok(close(cur.find((b) => b.key === "USD").marketValue, 2500));
+  assert.ok(close(cur.find((b) => b.key === "GBP").marketValue, 1200));
+  assert.ok(close(cur.reduce((s, b) => s + b.pct, 0), 1));
+});
+
 test("allocation by asset class and geography sums to the priced total", () => {
   const valued = valuePositions(
     buildPositions({
@@ -275,4 +305,5 @@ test("buildWealthModel assembles the whole picture", () => {
   // allocation present
   assert.ok(model.allocation.assetClass.length >= 2);
   assert.ok(model.allocation.wrapper.length === 3); // GIA, ISA, SIPP have priced value
+  assert.ok(model.allocation.currency.length >= 1); // currency dimension present
 });
