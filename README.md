@@ -105,6 +105,51 @@ and a sale-price pair that turned out to be [clean, dirty] in the RTF stream
 despite the header text listing them the other way round — were caught by
 that test before shipping, not discovered by a user later.
 
+## Pension providers, and a second UI pass
+
+- **Pension providers**: fund holdings in the Pension & LISA tab now group
+  under a `provider` tag (e.g. "L&G (Citi)", "Aviva (Wells Fargo)"), stored
+  on `secMeta[ticker].provider`. Each provider group can be renamed inline
+  (click its name) or removed entirely — a two-step confirm ("click again to
+  remove all holdings") rather than a browser `confirm()` dialog, since those
+  don't behave consistently across embedding contexts. The add-fund form's
+  provider field is a `<datalist>` — pick an existing provider or type a new
+  one, so adding a future employer's scheme, or fully transferring away from
+  one, both just work.
+- **Live pension prices — checked, not built**: looked into whether the L&G
+  fund prices could be fetched the way DMO gilt prices are. Their own site
+  terms explicitly prohibit "rate scraping" and using their tools "for any
+  purpose other than to purchase a Legal & General product" — so unlike
+  gilts (where an official, ToS-clear DMO source exists), there's no
+  legitimate automated route here. The only other reference found was a
+  Bloomberg ticker, equally not scrapable. Manual entry via the Pension tab's
+  snapshot editor remains the practical answer.
+- **Citi/L&G cost basis refined from real data**: a contribution/switch
+  history (2005-2026, £454,378.68 total contributed) let the two Citi funds'
+  cost basis move from a "cost = current value" placeholder (zero gain) to
+  the real contribution total, split between the two funds by current-value
+  weight. Flagged as an approximation, not a precise history — 61 fund
+  switches over 20 years mean the true per-fund split shifted in ways this
+  aggregate data can't reconstruct — but a large, real improvement over zero.
+- **Fixed a self-inflicted bug**: the earlier `.input` height fix (see
+  below) had applied a fixed single-line height to `<textarea>` elements too,
+  crushing the Import CSV example boxes down to one line. Textareas now get
+  their own rule (`min-height`, no fixed `height`) instead of inheriting the
+  input/select one.
+- **Found and fixed two broken placeholder newlines** in the Import CSV
+  textareas: one used the HTML entity `&#10;` (which isn't decoded in a JSX
+  attribute — it rendered as the literal text "&#10;"), another used a
+  double-escaped `\\n` in a JS string (rendering as literal backslash-n).
+  Both are now real newlines, and the boxes are taller (7 rows) so more of
+  the example is visible without scrolling.
+- **Income tab's "all wrapper" table** is now a toggle (pill buttons) between
+  whichever wrappers actually have income data, rather than one flat table
+  with a repeated Wrapper column per year — clearer at a glance.
+- **Gilts' "Next coupon" column** no longer wraps to two lines.
+- **Transactions table is tighter**: smaller font, narrower fixed-width
+  columns, less padding — GBP amount and the delete icon now fit without
+  horizontal scrolling on a normal screen.
+
 ## UI pass: navigation, editing, and layout fixes
 
 - **Renamed to "Wealth Dashboard"** (app title and page title).

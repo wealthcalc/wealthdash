@@ -933,6 +933,14 @@ function IncomeTab({ incomeEntries, setIncomeEntries, eriEntries, setEriEntries,
   React.useEffect(() => store.set("cgt.incomesubtab", sub), [sub]);
   const years = Object.keys(incomeByYear).sort().reverse();
   const allYears = Object.keys(incomeAllWrappers).sort().reverse();
+  const presentWrappers = useMemo(() => {
+    const set = new Set();
+    for (const y of allYears) for (const w of Object.keys(incomeAllWrappers[y])) set.add(w);
+    return WRAPPERS.filter((w) => set.has(w));
+  }, [allYears, incomeAllWrappers]);
+  const [incWrapper, setIncWrapper] = useState(() => store.get("cgt.income.wrapper", "GIA"));
+  React.useEffect(() => store.set("cgt.income.wrapper", incWrapper), [incWrapper]);
+  React.useEffect(() => { if (presentWrappers.length && !presentWrappers.includes(incWrapper)) setIncWrapper(presentWrappers[0]); }, [presentWrappers]);
 
   const addDiv = () => { if (!dv.date || !(+dv.amount)) return; setIncomeEntries((p) => [...p, { ...dv, amount: +dv.amount }]); setDv(DIV_BLANK()); };
   const setEriF = (k, v) => setEr((e) => { const n = { ...e, [k]: v }; if (k === "periodEnd") n.distributionDate = addMonthsISO(v, 6); if (k === "currency" && (v === "GBP" || v === "GBp")) n.fxRate = 1; return n; });
@@ -964,37 +972,40 @@ function IncomeTab({ incomeEntries, setIncomeEntries, eriEntries, setEriEntries,
 
       {sub === "byyear" && (
         <div className="space-y-6">
-          {/* All-wrapper income overview (taxable + sheltered) */}
+          {/* All-wrapper income overview (taxable + sheltered), one wrapper at a time */}
           {allYears.length ? (
             <div className="space-y-2">
               <h3 className="font-semibold text-sm">All investment income by wrapper</h3>
+              <div className="flex flex-wrap gap-1.5">
+                {presentWrappers.map((w) => (
+                  <button key={w} onClick={() => setIncWrapper(w)}
+                    className={"text-xs font-medium px-2.5 py-1 rounded-full border transition " +
+                      (incWrapper === w ? "border-[var(--accent)] bg-[var(--accent)] text-[var(--accent-fg)]" : "border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)]")}>
+                    {w}
+                  </button>
+                ))}
+              </div>
               <div className="rounded-xl border border-[var(--border)] overflow-hidden">
                 <table className="w-full text-sm">
                   <thead className="bg-[var(--panel2)] text-[var(--muted)] text-xs uppercase tracking-wide">
-                    <tr>{["Tax year", "Wrapper", "Dividends", "Interest", "Total", "Taxable?"].map((h, i) => <th key={i} className={"py-2 px-3 font-medium " + (i >= 2 && i <= 4 ? "text-right" : "text-left")}>{h}</th>)}</tr>
+                    <tr>{["Tax year", "Dividends", "Interest", "Total"].map((h, i) => <th key={i} className={"py-2 px-3 font-medium " + (i ? "text-right" : "text-left")}>{h}</th>)}</tr>
                   </thead>
                   <tbody className="divide-y divide-[var(--border)] bg-[var(--panel)]">
-                    {allYears.flatMap((y) => {
-                      const wraps = Object.keys(incomeAllWrappers[y]).sort((a, b) => WRAPPERS.indexOf(a) - WRAPPERS.indexOf(b));
-                      return wraps.map((w) => {
-                        const d = incomeAllWrappers[y][w];
-                        const taxable = isWrapperTaxable(w);
-                        return (
-                          <tr key={y + w} className="hover:bg-[var(--panel2)]">
-                            <td className="py-2 px-3 font-medium">{y}</td>
-                            <td className="py-2 px-3"><WrapperChip wrapper={w} /></td>
-                            <td className="py-2 px-3 text-right num">{gbp(d.dividends)}</td>
-                            <td className="py-2 px-3 text-right num">{gbp(d.interest)}</td>
-                            <td className="py-2 px-3 text-right num font-medium">{gbp(d.dividends + d.interest)}</td>
-                            <td className={"py-2 px-3 text-xs " + (taxable ? "text-[var(--loss)]" : "text-[var(--gain)]")}>{taxable ? "Taxable" : "Tax-free"}</td>
-                          </tr>
-                        );
-                      });
+                    {allYears.filter((y) => incomeAllWrappers[y][incWrapper]).map((y) => {
+                      const d = incomeAllWrappers[y][incWrapper];
+                      return (
+                        <tr key={y} className="hover:bg-[var(--panel2)]">
+                          <td className="py-2 px-3 font-medium">{y}</td>
+                          <td className="py-2 px-3 text-right num">{gbp(d.dividends)}</td>
+                          <td className="py-2 px-3 text-right num">{gbp(d.interest)}</td>
+                          <td className="py-2 px-3 text-right num font-medium">{gbp(d.dividends + d.interest)}</td>
+                        </tr>
+                      );
                     })}
                   </tbody>
                 </table>
               </div>
-              <p className="text-xs text-[var(--muted)]">Every wrapper's income. Only GIA income feeds the tax calculation below — ISA, SIPP, LISA and VCT income is tax-free (VCT dividends are exempt under ITA 2007 Part 6).</p>
+              <p className="text-xs text-[var(--muted)]">{isWrapperTaxable(incWrapper) ? `${incWrapper} is taxable` : `${incWrapper} is tax-free`} — only GIA income feeds the tax calculation below; ISA, SIPP, LISA and VCT income is tax-free (VCT dividends are exempt under ITA 2007 Part 6).</p>
             </div>
           ) : null}
 
@@ -1381,42 +1392,42 @@ function LedgerTab({ txns, setTxns }) {
 
       {/* table — every field editable inline; edits recompute GBP from native×fx same as the add form */}
       <div className="rounded-xl border border-[var(--border)] overflow-x-auto">
-        <table className="w-full text-sm">
+        <table className="w-full text-xs">
           <thead className="bg-[var(--panel2)] text-[var(--muted)] text-xs uppercase tracking-wide">
-            <tr>{["Date", "Ticker", "Side", "Wrapper", "Qty", "Ccy", "Native", "FX", "GBP", ""].map((h, i) => <th key={i} className={"px-3 py-2 font-medium " + (i >= 4 ? "text-right" : "text-left")}>{h}</th>)}</tr>
+            <tr>{["Date", "Ticker", "Side", "Wrapper", "Qty", "Ccy", "Native", "FX", "GBP", ""].map((h, i) => <th key={i} className={"px-1.5 py-1.5 font-medium " + (i >= 4 ? "text-right" : "text-left")}>{h}</th>)}</tr>
           </thead>
           <tbody className="divide-y divide-[var(--border)] bg-[var(--panel)]">
             {rows.map((t) => {
               const isGBP = (t.nativeCurrency || "GBP") === "GBP";
               return (
                 <tr key={t.id} className="hover:bg-[var(--panel2)]">
-                  <td className="px-3 py-1.5"><input type="date" value={t.date} onChange={(e) => updateTxn(t.id, { date: e.target.value })} className="input num w-36 py-1" /></td>
-                  <td className="px-3 py-1.5"><input value={t.ticker} onChange={(e) => updateTxn(t.id, { ticker: e.target.value.toUpperCase() })} className="input w-24 py-1 font-medium" /></td>
-                  <td className="px-3 py-1.5">
+                  <td className="px-1 py-1"><input type="date" value={t.date} onChange={(e) => updateTxn(t.id, { date: e.target.value })} className="input num w-[8.5rem] py-0.5 text-xs" /></td>
+                  <td className="px-1 py-1"><input value={t.ticker} onChange={(e) => updateTxn(t.id, { ticker: e.target.value.toUpperCase() })} className="input w-16 py-0.5 text-xs font-medium" /></td>
+                  <td className="px-1 py-1">
                     <select value={t.side} onChange={(e) => updateTxn(t.id, { side: e.target.value })}
-                      className={"input w-24 py-1 font-semibold " + (t.side === "BUY" ? "text-[var(--gain)]" : "text-[var(--loss)]")}>
+                      className={"input w-[4.5rem] py-0.5 text-xs font-semibold " + (t.side === "BUY" ? "text-[var(--gain)]" : "text-[var(--loss)]")}>
                       <option>BUY</option><option>SELL</option>
                     </select>
                   </td>
-                  <td className="px-3 py-1.5">
-                    <select value={normWrapper(t.wrapper)} onChange={(e) => updateTxn(t.id, { wrapper: e.target.value })} className="input w-24 py-1">
+                  <td className="px-1 py-1">
+                    <select value={normWrapper(t.wrapper)} onChange={(e) => updateTxn(t.id, { wrapper: e.target.value })} className="input w-[4.5rem] py-0.5 text-xs">
                       {WRAPPERS.map((w) => <option key={w}>{w}</option>)}
                     </select>
                   </td>
-                  <td className="px-3 py-1.5 text-right"><input type="number" value={t.quantity} onChange={(e) => updateTxn(t.id, { quantity: +e.target.value || 0 })} className="input num w-24 py-1 text-right" /></td>
-                  <td className="px-3 py-1.5">
-                    <select value={t.nativeCurrency || "GBP"} onChange={(e) => updateTxn(t.id, { nativeCurrency: e.target.value })} className="input w-20 py-1">
+                  <td className="px-1 py-1 text-right"><input type="number" value={t.quantity} onChange={(e) => updateTxn(t.id, { quantity: +e.target.value || 0 })} className="input num w-20 py-0.5 text-xs text-right" /></td>
+                  <td className="px-1 py-1">
+                    <select value={t.nativeCurrency || "GBP"} onChange={(e) => updateTxn(t.id, { nativeCurrency: e.target.value })} className="input w-16 py-0.5 text-xs">
                       {["GBP", "USD", "EUR", "CHF"].map((c) => <option key={c}>{c}</option>)}
                     </select>
                   </td>
-                  <td className="px-3 py-1.5 text-right">
-                    <input type="number" value={isGBP ? t.gbpAmount : t.nativeAmount} disabled={isGBP} onChange={(e) => updateTxn(t.id, { nativeAmount: +e.target.value || 0 })} className="input num w-28 py-1 text-right disabled:opacity-50" />
+                  <td className="px-1 py-1 text-right">
+                    <input type="number" value={isGBP ? t.gbpAmount : t.nativeAmount} disabled={isGBP} onChange={(e) => updateTxn(t.id, { nativeAmount: +e.target.value || 0 })} className="input num w-20 py-0.5 text-xs text-right disabled:opacity-50" />
                   </td>
-                  <td className="px-3 py-1.5 text-right">
-                    <input type="number" value={t.fxRate ?? 1} disabled={isGBP} onChange={(e) => updateTxn(t.id, { fxRate: +e.target.value || 0 })} className="input num w-20 py-1 text-right disabled:opacity-50" />
+                  <td className="px-1 py-1 text-right">
+                    <input type="number" value={t.fxRate ?? 1} disabled={isGBP} onChange={(e) => updateTxn(t.id, { fxRate: +e.target.value || 0 })} className="input num w-16 py-0.5 text-xs text-right disabled:opacity-50" />
                   </td>
-                  <td className="px-3 py-1.5 text-right"><input type="number" value={t.gbpAmount} onChange={(e) => updateTxn(t.id, { gbpAmount: +e.target.value || 0 })} className="input num w-28 py-1 text-right font-medium" /></td>
-                  <td className="px-3 py-1.5 text-right"><button onClick={() => setTxns((p) => p.filter((x) => x.id !== t.id))} className="text-[var(--muted)] hover:text-[var(--loss)]"><Trash2 size={15} /></button></td>
+                  <td className="px-1 py-1 text-right"><input type="number" value={t.gbpAmount} onChange={(e) => updateTxn(t.id, { gbpAmount: +e.target.value || 0 })} className="input num w-20 py-0.5 text-xs text-right font-medium" /></td>
+                  <td className="px-1 py-1 text-right"><button onClick={() => setTxns((p) => p.filter((x) => x.id !== t.id))} className="text-[var(--muted)] hover:text-[var(--loss)]"><Trash2 size={13} /></button></td>
                 </tr>
               );
             })}
@@ -1904,7 +1915,10 @@ function ReturnsTab({ returns, valuations }) {
 // replaces its underlying "opening balance" transaction(s) in one go, and
 // LISA can either be itemised the same way or left as a single cash figure.
 function PensionTab({ txns, setTxns, cash, setCash, secMeta, setSecMeta, prices, setPrices }) {
-  const [form, setForm] = useState({ wrapper: "SIPP", ticker: "", name: "", units: "", price: "" });
+  const [form, setForm] = useState({ wrapper: "SIPP", provider: "", ticker: "", name: "", units: "", price: "" });
+  const [confirmRemoveProvider, setConfirmRemoveProvider] = useState(null);
+  const [renaming, setRenaming] = useState(null); // provider name currently being renamed
+  const [renameValue, setRenameValue] = useState("");
 
   const rows = useMemo(() => {
     const byKey = {};
@@ -1918,10 +1932,17 @@ function PensionTab({ txns, setTxns, cash, setCash, secMeta, setSecMeta, prices,
       byKey[key].cost += sign * t.gbpAmount;
     }
     return Object.values(byKey).filter((r) => Math.abs(r.units) > 1e-9)
-      .sort((a, b) => a.wrapper.localeCompare(b.wrapper) || a.ticker.localeCompare(b.ticker));
-  }, [txns]);
+      .map((r) => ({ ...r, provider: secMeta[r.ticker]?.provider || "Unassigned" }))
+      .sort((a, b) => a.provider.localeCompare(b.provider) || a.wrapper.localeCompare(b.wrapper) || a.ticker.localeCompare(b.ticker));
+  }, [txns, secMeta]);
 
   const total = rows.reduce((s, r) => s + r.cost, 0) + (+cash.LISA || 0);
+  const providers = useMemo(() => [...new Set(rows.map((r) => r.provider))].sort(), [rows]);
+  const byProvider = useMemo(() => {
+    const m = {};
+    for (const r of rows) (m[r.provider] ||= []).push(r);
+    return m;
+  }, [rows]);
 
   // Replace ALL transactions for (wrapper, ticker) with a single consolidated
   // snapshot row — this is a snapshot editor, not a running ledger, so an
@@ -1944,9 +1965,29 @@ function PensionTab({ txns, setTxns, cash, setCash, secMeta, setSecMeta, prices,
     const tk = form.ticker.toUpperCase().trim();
     const units = +form.units, price = +form.price;
     if (!tk || !Number.isFinite(units) || !Number.isFinite(price) || units <= 0) return;
-    setSecMeta((m) => ({ ...m, [tk]: { ...m[tk], name: form.name.trim() || tk, domicile: "GB", eri: false, kind: "fund" } }));
+    setSecMeta((m) => ({ ...m, [tk]: { ...m[tk], name: form.name.trim() || tk, domicile: "GB", eri: false, kind: "fund", provider: form.provider.trim() || "Unassigned" } }));
     setRow(form.wrapper, tk, units, price);
-    setForm({ wrapper: form.wrapper, ticker: "", name: "", units: "", price: "" });
+    setForm({ ...form, ticker: "", name: "", units: "", price: "" });
+  };
+
+  // Removing a provider drops every holding tagged with it — for when a
+  // pension is transferred/consolidated away entirely. Two-step (click to
+  // arm, click again to confirm) rather than a browser confirm dialog.
+  const removeProvider = (provider) => {
+    if (confirmRemoveProvider !== provider) { setConfirmRemoveProvider(provider); return; }
+    const tickers = (byProvider[provider] || []).map((r) => r.ticker);
+    setTxns((all) => all.filter((t) => !(tickers.includes(t.ticker) && (normWrapper(t.wrapper) === "SIPP" || normWrapper(t.wrapper) === "LISA"))));
+    setConfirmRemoveProvider(null);
+  };
+  const renameProvider = (oldName) => {
+    const next = renameValue.trim();
+    if (!next || next === oldName) { setRenaming(null); return; }
+    setSecMeta((m) => {
+      const copy = { ...m };
+      for (const tk of Object.keys(copy)) if ((copy[tk].provider || "Unassigned") === oldName) copy[tk] = { ...copy[tk], provider: next };
+      return copy;
+    });
+    setRenaming(null);
   };
 
   return (
@@ -1960,40 +2001,72 @@ function PensionTab({ txns, setTxns, cash, setCash, secMeta, setSecMeta, prices,
       {rows.length === 0 && !(+cash.LISA) ? (
         <Empty msg="No pension or LISA holdings yet. Add a fund below, or set a LISA cash total if you don't want to itemise by fund." />
       ) : (
-        <div className="rounded-xl border border-[var(--border)] overflow-hidden">
-          <table className="w-full text-sm">
-            <thead className="bg-[var(--panel2)] text-[var(--muted)] text-xs uppercase tracking-wide">
-              <tr>{["Wrapper", "Fund", "Units", "Price", "Value", ""].map((h, i) => <th key={i} className={"px-3 py-2 font-medium " + (i >= 2 && i <= 4 ? "text-right" : "text-left")}>{h}</th>)}</tr>
-            </thead>
-            <tbody className="divide-y divide-[var(--border)] bg-[var(--panel)]">
-              {rows.map((r) => {
-                const name = secMeta[r.ticker]?.name || r.ticker;
-                const price = r.units ? r.cost / r.units : 0;
-                return (
-                  <tr key={r.wrapper + r.ticker}>
-                    <td className="px-3 py-2"><WrapperChip wrapper={r.wrapper} /></td>
-                    <td className="px-3 py-2">
-                      <div className="font-medium">{r.ticker}</div>
-                      <div className="text-xs text-[var(--muted)]">{name}</div>
-                    </td>
-                    <td className="px-3 py-2 text-right">
-                      <input type="number" defaultValue={round2(r.units)} onBlur={(e) => setRow(r.wrapper, r.ticker, +e.target.value || 0, price)} className="input num w-28 text-right py-1" />
-                    </td>
-                    <td className="px-3 py-2 text-right">
-                      <input type="number" defaultValue={round2(price)} onBlur={(e) => setRow(r.wrapper, r.ticker, r.units, +e.target.value || 0)} className="input num w-24 text-right py-1" />
-                    </td>
-                    <td className="px-3 py-2 text-right num font-medium">{gbp(r.cost)}</td>
-                    <td className="px-3 py-2 text-right"><button onClick={() => removeRow(r.wrapper, r.ticker)} className="text-[var(--muted)] hover:text-[var(--loss)]"><Trash2 size={15} /></button></td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+        <div className="space-y-4">
+          {providers.map((provider) => {
+            const providerRows = byProvider[provider];
+            const providerTotal = providerRows.reduce((s, r) => s + r.cost, 0);
+            return (
+              <div key={provider} className="rounded-xl border border-[var(--border)] overflow-hidden">
+                <div className="flex items-center justify-between px-3 py-2 bg-[var(--panel2)]">
+                  {renaming === provider ? (
+                    <div className="flex items-center gap-1.5">
+                      <input autoFocus value={renameValue} onChange={(e) => setRenameValue(e.target.value)}
+                        onKeyDown={(e) => e.key === "Enter" && renameProvider(provider)}
+                        className="input py-1 text-sm w-48" />
+                      <button onClick={() => renameProvider(provider)} className="text-[var(--accent)] text-xs font-medium">Save</button>
+                      <button onClick={() => setRenaming(null)} className="text-[var(--muted)] text-xs">Cancel</button>
+                    </div>
+                  ) : (
+                    <button onClick={() => { setRenaming(provider); setRenameValue(provider); }} className="text-sm font-medium hover:underline decoration-dotted">{provider}</button>
+                  )}
+                  <div className="flex items-center gap-3">
+                    <span className="num text-sm font-medium">{gbp(providerTotal)}</span>
+                    <button onClick={() => removeProvider(provider)}
+                      className={"text-xs px-2 py-1 rounded " + (confirmRemoveProvider === provider ? "bg-[var(--loss)] text-white" : "text-[var(--muted)] hover:text-[var(--loss)]")}>
+                      {confirmRemoveProvider === provider ? "Click again to remove all holdings" : "Remove provider"}
+                    </button>
+                  </div>
+                </div>
+                <table className="w-full text-sm">
+                  <thead className="text-[var(--muted)] text-xs uppercase tracking-wide">
+                    <tr>{["Wrapper", "Fund", "Units", "Price", "Value", ""].map((h, i) => <th key={i} className={"px-3 py-1.5 font-medium " + (i >= 2 && i <= 4 ? "text-right" : "text-left")}>{h}</th>)}</tr>
+                  </thead>
+                  <tbody className="divide-y divide-[var(--border)] bg-[var(--panel)]">
+                    {providerRows.map((r) => {
+                      const name = secMeta[r.ticker]?.name || r.ticker;
+                      const price = r.units ? r.cost / r.units : 0;
+                      return (
+                        <tr key={r.wrapper + r.ticker}>
+                          <td className="px-3 py-2"><WrapperChip wrapper={r.wrapper} /></td>
+                          <td className="px-3 py-2">
+                            <div className="font-medium">{r.ticker}</div>
+                            <div className="text-xs text-[var(--muted)]">{name}</div>
+                          </td>
+                          <td className="px-3 py-2 text-right">
+                            <input type="number" defaultValue={round2(r.units)} onBlur={(e) => setRow(r.wrapper, r.ticker, +e.target.value || 0, price)} className="input num w-28 text-right py-1" />
+                          </td>
+                          <td className="px-3 py-2 text-right">
+                            <input type="number" defaultValue={round2(price)} onBlur={(e) => setRow(r.wrapper, r.ticker, r.units, +e.target.value || 0)} className="input num w-24 text-right py-1" />
+                          </td>
+                          <td className="px-3 py-2 text-right num font-medium">{gbp(r.cost)}</td>
+                          <td className="px-3 py-2 text-right"><button onClick={() => removeRow(r.wrapper, r.ticker)} className="text-[var(--muted)] hover:text-[var(--loss)]"><Trash2 size={15} /></button></td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            );
+          })}
         </div>
       )}
 
       <div className="flex items-end gap-2 flex-wrap rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3">
         <Field label="Wrapper"><select value={form.wrapper} onChange={(e) => setForm({ ...form, wrapper: e.target.value })} className="input">{["SIPP", "LISA"].map((w) => <option key={w}>{w}</option>)}</select></Field>
+        <Field label="Provider (existing or new)">
+          <input list="pension-providers" value={form.provider} onChange={(e) => setForm({ ...form, provider: e.target.value })} className="input w-44" placeholder="e.g. L&G (Citi)" />
+          <datalist id="pension-providers">{providers.map((p) => <option key={p} value={p} />)}</datalist>
+        </Field>
         <Field label="Ticker / code"><input value={form.ticker} onChange={(e) => setForm({ ...form, ticker: e.target.value.toUpperCase() })} className="input num w-28" placeholder="e.g. CITIUS" /></Field>
         <Field label="Fund name"><input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="input w-56" placeholder="e.g. L&G Global Equity" /></Field>
         <Field label="Units"><input type="number" value={form.units} onChange={(e) => setForm({ ...form, units: e.target.value })} className="input num w-28" placeholder="0" /></Field>
@@ -2007,6 +2080,7 @@ function PensionTab({ txns, setTxns, cash, setCash, secMeta, setSecMeta, prices,
       </div>
 
       <p className="text-xs text-[var(--muted)]">
+        Holdings are grouped by provider — click a provider's name to rename it (e.g. when a scheme moves administrator), or "Remove provider" to drop every holding under it in one go (for a full transfer/consolidation elsewhere). New funds pick up whichever provider you type or select.
         Editing units or price replaces the position outright (this is a snapshot, not a running ledger) — cost basis resets to the new value, since contribution history usually isn't available for insurer-administered pensions.
         SIPP and LISA are both tax-sheltered, so nothing here affects any CGT or income-tax figure elsewhere in the app; it only feeds your total wealth.
       </p>
@@ -2107,7 +2181,7 @@ function GiltsTab({ data, secMeta, setSecMeta, prices, setPrices }) {
                     </td>
                     <td className={"px-3 py-2 num text-right " + (h.accruedPer100 < 0 ? "text-[var(--m-bb)]" : "text-[var(--muted)]")}>{num(h.accruedPer100, 4)}</td>
                     <td className="px-3 py-2 num text-right">{h.dirtyValue != null ? gbp(h.dirtyValue) : "—"}</td>
-                    <td className="px-3 py-2 num text-right">{h.nextCoupon ? <>{gbp(h.nextCoupon.amount)} <span className="text-[var(--muted)] text-xs">on {h.nextCoupon.date}</span></> : "—"}</td>
+                    <td className="px-3 py-2 num text-right whitespace-nowrap">{h.nextCoupon ? <span className="text-xs">{gbp(h.nextCoupon.amount)} <span className="text-[var(--muted)]">on {h.nextCoupon.date}</span></span> : "—"}</td>
                     <td className="px-3 py-2 num text-right">{h.gry && h.gry.semiAnnual != null ? <span title={`Effective annual ${num(h.gry.effectiveAnnual * 100, 3)}% · dirty ${num(h.gry.dirty, 4)}/£100`}>{num(h.gry.semiAnnual * 100, 2)}%</span> : "—"}</td>
                     <td className="px-3 py-2 num text-right text-[var(--muted)]">{gbp(h.couponIncomeNext12m)}</td>
                   </tr>
@@ -2840,7 +2914,7 @@ function ImportTab({ setTxns, setTab, setIncomeEntries, setEriEntries, secMeta }
         <>
           <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 space-y-3">
             <p className="text-sm text-[var(--muted)]">Paste (or upload) an IBKR <strong>Flex Query</strong> CSV or an <strong>Activity Statement</strong> CSV. Trades and dividends/interest are both picked up. A Flex query carries an FX-to-base rate, so GBP conversion is automatic; Activity exports lack it, so non-GBP rows are converted by trade-date FX on import. {wrapper !== "GIA" && <span className="text-[var(--fg)]">Note: {wrapper} is tax-sheltered, so these rows won't affect CGT or income tax.</span>}</p>
-            <textarea value={raw} onChange={(e) => setRaw(e.target.value)} rows={5} placeholder={'Symbol,ISIN,TradeDate,Buy/Sell,Quantity,TradePrice,Proceeds,IBCommission,CurrencyPrimary,FXRateToBase,AssetClass\nAAPL,US0378331005,20240115,BUY,10,180,-1800,-1,USD,0.79,STK'} className="input num w-full font-mono text-xs" />
+            <textarea value={raw} onChange={(e) => setRaw(e.target.value)} rows={7} placeholder={"Symbol,ISIN,TradeDate,Buy/Sell,Quantity,TradePrice,Proceeds,IBCommission,CurrencyPrimary,FXRateToBase,AssetClass\nAAPL,US0378331005,20240115,BUY,10,180,-1800,-1,USD,0.79,STK"} className="input num w-full font-mono text-xs" />
             <div className="flex items-center gap-2">
               <button onClick={() => parseIb()} className="btn-accent"><Wand2 size={15} /> Parse</button>
               <label className="text-sm text-[var(--accent)] cursor-pointer flex items-center gap-1"><Upload size={14} /> Upload CSV<input type="file" accept=".csv,text/csv" className="hidden" onChange={(e) => readFile(e, (txt) => { setRaw(txt); parseIb(txt); })} /></label>
@@ -2889,7 +2963,7 @@ function ImportTab({ setTxns, setTab, setIncomeEntries, setEriEntries, secMeta }
         <>
           <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 space-y-3">
             <p className="text-sm text-[var(--muted)]">Paste a CSV from any broker. Columns are auto-mapped — adjust below if needed. Rows import into <strong>{wrapper}</strong>.</p>
-            <textarea value={raw} onChange={(e) => setRaw(e.target.value)} rows={5} placeholder="Date,Symbol,Action,Quantity,Currency,Amount,FXRate&#10;2025-06-02,WFC,SELL,200,USD,18718,0.78" className="input num w-full font-mono text-xs" />
+            <textarea value={raw} onChange={(e) => setRaw(e.target.value)} rows={7} placeholder={"Date,Symbol,Action,Quantity,Currency,Amount,FXRate\n2025-06-02,WFC,SELL,200,USD,18718,0.78"} className="input num w-full font-mono text-xs" />
             <button onClick={parse} className="btn-accent"><Wand2 size={15} /> Parse & map</button>
           </div>
           {parsed && (
@@ -2933,7 +3007,7 @@ function ImportTab({ setTxns, setTab, setIncomeEntries, setEriEntries, secMeta }
             <p className="text-sm text-[var(--muted)]">
               Paste a dividend/interest CSV from any broker (a tax certificate export, consolidated statement, etc). Columns are auto-mapped — adjust below if needed. Rows import into <strong>{wrapper}</strong> as income entries (same as adding them by hand on the Income tab), amounts net of any withholding tax already deducted at source.
             </p>
-            <textarea value={rawDiv} onChange={(e) => setRawDiv(e.target.value)} rows={5} placeholder="Date,Symbol,Type,Currency,Amount&#10;2025-06-15,CSP1,Dividend,USD,42.10&#10;2025-07-01,,Interest,GBP,15.00" className="input num w-full font-mono text-xs" />
+            <textarea value={rawDiv} onChange={(e) => setRawDiv(e.target.value)} rows={7} placeholder={"Date,Symbol,Type,Currency,Amount\n2025-06-15,CSP1,Dividend,USD,42.10\n2025-07-01,,Interest,GBP,15.00"} className="input num w-full font-mono text-xs" />
             <button onClick={parseDiv} className="btn-accent"><Wand2 size={15} /> Parse & map</button>
           </div>
           {parsedDiv && (
@@ -3118,10 +3192,11 @@ function Empty({ msg }) {
 /* inline utility classes used above */
 const _style = document.createElement("style");
 _style.textContent = `
-  .input{background:var(--panel2);border:1px solid var(--border);border-radius:.5rem;padding:.4rem .6rem;font-size:.875rem;color:var(--fg);outline:none;box-sizing:border-box;height:2.25rem;line-height:1.25}
+  .input{background:var(--panel2);border:1px solid var(--border);border-radius:.5rem;padding:.4rem .6rem;font-size:.875rem;color:var(--fg);outline:none;box-sizing:border-box;line-height:1.25}
+  input.input,select.input{height:2.25rem}
+  textarea.input{min-height:9rem;line-height:1.5;resize:vertical}
   .input:focus{border-color:var(--accent)}
   select.input{appearance:none;-webkit-appearance:none;background-image:url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='%23888' stroke-width='1.5'%3e%3cpath d='M5 7.5l5 5 5-5'/%3e%3c/svg%3e");background-repeat:no-repeat;background-position:right .5rem center;background-size:1rem;padding-right:1.75rem}
-  input[type="date"].input,input[type="number"].input{height:2.25rem}
   .btn-accent{display:inline-flex;align-items:center;gap:.4rem;background:var(--accent);color:var(--accent-fg);font-size:.875rem;font-weight:600;padding:.45rem .8rem;border-radius:.5rem;cursor:pointer;height:2.25rem;box-sizing:border-box}
   .btn-accent:hover{opacity:.92}
 `;
