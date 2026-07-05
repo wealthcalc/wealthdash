@@ -105,6 +105,30 @@ and a sale-price pair that turned out to be [clean, dirty] in the RTF stream
 despite the header text listing them the other way round — were caught by
 that test before shipping, not discovered by a user later.
 
+## Design pass: which tabs should show what
+
+Two different kinds of tab need two different scopes, and the app hadn't
+made that distinction clear:
+
+- **Holdings and Income tabs now show ALL wrappers.** These describe what you
+  own and earn, not what's taxable — GIA-only was just confusing. Holdings
+  keys on (wrapper, ticker) since the same ticker can exist in multiple
+  wrappers (e.g. SMT held in both GIA and ISA). Income adds an all-wrapper
+  overview (with a Taxable/Tax-free column per row) above the existing
+  taxable-only tax-by-year table, which is unchanged and still GIA-only —
+  correctly, since that's what feeds the actual tax calculation.
+- **Planning, Report, and What-if stay GIA-only, by design** — these
+  specifically compute UK Capital Gains Tax, which doesn't apply to
+  ISA/SIPP/LISA/VCT holdings. Each now carries a `CgtScopeBanner` explaining
+  this, and the tab labels changed to "CGT planning" / "CGT report" /
+  "CGT what-if" so the scope is obvious rather than assumed.
+- **Gilt live prices are unified.** The Wealth tab's price panel used to list
+  gilts but couldn't fetch them (only the Gilts tab's DMO button worked).
+  `fetchDmoGiltPrices()` is now a shared helper — `LivePricesPanel` detects
+  gilt tickers via `secMeta[tk].kind === "gilt"` and routes them to the DMO
+  proxy while everything else still goes through Yahoo/Alpha Vantage, in both
+  the bulk fetch and the per-row fetch button. One action, wherever gilts show up.
+
 ## VCT as a first-class wrapper
 Venture Capital Trusts carry their own statutory exemption (Income Tax Act
 2007 Part 6) — dividends are tax-free and disposals are CGT-exempt (gains
