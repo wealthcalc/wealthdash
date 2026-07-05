@@ -10,7 +10,7 @@ import {
 import { matchPortfolio, ukTaxYear } from "./core/cgt-engine.mjs";
 // Wealth core (build step 1): wrapper-aware unified holdings model. Pure and
 // node-tested (portfolio.test.mjs); the Wealth tab is a thin view over it.
-import { buildWealthModel } from "./core/portfolio.mjs";
+import { buildWealthModel, classifyInstrument, WRAPPERS } from "./core/portfolio.mjs";
 // Returns engine (build step 3): XIRR, per-holding TWR, snapshot-based
 // portfolio TWR, income yields. Node-tested (returns.test.mjs).
 import { computeReturns } from "./core/returns.mjs";
@@ -450,6 +450,17 @@ function parseISharesWorkbook(sheets, holdingIsins) {
 
 /* ----------------------------- helpers ------------------------------ */
 const gbp = (x) => (x < 0 ? "−£" : "£") + Math.abs(x).toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+// One chip style per wrapper, used everywhere a wrapper tag is shown, so
+// adding a wrapper (like VCT) means updating one place, not three.
+const WRAPPER_CHIP_CLASS = {
+  GIA: "bg-[var(--chip)] text-[var(--fg)]",
+  ISA: "bg-[color:color-mix(in_srgb,var(--gain)_18%,transparent)] text-[var(--gain)]",
+  SIPP: "bg-[color:color-mix(in_srgb,var(--gain)_18%,transparent)] text-[var(--gain)]",
+  LISA: "bg-[color:color-mix(in_srgb,var(--gain)_18%,transparent)] text-[var(--gain)]",
+  VCT: "bg-[color:color-mix(in_srgb,var(--m-same)_18%,transparent)] text-[var(--m-same)]",
+};
+const wrapperChipClass = (w) => WRAPPER_CHIP_CLASS[w] || "bg-[color:color-mix(in_srgb,var(--m-bb)_18%,transparent)] text-[var(--m-bb)]";
+const WrapperChip = ({ wrapper }) => <span className={"text-[10px] font-semibold px-1.5 py-0.5 rounded " + wrapperChipClass(wrapper)}>{wrapper}</span>;
 const num = (x, dp = 2) => (x ?? 0).toLocaleString("en-GB", { minimumFractionDigits: dp, maximumFractionDigits: dp });
 const uid = () => Math.random().toString(36).slice(2, 9);
 const todayISO = () => new Date().toISOString().slice(0, 10);
@@ -623,21 +634,45 @@ export default function App() {
     catch { return null; }
   }, [txns, secMeta, prices]);
 
+  // Individual gilts are CGT-exempt (TCGA 1992 s115), but `matched` (the raw
+  // matching engine output) doesn't know about instrument type — it'll happily
+  // compute a "gain" on a gilt disposal exactly like any equity. Every view
+  // that computes or reports CGT LIABILITY must exclude exempt instruments;
+  // views that just show GIA holdings (the legacy Holdings tab) are unaffected
+  // and keep showing gilts, since that's a holdings list, not a tax computation.
+  const isCgtExempt = useMemo(() => {
+    const cache = new Map();
+    return (ticker) => {
+      if (!cache.has(ticker)) cache.set(ticker, classifyInstrument(ticker, secMeta).cgtExempt);
+      return cache.get(ticker);
+    };
+  }, [secMeta]);
+  const taxableDisposals = useMemo(
+    () => matched.disposals.filter((d) => !isCgtExempt(d.ticker)),
+    [matched, isCgtExempt]
+  );
+  const taxablePools = useMemo(() => {
+    const out = {};
+    for (const [tk, p] of Object.entries(matched.pools)) if (!isCgtExempt(tk)) out[tk] = p;
+    return out;
+  }, [matched, isCgtExempt]);
+  const exemptGiltDisposalCount = matched.disposals.length - taxableDisposals.length;
+
   const taxYears = useMemo(() => {
-    const s = new Set(matched.disposals.map((d) => d.taxYear));
+    const s = new Set(taxableDisposals.map((d) => d.taxYear));
     return [...s].sort().reverse();
-  }, [matched]);
+  }, [taxableDisposals]);
   const [year, setYear] = useState(null);
   const activeYear = year && taxYears.includes(year) ? year : taxYears[0] || "2025/26";
 
   // Chain CGT losses across all tracked years (initial b/f losses = `carried`).
   const allYears = useMemo(() => {
-    const yrs = [...new Set(matched.disposals.map((d) => d.taxYear))];
+    const yrs = [...new Set(taxableDisposals.map((d) => d.taxYear))];
     const inc = Object.fromEntries(yrs.map((y) => [y, income]));
-    return liabilityAllYears(matched.disposals, { incomeByYear: inc, initialCarried: carried });
-  }, [matched, income, carried]);
+    return liabilityAllYears(taxableDisposals, { incomeByYear: inc, initialCarried: carried });
+  }, [taxableDisposals, income, carried]);
 
-  const yearDisposals = matched.disposals.filter((d) => d.taxYear === activeYear);
+  const yearDisposals = taxableDisposals.filter((d) => d.taxYear === activeYear);
   const liab = allYears.results[activeYear] || liabilityForYear(yearDisposals, { income, carriedLosses: carried });
 
   // Aggregate dividends/interest per tax year (ledger + ERI-derived income).
@@ -739,7 +774,7 @@ export default function App() {
               <h1 className="text-xl font-semibold tracking-tight flex items-center gap-2">
                 <Receipt size={20} className="text-[var(--accent)]" /> Wealth &amp; UK Capital Gains
               </h1>
-              <p className="text-sm text-[var(--muted)] mt-0.5">Total wealth across GIA · ISA · SIPP · LISA, with HMRC-precise CGT (same-day · 30-day · S104). All figures GBP.</p>
+              <p className="text-sm text-[var(--muted)] mt-0.5">Total wealth across GIA · ISA · SIPP · LISA · VCT, with HMRC-precise CGT (same-day · 30-day · S104). All figures GBP.</p>
             </div>
             <div className="flex items-center gap-2">
               {status && <span className="text-xs text-[var(--muted)] mr-1 max-w-[220px] text-right leading-tight">{status}</span>}
@@ -772,13 +807,13 @@ export default function App() {
             {tab === "wealth" && <WealthTab {...{ model: wealthModel, cash, setCash, prices, setPrices, avKey, setAvKey, avMeta, setAvMeta, priceMeta, setPriceMeta, txns, secMeta, setSecMeta }} />}
             {tab === "returns" && <ReturnsTab {...{ returns, valuations }} />}
             {tab === "gilts" && <GiltsTab {...{ data: giltData, secMeta, setSecMeta, prices, setPrices }} />}
-            {tab === "cgt" && <CgtTab {...{ taxYears, activeYear, setYear, yearDisposals, liab, income, setIncome, carried, setCarried, carryForward: allYears.carriedForward }} />}
+            {tab === "cgt" && <CgtTab {...{ taxYears, activeYear, setYear, yearDisposals, liab, income, setIncome, carried, setCarried, carryForward: allYears.carriedForward, exemptGiltDisposalCount }} />}
             {tab === "income" && <IncomeTab {...{ incomeEntries, setIncomeEntries, eriEntries, setEriEntries, eriTxns, incomeByYear, income, setIncome, txns: giaTxns, secMeta, setSecMeta }} />}
             {tab === "holdings" && <HoldingsTab {...{ pools: matched.pools, prices, setPrices, avKey, setAvKey, avMeta, setAvMeta, priceMeta, setPriceMeta, txns: giaTxns, secMeta, setSecMeta }} />}
-            {tab === "planning" && <PlanningTab {...{ pools: matched.pools, prices, setPrices, disposals: matched.disposals, txns: giaTxns, income }} />}
-            {tab === "report" && <ReportTab {...{ taxYears, disposals: matched.disposals, income, carried }} />}
+            {tab === "planning" && <PlanningTab {...{ pools: taxablePools, prices, setPrices, disposals: taxableDisposals, txns: giaTxns, income }} />}
+            {tab === "report" && <ReportTab {...{ taxYears, disposals: taxableDisposals, income, carried }} />}
             {tab === "ledger" && <LedgerTab {...{ txns, setTxns }} />}
-            {tab === "whatif" && <WhatIfTab {...{ pools: matched.pools, disposals: matched.disposals, income, carried, prices }} />}
+            {tab === "whatif" && <WhatIfTab {...{ pools: taxablePools, disposals: taxableDisposals, income, carried, prices }} />}
             {tab === "import" && <ImportTab {...{ setTxns, setTab, setIncomeEntries, setEriEntries, secMeta }} />}
           </div>
 
@@ -1045,10 +1080,16 @@ function EriCoverage({ txns, eriEntries, secMeta, setSecMeta }) {
 }
 
 /* ----------------------------- CGT tab ------------------------------ */
-function CgtTab({ taxYears, activeYear, setYear, yearDisposals, liab, income, setIncome, carried, setCarried, carryForward }) {
+function CgtTab({ taxYears, activeYear, setYear, yearDisposals, liab, income, setIncome, carried, setCarried, carryForward, exemptGiltDisposalCount = 0 }) {
   if (!taxYears.length) return <Empty msg="No disposals yet. Add or import transactions to see a CGT position." />;
   return (
     <div className="space-y-5">
+      {exemptGiltDisposalCount > 0 && (
+        <div className="flex items-start gap-2 text-xs rounded-lg px-3 py-2 border border-[var(--border)] bg-[var(--panel)] text-[var(--muted)]">
+          <AlertCircle size={14} className="mt-0.5 shrink-0 text-[var(--m-same)]" />
+          <span>{exemptGiltDisposalCount} gilt disposal{exemptGiltDisposalCount === 1 ? "" : "s"} excluded from every figure below — individual gilts are CGT-exempt (TCGA 1992 s115). See the Gilts tab for their coupon income and accrued interest instead.</span>
+        </div>
+      )}
       <div className="flex items-end gap-3 flex-wrap">
         <Field label="Tax year">
           <select value={activeYear} onChange={(e) => setYear(e.target.value)} className="input num">
@@ -1113,7 +1154,6 @@ function CgtTab({ taxYears, activeYear, setYear, yearDisposals, liab, income, se
 
 /* --------------------------- Ledger tab ----------------------------- */
 const BLANK = () => ({ id: uid(), date: todayISO(), ticker: "", side: "BUY", quantity: "", nativeCurrency: "GBP", nativeAmount: "", fxRate: 1, gbpAmount: "", wrapper: "GIA", note: "" });
-const WRAPPERS = ["GIA", "ISA", "SIPP", "LISA"];
 function LedgerTab({ txns, setTxns }) {
   const [draft, setDraft] = useState(BLANK());
   const [fxBusy, setFxBusy] = useState(false);
@@ -1379,10 +1419,10 @@ function WealthTab({ model, cash, setCash, prices, setPrices, avKey, setAvKey, a
   if (!model) return <Empty msg="Couldn't build the portfolio model — check the Transactions tab for ledger errors." />;
   const { positions, byWrapper, total, income } = model;
   if (!positions.length && !Object.keys(cash).length)
-    return <Empty msg="No holdings yet. Add transactions (any wrapper — GIA, ISA, SIPP, LISA) on the Transactions or Import tab, and cash balances below will appear here." />;
+    return <Empty msg="No holdings yet. Add transactions (any wrapper — GIA, ISA, SIPP, LISA, VCT) on the Transactions or Import tab, and cash balances below will appear here." />;
 
   const tickers = [...new Set(positions.map((p) => p.ticker))].sort();
-  const wrapperOrder = ["GIA", "ISA", "SIPP", "LISA", ...Object.keys(byWrapper).filter((w) => !["GIA", "ISA", "SIPP", "LISA"].includes(w))].filter((w) => byWrapper[w]);
+  const wrapperOrder = [...WRAPPERS, ...Object.keys(byWrapper).filter((w) => !WRAPPERS.includes(w))].filter((w) => byWrapper[w]);
   const setWrapperCash = (w, v) => setCash((c) => { const n = { ...c }; if (v === "" || isNaN(+v)) delete n[w]; else n[w] = +v; return n; });
 
   return (
@@ -1473,7 +1513,7 @@ function WealthTab({ model, cash, setCash, prices, setPrices, avKey, setAvKey, a
             {positions.map((p) => (
               <tr key={p.wrapper + p.ticker} className="hover:bg-[var(--panel2)]">
                 <td className="px-3 py-2">
-                  <span className={"text-[10px] font-semibold px-1.5 py-0.5 rounded " + (p.wrapper === "GIA" ? "bg-[var(--chip)] text-[var(--fg)]" : "bg-[color:color-mix(in_srgb,var(--gain)_18%,transparent)] text-[var(--gain)]")}>{p.wrapper}</span>
+                  <WrapperChip wrapper={p.wrapper} />
                 </td>
                 <td className="px-3 py-2 font-medium" title={p.name}>
                   {p.ticker}
@@ -1538,7 +1578,7 @@ function ReturnsTab({ returns, valuations }) {
   const { perHolding, byWrapper, total, portfolioTWR } = returns;
   if (!perHolding.length) return <Empty msg="No transactions yet. Returns appear once you have holdings (any wrapper)." />;
 
-  const wrapperOrder = ["GIA", "ISA", "SIPP", "LISA", ...Object.keys(byWrapper).filter((w) => !["GIA", "ISA", "SIPP", "LISA"].includes(w))].filter((w) => byWrapper[w]);
+  const wrapperOrder = [...WRAPPERS, ...Object.keys(byWrapper).filter((w) => !WRAPPERS.includes(w))].filter((w) => byWrapper[w]);
   const openH = perHolding.filter((h) => h.open), closedH = perHolding.filter((h) => !h.open);
 
   return (
@@ -1610,7 +1650,7 @@ function ReturnsTab({ returns, valuations }) {
           <tbody className="divide-y divide-[var(--border)] bg-[var(--panel)]">
             {[...openH, ...closedH].map((h) => (
               <tr key={h.wrapper + h.ticker} className={"hover:bg-[var(--panel2)]" + (h.open ? "" : " opacity-60")}>
-                <td className="px-3 py-2"><span className={"text-[10px] font-semibold px-1.5 py-0.5 rounded " + (h.wrapper === "GIA" ? "bg-[var(--chip)] text-[var(--fg)]" : "bg-[color:color-mix(in_srgb,var(--gain)_18%,transparent)] text-[var(--gain)]")}>{h.wrapper}</span></td>
+                <td className="px-3 py-2"><WrapperChip wrapper={h.wrapper} /></td>
                 <td className="px-3 py-2 font-medium">{h.ticker}{!h.open && <span className="ml-1.5 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-[var(--chip)] text-[var(--muted)] align-middle">closed</span>}</td>
                 <td className="px-3 py-2 num text-[var(--muted)]">{h.firstDate || "—"}</td>
                 <td className="px-3 py-2 num text-right">{gbp(h.moneyIn)}</td>
@@ -1639,6 +1679,7 @@ function ReturnsTab({ returns, valuations }) {
 // (core/gilts.mjs, DMO/HMRC-verified conventions).
 function GiltsTab({ data, secMeta, setSecMeta, prices, setPrices }) {
   const [form, setForm] = React.useState({ ticker: "", name: "", coupon: "", maturity: "", isin: "" });
+  const [dmoState, setDmoState] = React.useState({ status: "idle", message: "" }); // idle | loading | done | error
   const registered = Object.entries(secMeta).filter(([, m]) => m && m.kind === "gilt");
   const registerGilt = () => {
     const tk = form.ticker.toUpperCase().trim();
@@ -1649,6 +1690,38 @@ function GiltsTab({ data, secMeta, setSecMeta, prices, setPrices }) {
         name: form.name.trim() || tk, isin: form.isin.toUpperCase().trim() || (m[tk] && m[tk].isin) || "" },
     }));
     setForm({ ticker: "", name: "", coupon: "", maturity: "", isin: "" });
+  };
+
+  // Live gilt prices from the DMO's own official daily Purchase & Sale Service
+  // prices (see api/gilt-prices.mjs) — neither Alpha Vantage nor Yahoo Finance
+  // covers individual gilts by ISIN, verified by hand before building this.
+  const fetchDmoPrices = async () => {
+    const targets = registered.filter(([, m]) => m.isin);
+    if (!targets.length) { setDmoState({ status: "error", message: "No registered gilt has an ISIN to look up." }); return; }
+    setDmoState({ status: "loading", message: "" });
+    try {
+      const isins = targets.map(([, m]) => m.isin).join(",");
+      const r = await fetch(`/api/gilt-prices?isins=${encodeURIComponent(isins)}`);
+      const body = await r.json();
+      if (!r.ok) throw new Error(body.error || `HTTP ${r.status}`);
+      let matched = 0;
+      setPrices((pr) => {
+        const next = { ...pr };
+        for (const [tk, m] of targets) {
+          const hit = body.prices[m.isin];
+          if (hit) { next[tk] = hit.clean / 100; matched++; }
+        }
+        return next;
+      });
+      setDmoState({
+        status: "done",
+        message: matched
+          ? `Updated ${matched}/${targets.length} gilt${targets.length === 1 ? "" : "s"} from the DMO report dated ${body.date}.`
+          : `DMO report dated ${body.date} didn't include any of your registered ISINs.`,
+      });
+    } catch (e) {
+      setDmoState({ status: "error", message: e.message || "Fetch failed." });
+    }
   };
 
   if (!data) return <Empty msg="Couldn't compute gilt analytics — check the Transactions tab for ledger errors." />;
@@ -1664,6 +1737,16 @@ function GiltsTab({ data, secMeta, setSecMeta, prices, setPrices }) {
 
       {live.length > 0 && (
         <>
+          {/* DMO live price fetch */}
+          <div className="flex items-center gap-3 flex-wrap">
+            <button className="btn-accent" onClick={fetchDmoPrices} disabled={dmoState.status === "loading"}>
+              <Landmark size={15} /> {dmoState.status === "loading" ? "Fetching…" : "Fetch DMO gilt prices"}
+            </button>
+            {dmoState.status === "done" && <span className="text-sm text-[var(--gain)]">{dmoState.message}</span>}
+            {dmoState.status === "error" && <span className="text-sm text-[var(--loss)]">{dmoState.message}</span>}
+            <span className="text-xs text-[var(--muted)]">Official DMO daily clean prices (midpoint of their published purchase/sale quotes) — not Alpha Vantage or Yahoo, neither covers individual gilts.</span>
+          </div>
+
           {/* headline */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <Stat label="Gilt ladder (dirty value)" value={live.every((h) => h.dirtyValue != null) ? gbp(live.reduce((s, h) => s + h.dirtyValue, 0)) : "—"} sub={`${live.length} holding${live.length === 1 ? "" : "s"}; par at maturity ${gbp(live.reduce((s, h) => s + h.nominal, 0))}`} big />
@@ -1687,7 +1770,7 @@ function GiltsTab({ data, secMeta, setSecMeta, prices, setPrices }) {
                       {h.ticker}
                       {h.exDiv && <span className="ml-1.5 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-[color:color-mix(in_srgb,var(--m-bb)_18%,transparent)] text-[var(--m-bb)] align-middle" title="In the ex-dividend window (7 business days before the coupon; bank holidays not modelled) — accrued is negative (rebate); the registered holder at ex-div gets the coupon">ex-div</span>}
                     </td>
-                    <td className="px-3 py-2"><span className={"text-[10px] font-semibold px-1.5 py-0.5 rounded " + (h.wrapper === "GIA" ? "bg-[var(--chip)] text-[var(--fg)]" : "bg-[color:color-mix(in_srgb,var(--gain)_18%,transparent)] text-[var(--gain)]")}>{h.wrapper}</span></td>
+                    <td className="px-3 py-2"><WrapperChip wrapper={h.wrapper} /></td>
                     <td className="px-3 py-2 num text-[var(--muted)]">{h.maturity}</td>
                     <td className="px-3 py-2 num text-right">{gbp(h.nominal)}</td>
                     <td className="px-3 py-2 text-right">
@@ -2086,6 +2169,10 @@ function ReportTab({ taxYears, disposals, income, carried }) {
           </div>
           <span className="text-xs text-[var(--muted)]">Generated {todayISO()}</span>
         </div>
+
+        <p className="text-xs text-[var(--muted)]">
+          Individual UK gilts are excluded throughout this computation — they're CGT-exempt under TCGA 1992 s115. Their coupon income is reported separately as interest (see the Income and Gilts tabs), not here.
+        </p>
 
         <div>
           <h3 className="text-sm font-semibold mb-2">Summary (SA108)</h3>

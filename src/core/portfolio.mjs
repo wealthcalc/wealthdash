@@ -27,13 +27,21 @@ const EPS = 1e-9;
 /* ----------------------------- wrappers ----------------------------- */
 // taxable = subject to UK CGT and income tax on this wrapper's returns.
 // Unknown wrappers default to taxable (conservative: never silently drop tax).
+// VCT: Venture Capital Trust shares carry their OWN statutory exemption
+// (Income Tax Act 2007 Part 6) — dividends are tax-free and disposals are
+// CGT-exempt, exactly like ISA, provided the shares are VCT-qualifying and
+// within the annual investment limit. Modelled as a wrapper (not a
+// per-instrument flag like gilts) because a VCT holding IS categorically
+// exempt regardless of account — verified against GOV.UK/HMRC guidance,
+// 2026-07, not assumed.
 export const WRAPPER_META = {
   GIA: { label: "General Investment Account", taxable: true, sheltered: false },
   ISA: { label: "Individual Savings Account", taxable: false, sheltered: true },
   SIPP: { label: "Self-Invested Personal Pension", taxable: false, sheltered: true },
   LISA: { label: "Lifetime ISA", taxable: false, sheltered: true },
+  VCT: { label: "Venture Capital Trust", taxable: false, sheltered: true },
 };
-export const WRAPPERS = ["GIA", "ISA", "SIPP", "LISA"];
+export const WRAPPERS = ["GIA", "ISA", "SIPP", "LISA", "VCT"];
 
 export const normWrapper = (w) => (w == null || w === "" ? "GIA" : String(w).toUpperCase());
 export const wrapperMeta = (w) => WRAPPER_META[normWrapper(w)] || { label: normWrapper(w), taxable: true, sheltered: false };

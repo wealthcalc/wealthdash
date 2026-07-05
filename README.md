@@ -9,7 +9,10 @@ the browser's localStorage; the deployment ships only code.
 .
 ├── api/
 │   ├── quotes.mjs          # Vercel serverless function (Yahoo price proxy)
-│   └── fx.mjs              # Vercel serverless function (Yahoo historical FX)
+│   ├── fx.mjs              # Vercel serverless function (Yahoo historical FX)
+│   ├── gilt-prices.mjs     # Vercel serverless function (DMO gilt price proxy)
+│   └── _lib/
+│       └── dmo-gilt-parser.mjs  # pure RTF parser, shared with the test suite
 ├── src/
 │   ├── CgtDashboard.jsx     # the app (React UI + tax config)
 │   ├── core/                # pure, node-tested engines (no React)
@@ -85,9 +88,54 @@ proxy T+1 settlement — flagged wherever it matters. Convention: gilt quantity
 = £ nominal; prices per £1 nominal (clean), which is what the live feed
 returns for LSE gilt lines.
 
+## Live gilt prices (DMO proxy)
+Neither Alpha Vantage nor Yahoo Finance covers individual UK gilts by ISIN
+(verified by hand, not assumed — Alpha Vantage has no bond/ISIN asset class;
+Yahoo carries gilt indices and gilt funds but not individual gilt lines).
+The DMO itself publishes official daily "Gilt Purchase & Sale Service" prices
+for exactly this purpose. `api/gilt-prices.mjs` fetches the DMO's RTF export
+(far easier to parse reliably than their binary .xls — no BIFF dependency
+needed) and returns `{ [ISIN]: { clean, dirty, redemptionDate } }`, walking
+back up to 7 days to skip weekends/bank holidays. The Gilts tab's "Fetch DMO
+gilt prices" button matches your registered gilts by ISIN and fills in their
+clean price (midpoint of DMO's published purchase/sale quotes). The parser
+is pure and tested against a real captured report (`dmo-gilt-fixture.txt`);
+two real bugs — a redemption-date regex that didn't tolerate stray spaces,
+and a sale-price pair that turned out to be [clean, dirty] in the RTF stream
+despite the header text listing them the other way round — were caught by
+that test before shipping, not discovered by a user later.
+
+## VCT as a first-class wrapper
+Venture Capital Trusts carry their own statutory exemption (Income Tax Act
+2007 Part 6) — dividends are tax-free and disposals are CGT-exempt (gains
+AND losses; VCT losses get no relief either), for both new-subscription and
+secondary-market shares, verified against GOV.UK/HMRC and current guidance.
+Modelled as a full wrapper (`VCT`, alongside GIA/ISA/SIPP/LISA) rather than
+a per-instrument flag, since a VCT holding is categorically exempt regardless
+of account. `WRAPPERS` and `WRAPPER_META` now live only in `core/portfolio.mjs`
+— the app previously had a second, hand-maintained copy of the wrapper list
+that would have silently drifted; it now imports the single source of truth,
+and a shared `WrapperChip` component replaced three duplicated inline
+conditionals for wrapper tag styling.
+
+## CGT-exemption fix
+The CGT summary/report/planning/what-if tabs previously computed a taxable
+gain or loss on gilt disposals exactly like any equity — wrong, since
+individual UK gilts are CGT-exempt (TCGA 1992 s115). Every view that computes
+or reports CGT liability now filters exempt instruments out via
+`classifyInstrument()` (core/portfolio.mjs) before the matching engine's
+output reaches the tax computation; the CGT tab surfaces a visible count of
+excluded gilt disposals, and the printable Report explicitly notes the
+exclusion. The legacy Holdings tab is deliberately left untouched — it's a
+holdings list, not a tax computation, so gilts still show there (and in the
+dedicated Gilts tab). Verified with an SSR render using a synthetic ledger
+with an equity gain and a large gilt "gain" in the same tax year, confirming
+only the equity figure appears and the gilt is flagged as excluded, not
+silently dropped.
+
 ## Tests
 ```
-npm test        # node --test: 70 tests across the four core modules
+npm test        # node --test: 76 tests across the four core modules + the DMO parser
 ```
 
 ## Deploy (recommended: Git → new Vercel project)

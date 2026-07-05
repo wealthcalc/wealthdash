@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  WRAPPER_META, normWrapper, isWrapperTaxable,
+  WRAPPER_META, WRAPPERS, normWrapper, isWrapperTaxable,
   classifyInstrument, isDisposalTaxable, isIncomeTaxable,
   buildPositions, valuePositions, rollupByWrapper, totalWealth,
   incomeByWrapper, allocation, buildWealthModel,
@@ -28,11 +28,24 @@ test("wrapper taxability matrix", () => {
   assert.equal(WRAPPER_META.ISA.taxable, false);
   assert.equal(WRAPPER_META.SIPP.taxable, false);
   assert.equal(WRAPPER_META.LISA.taxable, false);
+  assert.equal(WRAPPER_META.VCT.taxable, false);
+  assert.ok(WRAPPERS.includes("VCT"));
   assert.equal(isWrapperTaxable("GIA"), true);
   assert.equal(isWrapperTaxable("ISA"), false);
+  assert.equal(isWrapperTaxable("VCT"), false);
   assert.equal(isWrapperTaxable(""), true);       // default -> GIA
   assert.equal(isWrapperTaxable("SomethingNew"), true); // unknown -> conservative
   assert.equal(normWrapper("isa"), "ISA");
+  assert.equal(normWrapper("vct"), "VCT");
+});
+
+test("VCT wrapper exempts both gains AND losses (ITA 2007 Part 6 — no loss relief either)", () => {
+  // Verified: VCT disposals are CGT-exempt in both directions — a loss gets
+  // no relief, unlike an ordinary taxable-wrapper loss which would offset
+  // gains elsewhere. Wrapper-level taxable:false achieves this by excluding
+  // the wrapper from tax computation entirely, gains and losses alike.
+  assert.equal(isDisposalTaxable("VCT", "ANYTHING", {}), false);
+  assert.equal(isIncomeTaxable("VCT"), false);
 });
 
 /* ----------------------- instrument classification ------------------ */
