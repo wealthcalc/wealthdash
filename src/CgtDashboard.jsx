@@ -13,10 +13,11 @@ import { matchPortfolio, ukTaxYear } from "./core/cgt-engine.mjs";
 import { buildWealthModel, classifyInstrument, WRAPPERS, normWrapper, isWrapperTaxable } from "./core/portfolio.mjs";
 // Returns engine (build step 3): XIRR, per-holding TWR, snapshot-based
 // portfolio TWR, income yields. Node-tested (returns.test.mjs).
-import { computeReturns } from "./core/returns.mjs";
+import { computeReturns, xirr } from "./core/returns.mjs";
 // Gilt engine (build step 4): coupon schedule, accrued interest, clean/dirty,
 // GRY, Accrued Income Scheme. DMO/HMRC-verified conventions (gilts.test.mjs).
 import { giltAnalytics } from "./core/gilts.mjs";
+import { guessPensionColumns, mapPensionRow } from "./core/pension-import.mjs";
 // xlsx (SheetJS) is ~120kb gzipped and only needed for the iShares ERI
 // importer, so it's loaded on demand (see readWorkbookFile) rather than
 // bundled into the initial page load.
@@ -615,6 +616,7 @@ export default function App() {
   const [income, setIncome] = useState(() => store.get("cgt.income", 200000));
   const [carried, setCarried] = useState(() => store.get("cgt.carried", 0));
   const [cash, setCash] = useState(() => store.get("cgt.cash", {})); // { wrapper: GBP balance }
+  const [pensionCashflows, setPensionCashflows] = useState(() => store.get("cgt.pensioncf", [])); // [{id, date, provider, type, ccy, nativeAmount}]
   const [valuations, setValuations] = useState(() => store.get("cgt.valuations", [])); // [{date, value, byWrapper}]
   const [incomeEntries, setIncomeEntries] = useState(() => store.get("cgt.incomeEntries", [])); // dividends/interest ledger
   const [eriEntries, setEriEntries] = useState(() => store.get("cgt.eriEntries", []));           // excess reportable income
@@ -638,6 +640,7 @@ export default function App() {
   React.useEffect(() => store.set("cgt.eriEntries", eriEntries), [eriEntries]);
   React.useEffect(() => store.set("cgt.dark", dark), [dark]);
   React.useEffect(() => store.set("cgt.cash", cash), [cash]);
+  React.useEffect(() => store.set("cgt.pensioncf", pensionCashflows), [pensionCashflows]);
   React.useEffect(() => store.set("cgt.tab", tab), [tab]);
   React.useEffect(() => store.set("cgt.valuations", valuations), [valuations]);
 
@@ -766,7 +769,7 @@ export default function App() {
     const backup = {
       __cgtBackup: true, version: 4, exportedAt: new Date().toISOString(),
       txns, incomeEntries, eriEntries, income, carried, cash, valuations,
-      prices, priceMeta, avKey, avMeta, secMeta,
+      prices, priceMeta, avKey, avMeta, secMeta, pensionCashflows,
     };
     const text = JSON.stringify(backup, null, 2);
     let downloaded = false;
@@ -807,7 +810,8 @@ export default function App() {
           if (typeof d.avKey === "string") setAvKey(d.avKey);
           if (d.avMeta && typeof d.avMeta === "object") setAvMeta(d.avMeta);
           if (d.secMeta && typeof d.secMeta === "object") setSecMeta((m) => ({ ...m, ...d.secMeta }));
-          flash(`Restored: ${n(d.txns)} transactions, ${n(d.incomeEntries)} dividend/interest entries, ${n(d.eriEntries)} ERI entries, plus prices and settings.`);
+          if (Array.isArray(d.pensionCashflows)) setPensionCashflows(d.pensionCashflows.map((x) => ({ ...x, id: x.id || uid() })));
+          flash(`Restored: ${n(d.txns)} transactions, ${n(d.incomeEntries)} dividend/interest entries, ${n(d.eriEntries)} ERI entries, ${n(d.pensionCashflows)} pension cashflows, plus prices and settings.`);
         } else {
           setError("That file isn't a recognised backup — expected a transaction array or a full backup file exported from this app.");
         }
@@ -882,7 +886,7 @@ export default function App() {
             {tab === "wealth" && <WealthTab {...{ model: wealthModel, cash, setCash, prices, setPrices, avKey, setAvKey, avMeta, setAvMeta, priceMeta, setPriceMeta, txns, secMeta, setSecMeta }} />}
             {tab === "returns" && <ReturnsTab {...{ returns, valuations }} />}
             {tab === "gilts" && <GiltsTab {...{ data: giltData, secMeta, setSecMeta, prices, setPrices }} />}
-            {tab === "pension" && <PensionTab {...{ txns, setTxns, cash, setCash, secMeta, setSecMeta, prices, setPrices }} />}
+            {tab === "pension" && <PensionTab {...{ txns, setTxns, cash, setCash, secMeta, setSecMeta, prices, setPrices, pensionCashflows, setPensionCashflows }} />}
             {tab === "cgt" && <CgtSection {...{
               taxYears, activeYear, setYear, yearDisposals, liab, income, setIncome, carried, setCarried,
               carryForward: allYears.carriedForward, exemptGiltDisposalCount,
@@ -891,7 +895,7 @@ export default function App() {
             {tab === "income" && <IncomeTab {...{ incomeEntries, setIncomeEntries, eriEntries, setEriEntries, eriTxns, incomeByYear, incomeAllWrappers, income, setIncome, txns: giaTxns, secMeta, setSecMeta }} />}
             {tab === "holdings" && <HoldingsTab {...{ positions: wealthModel ? wealthModel.positions : [], prices, setPrices, avKey, setAvKey, avMeta, setAvMeta, priceMeta, setPriceMeta, txns, secMeta, setSecMeta }} />}
             {tab === "ledger" && <LedgerTab {...{ txns, setTxns }} />}
-            {tab === "import" && <ImportTab {...{ setTxns, setTab, setIncomeEntries, setEriEntries, secMeta }} />}
+            {tab === "import" && <ImportTab {...{ setTxns, setTab, setIncomeEntries, setEriEntries, secMeta, setPensionCashflows }} />}
           </div>
 
           <p className="text-xs text-[var(--muted)] mt-8 leading-relaxed">
@@ -1914,11 +1918,12 @@ function ReturnsTab({ returns, valuations }) {
 // fund holding (units × price), not a transaction history. Editing a row
 // replaces its underlying "opening balance" transaction(s) in one go, and
 // LISA can either be itemised the same way or left as a single cash figure.
-function PensionTab({ txns, setTxns, cash, setCash, secMeta, setSecMeta, prices, setPrices }) {
+function PensionTab({ txns, setTxns, cash, setCash, secMeta, setSecMeta, prices, setPrices, pensionCashflows = [], setPensionCashflows }) {
   const [form, setForm] = useState({ wrapper: "SIPP", provider: "", ticker: "", name: "", units: "", price: "" });
   const [confirmRemoveProvider, setConfirmRemoveProvider] = useState(null);
   const [renaming, setRenaming] = useState(null); // provider name currently being renamed
   const [renameValue, setRenameValue] = useState("");
+  const [expandedCf, setExpandedCf] = useState(null); // provider whose contribution history is expanded
 
   const rows = useMemo(() => {
     const byKey = {};
@@ -1943,6 +1948,34 @@ function PensionTab({ txns, setTxns, cash, setCash, secMeta, setSecMeta, prices,
     for (const r of rows) (m[r.provider] ||= []).push(r);
     return m;
   }, [rows]);
+  const cashflowsByProvider = useMemo(() => {
+    const m = {};
+    for (const c of pensionCashflows) (m[c.provider] ||= []).push(c);
+    return m;
+  }, [pensionCashflows]);
+  // Money-weighted return per provider: contributions are negative (money
+  // out of pocket), current provider value is the one positive terminal
+  // cashflow — same XIRR convention already used for GIA/ISA holdings.
+  // Non-GBP contribution rows without a resolved GBP amount are excluded
+  // (flagged separately) rather than guessed.
+  const xirrByProvider = useMemo(() => {
+    const out = {};
+    for (const provider of providers) {
+      const cfs = cashflowsByProvider[provider] || [];
+      const usable = cfs.filter((c) => c.gbpAmount != null);
+      const flows = usable.map((c) => ({ date: c.date, amount: -Math.abs(c.gbpAmount) }));
+      // current MARKET VALUE (units × live price), not book cost — XIRR
+      // compares money contributed against what it's worth now, not what
+      // was paid in. Falls back to cost only if no price is set at all.
+      const currentValue = byProvider[provider].reduce((s, r) => {
+        const price = prices[r.ticker];
+        return s + (price != null ? r.units * price : r.cost);
+      }, 0);
+      if (currentValue > 0) flows.push({ date: todayISO(), amount: currentValue });
+      out[provider] = { result: xirr(flows), needsFx: cfs.length - usable.length, nCashflows: usable.length };
+    }
+    return out;
+  }, [providers, cashflowsByProvider, byProvider, prices]);
 
   // Replace ALL transactions for (wrapper, ticker) with a single consolidated
   // snapshot row — this is a snapshot editor, not a running ledger, so an
@@ -2005,6 +2038,9 @@ function PensionTab({ txns, setTxns, cash, setCash, secMeta, setSecMeta, prices,
           {providers.map((provider) => {
             const providerRows = byProvider[provider];
             const providerTotal = providerRows.reduce((s, r) => s + r.cost, 0);
+            const xr = xirrByProvider[provider];
+            const cfs = (cashflowsByProvider[provider] || []).slice().sort((a, b) => (a.date < b.date ? 1 : -1));
+            const showingCf = expandedCf === provider;
             return (
               <div key={provider} className="rounded-xl border border-[var(--border)] overflow-hidden">
                 <div className="flex items-center justify-between px-3 py-2 bg-[var(--panel2)]">
@@ -2020,6 +2056,16 @@ function PensionTab({ txns, setTxns, cash, setCash, secMeta, setSecMeta, prices,
                     <button onClick={() => { setRenaming(provider); setRenameValue(provider); }} className="text-sm font-medium hover:underline decoration-dotted">{provider}</button>
                   )}
                   <div className="flex items-center gap-3">
+                    {xr && xr.result.rate != null && (
+                      <span className={"text-xs font-medium num " + (xr.result.rate >= 0 ? "text-[var(--gain)]" : "text-[var(--loss)]")} title={`Money-weighted return (XIRR) from ${xr.nCashflows} contribution${xr.nCashflows === 1 ? "" : "s"}${xr.needsFx ? `; ${xr.needsFx} non-GBP row(s) need FX, excluded` : ""}`}>
+                        XIRR {(xr.result.rate * 100).toFixed(1)}%
+                      </span>
+                    )}
+                    {cfs.length > 0 && (
+                      <button onClick={() => setExpandedCf(showingCf ? null : provider)} className="text-xs text-[var(--muted)] hover:text-[var(--fg)]">
+                        {cfs.length} contribution{cfs.length === 1 ? "" : "s"} {showingCf ? "▲" : "▼"}
+                      </button>
+                    )}
                     <span className="num text-sm font-medium">{gbp(providerTotal)}</span>
                     <button onClick={() => removeProvider(provider)}
                       className={"text-xs px-2 py-1 rounded " + (confirmRemoveProvider === provider ? "bg-[var(--loss)] text-white" : "text-[var(--muted)] hover:text-[var(--loss)]")}>
@@ -2055,6 +2101,23 @@ function PensionTab({ txns, setTxns, cash, setCash, secMeta, setSecMeta, prices,
                     })}
                   </tbody>
                 </table>
+                {showingCf && (
+                  <div className="border-t border-[var(--border)] max-h-64 overflow-y-auto">
+                    <table className="w-full text-xs">
+                      <thead className="text-[var(--muted)] sticky top-0 bg-[var(--panel)]"><tr>{["Date", "Type", "Amount", ""].map((h, i) => <th key={i} className={"px-3 py-1 font-medium " + (i === 2 ? "text-right" : "text-left")}>{h}</th>)}</tr></thead>
+                      <tbody className="divide-y divide-[var(--border)]">
+                        {cfs.map((c) => (
+                          <tr key={c.id}>
+                            <td className="px-3 py-1 num">{c.date}</td>
+                            <td className="px-3 py-1">{c.type}</td>
+                            <td className="px-3 py-1 text-right num">{c.gbpAmount != null ? gbp(c.gbpAmount) : <span className="text-[var(--m-bb)]" title="Non-GBP, no FX resolved — excluded from XIRR">{c.nativeAmount} {c.ccy} (needs FX)</span>}</td>
+                            <td className="px-3 py-1 text-right"><button onClick={() => setPensionCashflows((p) => p.filter((x) => x.id !== c.id))} className="text-[var(--muted)] hover:text-[var(--loss)]"><Trash2 size={12} /></button></td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
             );
           })}
@@ -2746,7 +2809,7 @@ function WhatIfTab({ pools, disposals, income, carried, prices = {} }) {
 /* --------------------------- Import tab ----------------------------- */
 const FIELDS = ["date", "ticker", "side", "quantity", "nativeCurrency", "nativeAmount", "fxRate", "gbpAmount"];
 const FIELDS_DIV = ["date", "ticker", "kind", "nativeCurrency", "nativeAmount", "fxRate", "gbpAmount"];
-function ImportTab({ setTxns, setTab, setIncomeEntries, setEriEntries, secMeta }) {
+function ImportTab({ setTxns, setTab, setIncomeEntries, setEriEntries, secMeta, setPensionCashflows }) {
   const [mode, setMode] = useState("ibkr");
   const [wrapper, setWrapper] = useState("GIA");
   const [raw, setRaw] = useState("");
@@ -2835,6 +2898,33 @@ function ImportTab({ setTxns, setTab, setIncomeEntries, setEriEntries, secMeta }
     setIncomeEntries((p) => [...p, ...rows]); setTab("income");
   };
 
+  // ---- pension contribution/switch CSV (Citi/L&G, Aviva, or any other provider) ----
+  const [rawPension, setRawPension] = useState("");
+  const [parsedPension, setParsedPension] = useState(null);
+  const [mapPension, setMapPension] = useState({});
+  const [pensionProvider, setPensionProvider] = useState("");
+  const existingProviders = useMemo(() => [...new Set(Object.values(secMeta || {}).map((m) => m.provider).filter(Boolean))].sort(), [secMeta]);
+  const parsePension = () => {
+    const res = Papa.parse(rawPension.trim(), { header: true, skipEmptyLines: true });
+    if (!res.data?.length) return;
+    setParsedPension(res.data); setMapPension(guessPensionColumns(res.meta.fields || []));
+  };
+  const previewPension = useMemo(
+    () => (!parsedPension || !pensionProvider ? [] : parsedPension.slice(0, 8).map((r) => mapPensionRow(r, mapPension, pensionProvider)).filter(Boolean)),
+    [parsedPension, mapPension, pensionProvider]
+  );
+  const pensionSkipped = useMemo(
+    () => (!parsedPension || !pensionProvider ? 0 : parsedPension.length - parsedPension.map((r) => mapPensionRow(r, mapPension, pensionProvider)).filter(Boolean).length),
+    [parsedPension, mapPension, pensionProvider]
+  );
+  const doImportPension = () => {
+    if (!pensionProvider.trim()) return;
+    const rows = parsedPension.map((r) => mapPensionRow(r, mapPension, pensionProvider.trim())).filter(Boolean)
+      .map((r) => ({ id: uid(), ...r, gbpAmount: r.ccy === "GBP" ? r.nativeAmount : null }));
+    setPensionCashflows((p) => [...p, ...rows]);
+    setTab("pension");
+  };
+
   // ---- iShares / issuer ERI workbook ----
   const heldIsins = useMemo(() => new Set(Object.values(secMeta || {}).map((s) => (s.isin || "").toUpperCase()).filter(Boolean)), [secMeta]);
   const isinToTicker = useMemo(() => {
@@ -2905,7 +2995,7 @@ function ImportTab({ setTxns, setTab, setIncomeEntries, setEriEntries, secMeta }
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-2 flex-wrap">
-        <Tab k="ibkr" label="Interactive Brokers" /><Tab k="generic" label="Generic CSV" /><Tab k="dividends" label="Dividends CSV" /><Tab k="ishares" label="iShares ERI" />
+        <Tab k="ibkr" label="Interactive Brokers" /><Tab k="generic" label="Generic CSV" /><Tab k="dividends" label="Dividends CSV" /><Tab k="pension" label="Pension contributions" /><Tab k="ishares" label="iShares ERI" />
         <span className="ml-auto" />
         {mode !== "ishares" && <Field label="Import into wrapper"><select value={wrapper} onChange={(e) => setWrapper(e.target.value)} className="input">{WRAPPERS.map((w) => <option key={w}>{w}</option>)}</select></Field>}
       </div>
@@ -3038,6 +3128,56 @@ function ImportTab({ setTxns, setTab, setIncomeEntries, setEriEntries, secMeta }
               <div className="flex items-center justify-between">
                 <span className="text-xs text-[var(--muted)]">{parsedDiv.length} rows ready. GBP fills from native × FX when GBP column is unmapped; ticker can be left blank for interest.</span>
                 <button onClick={doImportDiv} className="btn-accent"><FileUp size={15} /> Import {parsedDiv.length} rows</button>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+
+      {mode === "pension" && (
+        <>
+          <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 space-y-3">
+            <p className="text-sm text-[var(--muted)]">
+              Paste a contribution/switch history from a pension provider — column names vary (confirmed against real Citi/L&G and Aviva exports, auto-detected below), and "Switch" rows (fund-to-fund transfers with no net cashflow) are automatically excluded. Everything else with a real, nonzero amount becomes a cashflow used for that provider's money-weighted return (XIRR) on the Pension &amp; LISA tab — it does <em>not</em> create fund transactions, since these exports don't break contributions down by fund.
+            </p>
+            <Field label="Provider (existing or new)">
+              <input list="import-pension-providers" value={pensionProvider} onChange={(e) => setPensionProvider(e.target.value)} className="input w-56" placeholder="e.g. L&G (Citi)" />
+              <datalist id="import-pension-providers">{existingProviders.map((p) => <option key={p} value={p} />)}</datalist>
+            </Field>
+            <textarea value={rawPension} onChange={(e) => setRawPension(e.target.value)} rows={7} placeholder={"Date,Symbol,Type,Currency,Amount\n2023-01-06,Aviva Pension,Employer Contribution,GBP,1284.50\n2023-01-27,Aviva Pension,Employer Contribution,GBP,7129.50"} className="input num w-full font-mono text-xs" />
+            <button onClick={parsePension} className="btn-accent"><Wand2 size={15} /> Parse & map</button>
+          </div>
+          {parsedPension && (
+            <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 space-y-3">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                {["date", "type", "currency", "amount"].map((f) => (
+                  <Field key={f} label={f}>
+                    <select value={mapPension[f] || ""} onChange={(e) => setMapPension((m) => ({ ...m, [f]: e.target.value }))} className="input w-full text-xs">
+                      <option value="">—</option>
+                      {(Object.keys(parsedPension[0] || {})).map((c) => <option key={c}>{c}</option>)}
+                    </select>
+                  </Field>
+                ))}
+              </div>
+              {!pensionProvider.trim() && <p className="text-xs text-[var(--loss)]">Set a provider above before importing.</p>}
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead className="text-[var(--muted)]"><tr>{["date", "type", "currency", "amount"].map((h) => <th key={h} className="px-2 py-1 text-left">{h}</th>)}</tr></thead>
+                  <tbody className="num">
+                    {previewPension.map((t, i) => (
+                      <tr key={i} className="border-t border-[var(--border)]">
+                        <td className="px-2 py-1">{t.date}</td><td className="px-2 py-1">{t.type}</td>
+                        <td className="px-2 py-1">{t.ccy}</td><td className="px-2 py-1">{gbp(t.nativeAmount)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-[var(--muted)]">
+                  {parsedPension.length} rows in file, {parsedPension.length - pensionSkipped} contributions detected{pensionSkipped ? ` (${pensionSkipped} switches/zero-amount rows excluded)` : ""}. Preview shows the first 8.
+                </span>
+                <button onClick={doImportPension} disabled={!pensionProvider.trim()} className="btn-accent disabled:opacity-50"><FileUp size={15} /> Import {parsedPension.length - pensionSkipped} cashflows</button>
               </div>
             </div>
           )}

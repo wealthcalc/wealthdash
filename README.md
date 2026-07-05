@@ -105,6 +105,42 @@ and a sale-price pair that turned out to be [clean, dirty] in the RTF stream
 despite the header text listing them the other way round — were caught by
 that test before shipping, not discovered by a user later.
 
+## Pension IRR + contribution import
+
+- **`core/pension-import.mjs`** — a new pure, tested module for parsing
+  pension contribution/switch history CSVs. Built and verified against two
+  genuinely different real exports (Citi/L&G: "Effective Date,Transaction
+  Type,Transaction Currency,Amount", `£1,784.57`-style amounts, DD/MM/YYYY
+  dates; Aviva: "Date,Symbol,Type,Currency,Amount", plain decimal amounts,
+  ISO dates) — different headers, date formats, and amount formatting, all
+  handled rather than assumed uniform. "Switch" rows (fund-to-fund
+  transfers) carry no net cashflow and are excluded; everything else with a
+  genuine nonzero amount is kept, including transaction-type labels the
+  parser doesn't recognise (better to keep an unfamiliar-but-real
+  contribution than silently drop it over wording).
+- **New "Pension contributions" import mode** (Import CSV tab) — paste any
+  provider's export, pick a provider (existing or new, via the same
+  datalist pattern as the Pension tab), preview, import. Rows become
+  cashflow records, not fund transactions — these exports don't break
+  contributions down by fund, so nothing is fabricated at that level.
+- **XIRR per pension provider** — the Pension & LISA tab now shows a
+  money-weighted return badge per provider, reusing the exact same `xirr()`
+  function already used for GIA/ISA holdings (not a reimplementation).
+  Cashflows are the imported contributions (negative — money out of pocket)
+  plus current market value (positive, units × live price where set). A
+  contribution history list (expandable, deletable per row) sits under each
+  provider's fund table.
+- **Real contribution data replaced placeholder cost basis** for both
+  existing pension groups: Citi/L&G (£454,378.68 total, 2005-2026) and
+  Aviva (£98,573.45 total, 2023-2026), both split across their respective
+  funds by current-value weight. Combined effect: SIPP unrealised gain
+  moved from £0 (the old cost=value placeholder) to £730,721 — still an
+  approximation given switches/contributions aren't tied to individual
+  funds in these exports, but a large, real improvement.
+- Non-GBP contribution rows with no resolved FX are visibly flagged
+  ("needs FX") in the contribution list and excluded from XIRR, rather than
+  guessed — same principle as everywhere else in the app.
+
 ## Pension providers, and a second UI pass
 
 - **Pension providers**: fund holdings in the Pension & LISA tab now group
