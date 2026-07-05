@@ -105,6 +105,37 @@ and a sale-price pair that turned out to be [clean, dirty] in the RTF stream
 despite the header text listing them the other way round — were caught by
 that test before shipping, not discovered by a user later.
 
+## UI pass: navigation, editing, and layout fixes
+
+- **Renamed to "Wealth Dashboard"** (app title and page title).
+- **New Pension & LISA tab** — SIPP/LISA fund holdings are insurer-administered
+  units with no live price feed and no buy/sell trading, so they get a
+  snapshot editor (units × price per fund) rather than living in the normal
+  transaction ledger. Editing a row replaces its underlying transaction
+  outright (cost resets to the new value) since contribution history usually
+  isn't available for these. LISA can also just be a single cash total if
+  you don't want to itemise by fund.
+- **CGT tab is now one tab with sub-tabs** (Summary / Planning / Report /
+  What-if) via a small shared `SubTabs` component, instead of four separate
+  top-level tabs — they're all views over the same GIA-only computation.
+- **Income tab is now sub-tabbed** the same way (Tax by year / Dividends &
+  Interest / ERI) instead of three stacked sections on one long page.
+- **Transactions are now editable inline** — every field (date, ticker,
+  side, wrapper, quantity, currency, native amount, FX, GBP) is a live input
+  in the table, not just at add-time; editing native amount or FX recomputes
+  GBP the same way the add-row form already did.
+- **Fixed inconsistent input heights app-wide**: `.input`'s CSS had padding
+  but no explicit `height`/`box-sizing`, so `<select>`, `<input type="date">`
+  and `<input type="number">` rendered at different intrinsic heights across
+  browsers. One CSS fix corrects every form in the app, not just Transactions.
+- **Holdings and Wealth tab quantities** now round to 2dp (was 4dp).
+- **Wealth tab**: holding names now show under the ticker (small, muted
+  text); cash fields use a new `CurrencyInput` (£-prefixed, thousands
+  separators while not focused, plain editable number while typing).
+- **Returns' "Since" and Gilts' "Maturity" columns** no longer wrap to two
+  lines (`whitespace-nowrap`, smaller font, and the tables now scroll
+  horizontally instead of squeezing columns).
+
 ## Design pass: which tabs should show what
 
 Two different kinds of tab need two different scopes, and the app hadn't

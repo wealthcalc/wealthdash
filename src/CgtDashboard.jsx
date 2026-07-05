@@ -3,7 +3,7 @@ import Papa from "papaparse";
 import {
   Plus, Trash2, Download, Upload, Wand2, RefreshCw, Moon, Sun,
   TableProperties, Receipt, FlaskConical, FileUp, AlertTriangle, Check,
-  Wallet, TrendingUp, TrendingDown, FileText, Printer, AlertCircle, PoundSterling, PieChart, Percent, Landmark, Info,
+  Wallet, TrendingUp, TrendingDown, FileText, Printer, AlertCircle, PoundSterling, PieChart, Percent, Landmark, Info, PiggyBank,
 } from "lucide-react";
 // The CGT matching engine now lives in a standalone, node-tested module so the
 // CGT view and the wealth core share one source of truth (see core/cgt-engine.mjs).
@@ -462,6 +462,22 @@ const WRAPPER_CHIP_CLASS = {
 const wrapperChipClass = (w) => WRAPPER_CHIP_CLASS[w] || "bg-[color:color-mix(in_srgb,var(--m-bb)_18%,transparent)] text-[var(--m-bb)]";
 const WrapperChip = ({ wrapper }) => <span className={"text-[10px] font-semibold px-1.5 py-0.5 rounded " + wrapperChipClass(wrapper)}>{wrapper}</span>;
 
+// Shared sub-tab bar, used inside the CGT and Income mega-tabs so related
+// tools live under one top-level tab instead of cluttering the main nav.
+function SubTabs({ tabs, active, onChange }) {
+  return (
+    <div className="flex flex-wrap gap-1 border-b border-[var(--border)] mb-4">
+      {tabs.map(([k, label]) => (
+        <button key={k} onClick={() => onChange(k)}
+          className={"px-3 py-1.5 text-sm font-medium border-b-2 -mb-px transition " +
+            (active === k ? "border-[var(--accent)] text-[var(--fg)]" : "border-transparent text-[var(--muted)] hover:text-[var(--fg)]")}>
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 // Shared DMO gilt-price fetch, used by both the Gilts tab and the Wealth tab's
 // live-prices panel (individual gilts aren't on Yahoo/Alpha Vantage, so they
 // need the DMO proxy). Given [{ticker, isin}] targets, fetches clean prices and
@@ -483,6 +499,30 @@ async function fetchDmoGiltPrices(targets) {
   return { pricesByTicker, matched, date: body.date, total: withIsin.length };
 }
 const num = (x, dp = 2) => (x ?? 0).toLocaleString("en-GB", { minimumFractionDigits: dp, maximumFractionDigits: dp });
+const round2 = (x) => Math.round((+x || 0) * 100) / 100;
+
+// £-prefixed input with thousands separators while not focused, plain
+// editable number while focused (so typing isn't fighting live formatting).
+// Used for cash balances, where "£73,137.00" is much easier to read at a
+// glance than a bare "73137".
+function CurrencyInput({ value, onChange, className = "" }) {
+  const [editing, setEditing] = useState(false);
+  const [raw, setRaw] = useState(String(value ?? 0));
+  React.useEffect(() => { if (!editing) setRaw(String(value ?? 0)); }, [value, editing]);
+  return (
+    <div className={"relative " + className}>
+      <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--muted)] text-sm">£</span>
+      <input
+        type={editing ? "number" : "text"}
+        className="input num w-full pl-5 text-right"
+        value={editing ? raw : num(+value || 0, 2)}
+        onFocus={() => { setEditing(true); setRaw(String(value ?? 0)); }}
+        onChange={(e) => setRaw(e.target.value)}
+        onBlur={() => { setEditing(false); onChange(+raw || 0); }}
+      />
+    </div>
+  );
+}
 const uid = () => Math.random().toString(36).slice(2, 9);
 const todayISO = () => new Date().toISOString().slice(0, 10);
 
@@ -807,7 +847,7 @@ export default function App() {
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <div>
               <h1 className="text-xl font-semibold tracking-tight flex items-center gap-2">
-                <Receipt size={20} className="text-[var(--accent)]" /> Wealth &amp; UK Capital Gains
+                <Receipt size={20} className="text-[var(--accent)]" /> Wealth Dashboard
               </h1>
               <p className="text-sm text-[var(--muted)] mt-0.5">Total wealth across GIA · ISA · SIPP · LISA · VCT, with HMRC-precise CGT (same-day · 30-day · S104). All figures GBP.</p>
             </div>
@@ -822,7 +862,7 @@ export default function App() {
 
           {/* tabs */}
           <div className="flex flex-wrap gap-1 mt-5 border-b border-[var(--border)]">
-            {[["wealth", "Wealth", PieChart], ["returns", "Returns", Percent], ["gilts", "Gilts", Landmark], ["cgt", "CGT summary", TableProperties], ["holdings", "Holdings", Wallet], ["income", "Income", PoundSterling], ["planning", "CGT planning", TrendingUp], ["report", "CGT report", FileText], ["ledger", "Transactions", Receipt], ["whatif", "CGT what-if", FlaskConical], ["import", "Import CSV", FileUp]].map(([k, label, Icon]) => (
+            {[["wealth", "Wealth", PieChart], ["returns", "Returns", Percent], ["gilts", "Gilts", Landmark], ["pension", "Pension & LISA", PiggyBank], ["cgt", "CGT", TableProperties], ["holdings", "Holdings", Wallet], ["income", "Income", PoundSterling], ["ledger", "Transactions", Receipt], ["import", "Import CSV", FileUp]].map(([k, label, Icon]) => (
               <button key={k} onClick={() => setTab(k)}
                 className={"px-3 py-2 text-sm font-medium flex items-center gap-1.5 border-b-2 -mb-px transition " +
                   (tab === k ? "border-[var(--accent)] text-[var(--fg)]" : "border-transparent text-[var(--muted)] hover:text-[var(--fg)]")}>
@@ -842,13 +882,15 @@ export default function App() {
             {tab === "wealth" && <WealthTab {...{ model: wealthModel, cash, setCash, prices, setPrices, avKey, setAvKey, avMeta, setAvMeta, priceMeta, setPriceMeta, txns, secMeta, setSecMeta }} />}
             {tab === "returns" && <ReturnsTab {...{ returns, valuations }} />}
             {tab === "gilts" && <GiltsTab {...{ data: giltData, secMeta, setSecMeta, prices, setPrices }} />}
-            {tab === "cgt" && <CgtTab {...{ taxYears, activeYear, setYear, yearDisposals, liab, income, setIncome, carried, setCarried, carryForward: allYears.carriedForward, exemptGiltDisposalCount }} />}
+            {tab === "pension" && <PensionTab {...{ txns, setTxns, cash, setCash, secMeta, setSecMeta, prices, setPrices }} />}
+            {tab === "cgt" && <CgtSection {...{
+              taxYears, activeYear, setYear, yearDisposals, liab, income, setIncome, carried, setCarried,
+              carryForward: allYears.carriedForward, exemptGiltDisposalCount,
+              pools: taxablePools, disposals: taxableDisposals, prices, setPrices, txns: giaTxns,
+            }} />}
             {tab === "income" && <IncomeTab {...{ incomeEntries, setIncomeEntries, eriEntries, setEriEntries, eriTxns, incomeByYear, incomeAllWrappers, income, setIncome, txns: giaTxns, secMeta, setSecMeta }} />}
             {tab === "holdings" && <HoldingsTab {...{ positions: wealthModel ? wealthModel.positions : [], prices, setPrices, avKey, setAvKey, avMeta, setAvMeta, priceMeta, setPriceMeta, txns, secMeta, setSecMeta }} />}
-            {tab === "planning" && <PlanningTab {...{ pools: taxablePools, prices, setPrices, disposals: taxableDisposals, txns: giaTxns, income }} />}
-            {tab === "report" && <ReportTab {...{ taxYears, disposals: taxableDisposals, income, carried }} />}
             {tab === "ledger" && <LedgerTab {...{ txns, setTxns }} />}
-            {tab === "whatif" && <WhatIfTab {...{ pools: taxablePools, disposals: taxableDisposals, income, carried, prices }} />}
             {tab === "import" && <ImportTab {...{ setTxns, setTab, setIncomeEntries, setEriEntries, secMeta }} />}
           </div>
 
@@ -887,6 +929,8 @@ function IncomeTab({ incomeEntries, setIncomeEntries, eriEntries, setEriEntries,
   const [dv, setDv] = useState(DIV_BLANK());
   const [er, setEr] = useState(ERI_BLANK());
   const [fxBusy, setFxBusy] = useState(false);
+  const [sub, setSub] = useState(() => store.get("cgt.incomesubtab", "byyear"));
+  React.useEffect(() => store.set("cgt.incomesubtab", sub), [sub]);
   const years = Object.keys(incomeByYear).sort().reverse();
   const allYears = Object.keys(incomeAllWrappers).sort().reverse();
 
@@ -907,156 +951,167 @@ function IncomeTab({ incomeEntries, setIncomeEntries, eriEntries, setEriEntries,
   })();
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       <div className="flex items-end gap-3 flex-wrap">
         <Field label="Employment / other income (£)"><input type="number" value={income} onChange={(e) => setIncome(+e.target.value || 0)} className="input num w-48" /></Field>
-        <p className="text-xs text-[var(--muted)] pb-2 max-w-md">Dividends and interest are stacked on top of this income for the tax calculation. The tax table below counts only taxable (GIA) income; the all-wrapper overview shows your full income including tax-free ISA/SIPP/LISA/VCT.</p>
+        <p className="text-xs text-[var(--muted)] pb-2 max-w-md">Dividends and interest are stacked on top of this income for the tax calculation. The tax table counts only taxable (GIA) income; the all-wrapper overview shows your full income including tax-free ISA/SIPP/LISA/VCT.</p>
       </div>
 
-      {/* All-wrapper income overview (taxable + sheltered) */}
-      {allYears.length ? (
+      <SubTabs
+        tabs={[["byyear", "Tax by year"], ["divint", "Dividends & interest"], ["eri", "ERI"]]}
+        active={sub} onChange={setSub}
+      />
+
+      {sub === "byyear" && (
+        <div className="space-y-6">
+          {/* All-wrapper income overview (taxable + sheltered) */}
+          {allYears.length ? (
+            <div className="space-y-2">
+              <h3 className="font-semibold text-sm">All investment income by wrapper</h3>
+              <div className="rounded-xl border border-[var(--border)] overflow-hidden">
+                <table className="w-full text-sm">
+                  <thead className="bg-[var(--panel2)] text-[var(--muted)] text-xs uppercase tracking-wide">
+                    <tr>{["Tax year", "Wrapper", "Dividends", "Interest", "Total", "Taxable?"].map((h, i) => <th key={i} className={"py-2 px-3 font-medium " + (i >= 2 && i <= 4 ? "text-right" : "text-left")}>{h}</th>)}</tr>
+                  </thead>
+                  <tbody className="divide-y divide-[var(--border)] bg-[var(--panel)]">
+                    {allYears.flatMap((y) => {
+                      const wraps = Object.keys(incomeAllWrappers[y]).sort((a, b) => WRAPPERS.indexOf(a) - WRAPPERS.indexOf(b));
+                      return wraps.map((w) => {
+                        const d = incomeAllWrappers[y][w];
+                        const taxable = isWrapperTaxable(w);
+                        return (
+                          <tr key={y + w} className="hover:bg-[var(--panel2)]">
+                            <td className="py-2 px-3 font-medium">{y}</td>
+                            <td className="py-2 px-3"><WrapperChip wrapper={w} /></td>
+                            <td className="py-2 px-3 text-right num">{gbp(d.dividends)}</td>
+                            <td className="py-2 px-3 text-right num">{gbp(d.interest)}</td>
+                            <td className="py-2 px-3 text-right num font-medium">{gbp(d.dividends + d.interest)}</td>
+                            <td className={"py-2 px-3 text-xs " + (taxable ? "text-[var(--loss)]" : "text-[var(--gain)]")}>{taxable ? "Taxable" : "Tax-free"}</td>
+                          </tr>
+                        );
+                      });
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <p className="text-xs text-[var(--muted)]">Every wrapper's income. Only GIA income feeds the tax calculation below — ISA, SIPP, LISA and VCT income is tax-free (VCT dividends are exempt under ITA 2007 Part 6).</p>
+            </div>
+          ) : null}
+
+          {/* Per-year income tax (taxable only) */}
+          {years.length ? (
+            <div className="space-y-2">
+              <h3 className="font-semibold text-sm">Taxable investment income tax by year <span className="font-normal text-[var(--muted)]">(GIA only)</span></h3>
+              <div className="rounded-xl border border-[var(--border)] overflow-hidden">
+                <table className="w-full text-sm">
+                  <thead className="bg-[var(--panel2)] text-[var(--muted)]">
+                    <tr>{["Tax year", "Dividends", "Interest", "Dividend tax", "Interest tax", "Total"].map((h, i) => <th key={i} className={"py-2 px-3 font-medium " + (i ? "text-right" : "text-left")}>{h}</th>)}</tr>
+                  </thead>
+                  <tbody className="divide-y divide-[var(--border)]">
+                    {years.map((y) => {
+                      const d = incomeByYear[y], r = investmentIncomeTax({ salary: income, interest: d.interest, dividends: d.dividends, year: y });
+                      return (
+                        <tr key={y}>
+                          <td className="py-2 px-3 font-medium">{y}{r.assumed ? " *" : ""}</td>
+                          <td className="py-2 px-3 text-right num">{gbp(d.dividends)}</td>
+                          <td className="py-2 px-3 text-right num">{gbp(d.interest)}</td>
+                          <td className="py-2 px-3 text-right num">{gbp(r.dividendTax)}</td>
+                          <td className="py-2 px-3 text-right num">{gbp(r.interestTax)}</td>
+                          <td className="py-2 px-3 text-right num font-semibold text-[var(--loss)]">{gbp(r.tax)}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <p className="text-xs text-[var(--muted)]">Dividend allowance and Personal Savings Allowance are applied automatically by year and band. Figures marked * use assumed (latest) rates for years not in the table.</p>
+            </div>
+          ) : <Empty msg="No dividends, interest or ERI recorded yet. Add them on the Dividends & Interest or ERI tab to see the income-tax position." />}
+        </div>
+      )}
+
+      {sub === "divint" && (
         <div className="space-y-2">
-          <h3 className="font-semibold text-sm">All investment income by wrapper</h3>
-          <div className="rounded-xl border border-[var(--border)] overflow-hidden">
-            <table className="w-full text-sm">
-              <thead className="bg-[var(--panel2)] text-[var(--muted)] text-xs uppercase tracking-wide">
-                <tr>{["Tax year", "Wrapper", "Dividends", "Interest", "Total", "Taxable?"].map((h, i) => <th key={i} className={"py-2 px-3 font-medium " + (i >= 2 && i <= 4 ? "text-right" : "text-left")}>{h}</th>)}</tr>
-              </thead>
-              <tbody className="divide-y divide-[var(--border)] bg-[var(--panel)]">
-                {allYears.flatMap((y) => {
-                  const wraps = Object.keys(incomeAllWrappers[y]).sort((a, b) => WRAPPERS.indexOf(a) - WRAPPERS.indexOf(b));
-                  return wraps.map((w) => {
-                    const d = incomeAllWrappers[y][w];
-                    const taxable = isWrapperTaxable(w);
+          <h3 className="font-semibold text-sm">Dividends & interest</h3>
+          <div className="flex items-end gap-2 flex-wrap rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3">
+            <Field label="Date"><input type="date" value={dv.date} onChange={(e) => setDv({ ...dv, date: e.target.value })} className="input num" /></Field>
+            <Field label="Ticker (optional)"><input value={dv.ticker} onChange={(e) => setDv({ ...dv, ticker: e.target.value.toUpperCase() })} className="input num w-24" placeholder="—" /></Field>
+            <Field label="Type"><select value={dv.kind} onChange={(e) => setDv({ ...dv, kind: e.target.value })} className="input"><option value="dividend">Dividend</option><option value="interest">Interest</option></select></Field>
+            <Field label="Amount (£, GBP)"><input type="number" value={dv.amount} onChange={(e) => setDv({ ...dv, amount: e.target.value })} className="input num w-32" placeholder="0.00" /></Field>
+            <button onClick={addDiv} className="btn-accent"><Plus size={15} /> Add</button>
+          </div>
+          {incomeEntries.length > 0 && (
+            <div className="rounded-xl border border-[var(--border)] overflow-hidden">
+              <table className="w-full text-sm">
+                <tbody className="divide-y divide-[var(--border)]">
+                  {incomeEntries.slice().sort((a, b) => (a.date < b.date ? 1 : -1)).map((e) => (
+                    <tr key={e.id}>
+                      <td className="py-2 px-3 num text-[var(--muted)]">{e.date}</td>
+                      <td className="py-2 px-3">{e.ticker || "—"}</td>
+                      <td className="py-2 px-3 capitalize">{e.kind}</td>
+                      <td className="py-2 px-3 num">{ukTaxYear(e.date)}</td>
+                      <td className="py-2 px-3 text-right num">{gbp(+e.amount)}</td>
+                      <td className="py-2 px-3 text-right"><button onClick={() => setIncomeEntries((p) => p.filter((x) => x.id !== e.id))} className="text-[var(--muted)] hover:text-[var(--loss)]"><Trash2 size={15} /></button></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {sub === "eri" && (
+        <div className="space-y-2">
+          <h3 className="font-semibold text-sm">Excess reportable income (offshore reporting funds)</h3>
+          <p className="text-xs text-[var(--muted)] max-w-3xl">For accumulating ETFs and other offshore reporting funds. Enter the reportable income per share from the fund's report and its reporting-period end. It's taxed on the fund distribution date (period end + 6 months), in that tax year, as dividend (equity funds) or interest (bond funds &gt;60% debt) — and the taxed amount is added to the Section 104 pool, lowering the gain on later disposals.</p>
+          <div className="grid gap-2 rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(120px,1fr))" }}>
+            <Field label="Ticker"><input value={er.ticker} onChange={(e) => setEriF("ticker", e.target.value.toUpperCase())} className="input num w-full" placeholder="e.g. XNAQ" /></Field>
+            <Field label="Reporting period end"><input type="date" value={er.periodEnd} onChange={(e) => setEriF("periodEnd", e.target.value)} className="input num w-full" /></Field>
+            <Field label="Fund distribution date"><input type="date" value={er.distributionDate} onChange={(e) => setEriF("distributionDate", e.target.value)} className="input num w-full" /></Field>
+            <Field label="Reportable income / share"><input type="number" value={er.perShare} onChange={(e) => setEriF("perShare", e.target.value)} className="input num w-full" placeholder="0.00" /></Field>
+            <Field label="Currency"><select value={er.currency} onChange={(e) => setEriF("currency", e.target.value)} className="input w-full">{["GBp", "GBP", "USD", "EUR"].map((c) => <option key={c} value={c}>{c}</option>)}</select></Field>
+            <Field label="FX → GBP">
+              <div className="flex gap-1"><input type="number" value={er.fxRate} onChange={(e) => setEriF("fxRate", e.target.value)} disabled={er.currency === "GBP" || er.currency === "GBp"} className="input num w-full disabled:opacity-50" />
+                {er.currency !== "GBP" && er.currency !== "GBp" && <button onClick={fetchEriFx} disabled={fxBusy} className="text-[var(--accent)] px-1" title="Fetch latest FX">{fxBusy ? "…" : "↻"}</button>}</div>
+            </Field>
+            <Field label="Taxed as"><select value={er.treatment} onChange={(e) => setEriF("treatment", e.target.value)} className="input w-full"><option value="dividend">Dividend</option><option value="interest">Interest</option></select></Field>
+            <div className="flex items-end"><button onClick={addEri} className="btn-accent w-full justify-center"><Plus size={15} /> Add</button></div>
+          </div>
+          {er.ticker && er.periodEnd && (
+            <p className="text-xs text-[var(--muted)] num">Preview: {num(eriPreview.units, eriPreview.units % 1 ? 4 : 0)} units held at {er.periodEnd} → ERI {gbp(eriPreview.g || 0)} taxed in {er.distributionDate ? ukTaxYear(er.distributionDate) : "—"}.</p>
+          )}
+          {eriEntries.length > 0 && (
+            <div className="rounded-xl border border-[var(--border)] overflow-hidden">
+              <table className="w-full text-sm">
+                <thead className="bg-[var(--panel2)] text-[var(--muted)]">
+                  <tr>{ERI_COLS.map((c, i) => <th key={i} className={"py-2 px-3 font-medium text-" + c.align}>{c.label}</th>)}</tr>
+                </thead>
+                <tbody className="divide-y divide-[var(--border)]">
+                  {eriEntries.slice().sort((a, b) => (a.distributionDate < b.distributionDate ? 1 : -1)).map((e) => {
+                    const t = eriTxns.find((x) => x.id === "eri-" + e.id);
                     return (
-                      <tr key={y + w} className="hover:bg-[var(--panel2)]">
-                        <td className="py-2 px-3 font-medium">{y}</td>
-                        <td className="py-2 px-3"><WrapperChip wrapper={w} /></td>
-                        <td className="py-2 px-3 text-right num">{gbp(d.dividends)}</td>
-                        <td className="py-2 px-3 text-right num">{gbp(d.interest)}</td>
-                        <td className="py-2 px-3 text-right num font-medium">{gbp(d.dividends + d.interest)}</td>
-                        <td className={"py-2 px-3 text-xs " + (taxable ? "text-[var(--loss)]" : "text-[var(--gain)]")}>{taxable ? "Taxable" : "Tax-free"}</td>
+                      <tr key={e.id}>
+                        <td className={"py-2 px-3 font-medium text-" + ERI_COLS[0].align}>{e.ticker}</td>
+                        <td className={"py-2 px-3 num text-[var(--muted)] text-" + ERI_COLS[1].align}>{e.periodEnd}</td>
+                        <td className={"py-2 px-3 num text-[var(--muted)] text-" + ERI_COLS[2].align}>{e.distributionDate}</td>
+                        <td className={"py-2 px-3 num text-" + ERI_COLS[3].align}>{t ? num(t._units, t._units % 1 ? 4 : 0) : "—"}</td>
+                        <td className={"py-2 px-3 num text-" + ERI_COLS[4].align}>{gbp(t ? t._gbp : 0)}</td>
+                        <td className={"py-2 px-3 capitalize text-" + ERI_COLS[5].align}>{e.treatment}</td>
+                        <td className={"py-2 px-3 num text-" + ERI_COLS[6].align}>{ukTaxYear(e.distributionDate)}</td>
+                        <td className={"py-2 px-3 text-" + ERI_COLS[7].align}><button onClick={() => setEriEntries((p) => p.filter((x) => x.id !== e.id))} className="text-[var(--muted)] hover:text-[var(--loss)]"><Trash2 size={15} /></button></td>
                       </tr>
                     );
-                  });
-                })}
-              </tbody>
-            </table>
-          </div>
-          <p className="text-xs text-[var(--muted)]">Every wrapper's income. Only GIA income feeds the tax calculation below — ISA, SIPP, LISA and VCT income is tax-free (VCT dividends are exempt under ITA 2007 Part 6).</p>
-        </div>
-      ) : null}
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+          <p className="text-xs text-[var(--muted)]">The base-cost uplift shows up automatically in Holdings and the CGT summary. ERI is added to the pool on the distribution date, so it only reduces gains on disposals after that date.</p>
 
-      {/* Per-year income tax (taxable only) */}
-      {years.length ? (
-        <div className="space-y-2">
-          <h3 className="font-semibold text-sm">Taxable investment income tax by year <span className="font-normal text-[var(--muted)]">(GIA only)</span></h3>
-          <div className="rounded-xl border border-[var(--border)] overflow-hidden">
-            <table className="w-full text-sm">
-              <thead className="bg-[var(--panel2)] text-[var(--muted)]">
-                <tr>{["Tax year", "Dividends", "Interest", "Dividend tax", "Interest tax", "Total"].map((h, i) => <th key={i} className={"py-2 px-3 font-medium " + (i ? "text-right" : "text-left")}>{h}</th>)}</tr>
-              </thead>
-              <tbody className="divide-y divide-[var(--border)]">
-                {years.map((y) => {
-                  const d = incomeByYear[y], r = investmentIncomeTax({ salary: income, interest: d.interest, dividends: d.dividends, year: y });
-                  return (
-                    <tr key={y}>
-                      <td className="py-2 px-3 font-medium">{y}{r.assumed ? " *" : ""}</td>
-                      <td className="py-2 px-3 text-right num">{gbp(d.dividends)}</td>
-                      <td className="py-2 px-3 text-right num">{gbp(d.interest)}</td>
-                      <td className="py-2 px-3 text-right num">{gbp(r.dividendTax)}</td>
-                      <td className="py-2 px-3 text-right num">{gbp(r.interestTax)}</td>
-                      <td className="py-2 px-3 text-right num font-semibold text-[var(--loss)]">{gbp(r.tax)}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-          <p className="text-xs text-[var(--muted)]">Dividend allowance and Personal Savings Allowance are applied automatically by year and band. Figures marked * use assumed (latest) rates for years not in the table.</p>
+          <EriCoverage {...{ txns, eriEntries, secMeta, setSecMeta }} />
         </div>
-      ) : <Empty msg="No dividends, interest or ERI recorded yet. Add them below to see the income-tax position." />}
-
-      {/* Dividend / interest ledger */}
-      <div className="space-y-2">
-        <h3 className="font-semibold text-sm">Dividends & interest</h3>
-        <div className="flex items-end gap-2 flex-wrap rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3">
-          <Field label="Date"><input type="date" value={dv.date} onChange={(e) => setDv({ ...dv, date: e.target.value })} className="input num" /></Field>
-          <Field label="Ticker (optional)"><input value={dv.ticker} onChange={(e) => setDv({ ...dv, ticker: e.target.value.toUpperCase() })} className="input num w-24" placeholder="—" /></Field>
-          <Field label="Type"><select value={dv.kind} onChange={(e) => setDv({ ...dv, kind: e.target.value })} className="input"><option value="dividend">Dividend</option><option value="interest">Interest</option></select></Field>
-          <Field label="Amount (£, GBP)"><input type="number" value={dv.amount} onChange={(e) => setDv({ ...dv, amount: e.target.value })} className="input num w-32" placeholder="0.00" /></Field>
-          <button onClick={addDiv} className="btn-accent"><Plus size={15} /> Add</button>
-        </div>
-        {incomeEntries.length > 0 && (
-          <div className="rounded-xl border border-[var(--border)] overflow-hidden">
-            <table className="w-full text-sm">
-              <tbody className="divide-y divide-[var(--border)]">
-                {incomeEntries.slice().sort((a, b) => (a.date < b.date ? 1 : -1)).map((e) => (
-                  <tr key={e.id}>
-                    <td className="py-2 px-3 num text-[var(--muted)]">{e.date}</td>
-                    <td className="py-2 px-3">{e.ticker || "—"}</td>
-                    <td className="py-2 px-3 capitalize">{e.kind}</td>
-                    <td className="py-2 px-3 num">{ukTaxYear(e.date)}</td>
-                    <td className="py-2 px-3 text-right num">{gbp(+e.amount)}</td>
-                    <td className="py-2 px-3 text-right"><button onClick={() => setIncomeEntries((p) => p.filter((x) => x.id !== e.id))} className="text-[var(--muted)] hover:text-[var(--loss)]"><Trash2 size={15} /></button></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-
-      {/* ERI */}
-      <div className="space-y-2">
-        <h3 className="font-semibold text-sm">Excess reportable income (offshore reporting funds)</h3>
-        <p className="text-xs text-[var(--muted)] max-w-3xl">For accumulating ETFs and other offshore reporting funds. Enter the reportable income per share from the fund's report and its reporting-period end. It's taxed on the fund distribution date (period end + 6 months), in that tax year, as dividend (equity funds) or interest (bond funds &gt;60% debt) — and the taxed amount is added to the Section 104 pool, lowering the gain on later disposals.</p>
-        <div className="grid gap-2 rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(120px,1fr))" }}>
-          <Field label="Ticker"><input value={er.ticker} onChange={(e) => setEriF("ticker", e.target.value.toUpperCase())} className="input num w-full" placeholder="e.g. XNAQ" /></Field>
-          <Field label="Reporting period end"><input type="date" value={er.periodEnd} onChange={(e) => setEriF("periodEnd", e.target.value)} className="input num w-full" /></Field>
-          <Field label="Fund distribution date"><input type="date" value={er.distributionDate} onChange={(e) => setEriF("distributionDate", e.target.value)} className="input num w-full" /></Field>
-          <Field label="Reportable income / share"><input type="number" value={er.perShare} onChange={(e) => setEriF("perShare", e.target.value)} className="input num w-full" placeholder="0.00" /></Field>
-          <Field label="Currency"><select value={er.currency} onChange={(e) => setEriF("currency", e.target.value)} className="input w-full">{["GBp", "GBP", "USD", "EUR"].map((c) => <option key={c} value={c}>{c}</option>)}</select></Field>
-          <Field label="FX → GBP">
-            <div className="flex gap-1"><input type="number" value={er.fxRate} onChange={(e) => setEriF("fxRate", e.target.value)} disabled={er.currency === "GBP" || er.currency === "GBp"} className="input num w-full disabled:opacity-50" />
-              {er.currency !== "GBP" && er.currency !== "GBp" && <button onClick={fetchEriFx} disabled={fxBusy} className="text-[var(--accent)] px-1" title="Fetch latest FX">{fxBusy ? "…" : "↻"}</button>}</div>
-          </Field>
-          <Field label="Taxed as"><select value={er.treatment} onChange={(e) => setEriF("treatment", e.target.value)} className="input w-full"><option value="dividend">Dividend</option><option value="interest">Interest</option></select></Field>
-          <div className="flex items-end"><button onClick={addEri} className="btn-accent w-full justify-center"><Plus size={15} /> Add</button></div>
-        </div>
-        {er.ticker && er.periodEnd && (
-          <p className="text-xs text-[var(--muted)] num">Preview: {num(eriPreview.units, eriPreview.units % 1 ? 4 : 0)} units held at {er.periodEnd} → ERI {gbp(eriPreview.g || 0)} taxed in {er.distributionDate ? ukTaxYear(er.distributionDate) : "—"}.</p>
-        )}
-        {eriEntries.length > 0 && (
-          <div className="rounded-xl border border-[var(--border)] overflow-hidden">
-            <table className="w-full text-sm">
-              <thead className="bg-[var(--panel2)] text-[var(--muted)]">
-                <tr>{ERI_COLS.map((c, i) => <th key={i} className={"py-2 px-3 font-medium text-" + c.align}>{c.label}</th>)}</tr>
-              </thead>
-              <tbody className="divide-y divide-[var(--border)]">
-                {eriEntries.slice().sort((a, b) => (a.distributionDate < b.distributionDate ? 1 : -1)).map((e) => {
-                  const t = eriTxns.find((x) => x.id === "eri-" + e.id);
-                  return (
-                    <tr key={e.id}>
-                      <td className={"py-2 px-3 font-medium text-" + ERI_COLS[0].align}>{e.ticker}</td>
-                      <td className={"py-2 px-3 num text-[var(--muted)] text-" + ERI_COLS[1].align}>{e.periodEnd}</td>
-                      <td className={"py-2 px-3 num text-[var(--muted)] text-" + ERI_COLS[2].align}>{e.distributionDate}</td>
-                      <td className={"py-2 px-3 num text-" + ERI_COLS[3].align}>{t ? num(t._units, t._units % 1 ? 4 : 0) : "—"}</td>
-                      <td className={"py-2 px-3 num text-" + ERI_COLS[4].align}>{gbp(t ? t._gbp : 0)}</td>
-                      <td className={"py-2 px-3 capitalize text-" + ERI_COLS[5].align}>{e.treatment}</td>
-                      <td className={"py-2 px-3 num text-" + ERI_COLS[6].align}>{ukTaxYear(e.distributionDate)}</td>
-                      <td className={"py-2 px-3 text-" + ERI_COLS[7].align}><button onClick={() => setEriEntries((p) => p.filter((x) => x.id !== e.id))} className="text-[var(--muted)] hover:text-[var(--loss)]"><Trash2 size={15} /></button></td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-        <p className="text-xs text-[var(--muted)]">The base-cost uplift shows up automatically in Holdings and the CGT summary. ERI is added to the pool on the distribution date, so it only reduces gains on disposals after that date.</p>
-
-        <EriCoverage {...{ txns, eriEntries, secMeta, setSecMeta }} />
-      </div>
+      )}
     </div>
   );
 }
@@ -1150,6 +1205,28 @@ function EriCoverage({ txns, eriEntries, secMeta, setSecMeta }) {
 }
 
 /* ----------------------------- CGT tab ------------------------------ */
+// Groups the four CGT tools (Summary, Planning, Report, What-if) under one
+// top-level tab as sub-tabs, since they're all views over the same GIA-only
+// CGT computation rather than separate concerns.
+function CgtSection(props) {
+  const { taxYears, activeYear, setYear, yearDisposals, liab, income, setIncome, carried, setCarried,
+    carryForward, exemptGiltDisposalCount, pools, disposals, prices, setPrices, txns } = props;
+  const [sub, setSub] = useState(() => store.get("cgt.cgtsubtab", "summary"));
+  React.useEffect(() => store.set("cgt.cgtsubtab", sub), [sub]);
+  return (
+    <div>
+      <SubTabs
+        tabs={[["summary", "Summary"], ["planning", "Planning"], ["report", "Report"], ["whatif", "What-if"]]}
+        active={sub} onChange={setSub}
+      />
+      {sub === "summary" && <CgtTab {...{ taxYears, activeYear, setYear, yearDisposals, liab, income, setIncome, carried, setCarried, carryForward, exemptGiltDisposalCount }} />}
+      {sub === "planning" && <PlanningTab {...{ pools, prices, setPrices, disposals, txns, income }} />}
+      {sub === "report" && <ReportTab {...{ taxYears, disposals, income, carried }} />}
+      {sub === "whatif" && <WhatIfTab {...{ pools, disposals, income, carried, prices }} />}
+    </div>
+  );
+}
+
 function CgtTab({ taxYears, activeYear, setYear, yearDisposals, liab, income, setIncome, carried, setCarried, carryForward, exemptGiltDisposalCount = 0 }) {
   if (!taxYears.length) return <Empty msg="No disposals yet. Add or import transactions to see a CGT position." />;
   return (
@@ -1255,6 +1332,20 @@ function LedgerTab({ txns, setTxns }) {
     const t = { ...draft, ticker: draft.ticker.toUpperCase().trim(), quantity: +draft.quantity, nativeAmount: +draft.nativeAmount || 0, fxRate: +draft.fxRate || 1, gbpAmount: +draft.gbpAmount || 0 };
     setTxns((p) => [...p, t]); setDraft(BLANK());
   };
+  // Editing a transaction recomputes gbpAmount from native × fx when either
+  // changes (same rule as the add-row form), unless gbpAmount itself was the
+  // field just edited — keeps both paths (typing GBP directly, or typing
+  // native+fx) working without one silently overwriting the other.
+  const updateTxn = (id, patch) => setTxns((all) => all.map((t) => {
+    if (t.id !== id) return t;
+    const next = { ...t, ...patch };
+    if ("nativeAmount" in patch || "fxRate" in patch) {
+      const na = +next.nativeAmount || 0, fx = +next.fxRate || 0;
+      if (na && fx) next.gbpAmount = +(na * fx).toFixed(2);
+    }
+    if (patch.nativeCurrency === "GBP") { next.fxRate = 1; if (next.nativeAmount) next.gbpAmount = +next.nativeAmount; }
+    return next;
+  }));
   const rows = [...txns].sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
 
   return (
@@ -1288,26 +1379,47 @@ function LedgerTab({ txns, setTxns }) {
         </div>
       </div>
 
-      {/* table */}
-      <div className="rounded-xl border border-[var(--border)] overflow-hidden">
+      {/* table — every field editable inline; edits recompute GBP from native×fx same as the add form */}
+      <div className="rounded-xl border border-[var(--border)] overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="bg-[var(--panel2)] text-[var(--muted)] text-xs uppercase tracking-wide">
-            <tr>{["Date", "Ticker", "Side", "Wrapper", "Qty", "Native", "FX", "GBP", ""].map((h, i) => <th key={i} className={"px-3 py-2 font-medium " + (i >= 4 && i <= 7 ? "text-right" : "text-left")}>{h}</th>)}</tr>
+            <tr>{["Date", "Ticker", "Side", "Wrapper", "Qty", "Ccy", "Native", "FX", "GBP", ""].map((h, i) => <th key={i} className={"px-3 py-2 font-medium " + (i >= 4 ? "text-right" : "text-left")}>{h}</th>)}</tr>
           </thead>
           <tbody className="divide-y divide-[var(--border)] bg-[var(--panel)]">
-            {rows.map((t) => (
-              <tr key={t.id} className="hover:bg-[var(--panel2)]">
-                <td className="px-3 py-2 num">{t.date}</td>
-                <td className="px-3 py-2 font-medium">{t.ticker}</td>
-                <td className="px-3 py-2"><span className={"text-xs font-semibold " + (t.side === "BUY" ? "text-[var(--gain)]" : "text-[var(--loss)]")}>{t.side}</span></td>
-                <td className="px-3 py-2"><span className={"text-[10px] font-semibold px-1.5 py-0.5 rounded " + ((t.wrapper || "GIA") === "GIA" ? "bg-[var(--chip)] text-[var(--fg)]" : "bg-[color:color-mix(in_srgb,var(--gain)_18%,transparent)] text-[var(--gain)]")}>{t.wrapper || "GIA"}</span></td>
-                <td className="px-3 py-2 num text-right">{num(t.quantity, t.quantity % 1 ? 4 : 0)}</td>
-                <td className="px-3 py-2 num text-right text-[var(--muted)]">{t.nativeCurrency === "GBP" ? "—" : `${num(t.nativeAmount)} ${t.nativeCurrency}`}</td>
-                <td className="px-3 py-2 num text-right text-[var(--muted)]">{t.nativeCurrency === "GBP" ? "—" : num(t.fxRate, 4)}</td>
-                <td className="px-3 py-2 num text-right">{gbp(t.gbpAmount)}</td>
-                <td className="px-3 py-2 text-right"><button onClick={() => setTxns((p) => p.filter((x) => x.id !== t.id))} className="text-[var(--muted)] hover:text-[var(--loss)]"><Trash2 size={15} /></button></td>
-              </tr>
-            ))}
+            {rows.map((t) => {
+              const isGBP = (t.nativeCurrency || "GBP") === "GBP";
+              return (
+                <tr key={t.id} className="hover:bg-[var(--panel2)]">
+                  <td className="px-3 py-1.5"><input type="date" value={t.date} onChange={(e) => updateTxn(t.id, { date: e.target.value })} className="input num w-36 py-1" /></td>
+                  <td className="px-3 py-1.5"><input value={t.ticker} onChange={(e) => updateTxn(t.id, { ticker: e.target.value.toUpperCase() })} className="input w-24 py-1 font-medium" /></td>
+                  <td className="px-3 py-1.5">
+                    <select value={t.side} onChange={(e) => updateTxn(t.id, { side: e.target.value })}
+                      className={"input w-24 py-1 font-semibold " + (t.side === "BUY" ? "text-[var(--gain)]" : "text-[var(--loss)]")}>
+                      <option>BUY</option><option>SELL</option>
+                    </select>
+                  </td>
+                  <td className="px-3 py-1.5">
+                    <select value={normWrapper(t.wrapper)} onChange={(e) => updateTxn(t.id, { wrapper: e.target.value })} className="input w-24 py-1">
+                      {WRAPPERS.map((w) => <option key={w}>{w}</option>)}
+                    </select>
+                  </td>
+                  <td className="px-3 py-1.5 text-right"><input type="number" value={t.quantity} onChange={(e) => updateTxn(t.id, { quantity: +e.target.value || 0 })} className="input num w-24 py-1 text-right" /></td>
+                  <td className="px-3 py-1.5">
+                    <select value={t.nativeCurrency || "GBP"} onChange={(e) => updateTxn(t.id, { nativeCurrency: e.target.value })} className="input w-20 py-1">
+                      {["GBP", "USD", "EUR", "CHF"].map((c) => <option key={c}>{c}</option>)}
+                    </select>
+                  </td>
+                  <td className="px-3 py-1.5 text-right">
+                    <input type="number" value={isGBP ? t.gbpAmount : t.nativeAmount} disabled={isGBP} onChange={(e) => updateTxn(t.id, { nativeAmount: +e.target.value || 0 })} className="input num w-28 py-1 text-right disabled:opacity-50" />
+                  </td>
+                  <td className="px-3 py-1.5 text-right">
+                    <input type="number" value={t.fxRate ?? 1} disabled={isGBP} onChange={(e) => updateTxn(t.id, { fxRate: +e.target.value || 0 })} className="input num w-20 py-1 text-right disabled:opacity-50" />
+                  </td>
+                  <td className="px-3 py-1.5 text-right"><input type="number" value={t.gbpAmount} onChange={(e) => updateTxn(t.id, { gbpAmount: +e.target.value || 0 })} className="input num w-28 py-1 text-right font-medium" /></td>
+                  <td className="px-3 py-1.5 text-right"><button onClick={() => setTxns((p) => p.filter((x) => x.id !== t.id))} className="text-[var(--muted)] hover:text-[var(--loss)]"><Trash2 size={15} /></button></td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -1571,9 +1683,7 @@ function WealthTab({ model, cash, setCash, prices, setPrices, avKey, setAvKey, a
                   <td className="px-3 py-2 num text-right">{a.priced ? gbp(a.marketValue) : "—"}</td>
                   <td className={"px-3 py-2 num text-right " + (a.priced ? (a.unrealised >= 0 ? "text-[var(--gain)]" : "text-[var(--loss)]") : "text-[var(--muted)]")}>{a.priced ? gbp(a.unrealised) : "—"}</td>
                   <td className="px-3 py-2 text-right">
-                    <input type="number" value={cash[w] ?? ""} placeholder="0"
-                      onChange={(e) => setWrapperCash(w, e.target.value)}
-                      className="input num w-28 text-right py-1" />
+                    <CurrencyInput value={cash[w] ?? 0} onChange={(v) => setWrapperCash(w, v)} className="w-32 ml-auto" />
                   </td>
                   <td className="px-3 py-2 num text-right font-medium">{gbp(a.total)}</td>
                 </tr>
@@ -1620,11 +1730,14 @@ function WealthTab({ model, cash, setCash, prices, setPrices, avKey, setAvKey, a
                 <td className="px-3 py-2">
                   <WrapperChip wrapper={p.wrapper} />
                 </td>
-                <td className="px-3 py-2 font-medium" title={p.name}>
-                  {p.ticker}
-                  {p.cgtExempt && <span title="CGT-exempt instrument (individual gilt, TCGA 1992 s115)" className="ml-1.5 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-[color:color-mix(in_srgb,var(--m-same)_18%,transparent)] text-[var(--m-same)] align-middle">CGT-free</span>}
+                <td className="px-3 py-2 font-medium">
+                  <div className="flex items-center gap-1.5">
+                    <span>{p.ticker}</span>
+                    {p.cgtExempt && <span title="CGT-exempt instrument (individual gilt, TCGA 1992 s115)" className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-[color:color-mix(in_srgb,var(--m-same)_18%,transparent)] text-[var(--m-same)] align-middle">CGT-free</span>}
+                  </div>
+                  {p.name && <div className="text-xs font-normal text-[var(--muted)] truncate max-w-[220px]" title={p.name}>{p.name}</div>}
                 </td>
-                <td className="px-3 py-2 num text-right">{num(p.qty, p.qty % 1 ? 4 : 0)}</td>
+                <td className="px-3 py-2 num text-right">{num(p.qty, p.qty % 1 ? 2 : 0)}</td>
                 <td className="px-3 py-2 num text-right text-[var(--muted)]">{gbp(p.avgCost)}</td>
                 <td className="px-3 py-2 num text-right">{gbp(p.bookCost)}</td>
                 <td className="px-3 py-2 text-right">
@@ -1745,7 +1858,7 @@ function ReturnsTab({ returns, valuations }) {
       </div>
 
       {/* per-holding */}
-      <div className="rounded-xl border border-[var(--border)] overflow-hidden">
+      <div className="rounded-xl border border-[var(--border)] overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="bg-[var(--panel2)] text-[var(--muted)] text-xs uppercase tracking-wide">
             <tr>{["", "Ticker", "Since", "Money in", "Out + income", "Value", "Profit", "XIRR", "TWR (episode)", "Yield 12m", "Yield fwd"].map((h, i) => (
@@ -1757,7 +1870,7 @@ function ReturnsTab({ returns, valuations }) {
               <tr key={h.wrapper + h.ticker} className={"hover:bg-[var(--panel2)]" + (h.open ? "" : " opacity-60")}>
                 <td className="px-3 py-2"><WrapperChip wrapper={h.wrapper} /></td>
                 <td className="px-3 py-2 font-medium">{h.ticker}{!h.open && <span className="ml-1.5 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-[var(--chip)] text-[var(--muted)] align-middle">closed</span>}</td>
-                <td className="px-3 py-2 num text-[var(--muted)]">{h.firstDate || "—"}</td>
+                <td className="px-3 py-2 num text-[var(--muted)] whitespace-nowrap text-xs">{h.firstDate || "—"}</td>
                 <td className="px-3 py-2 num text-right">{gbp(h.moneyIn)}</td>
                 <td className="px-3 py-2 num text-right">{gbp(h.moneyOut + h.incomeReceived)}</td>
                 <td className="px-3 py-2 num text-right">{h.open ? (h.priced ? gbp(h.marketValue) : "—") : gbp(0)}</td>
@@ -1782,6 +1895,126 @@ function ReturnsTab({ returns, valuations }) {
 /* ---------------------------- Gilts tab ----------------------------- */
 // Gilt ladder view (build step 4). Pure view over giltAnalytics()
 // (core/gilts.mjs, DMO/HMRC-verified conventions).
+/* --------------------------- Pension & LISA tab --------------------------- */
+// Pension and LISA holdings are insurer/administrator-priced fund units, not
+// exchange-traded — no live price feed exists for them (unlike everything
+// else in the app), and they don't trade via buy/sell the way a normal
+// ledger transaction does. This is a snapshot editor: each row is a current
+// fund holding (units × price), not a transaction history. Editing a row
+// replaces its underlying "opening balance" transaction(s) in one go, and
+// LISA can either be itemised the same way or left as a single cash figure.
+function PensionTab({ txns, setTxns, cash, setCash, secMeta, setSecMeta, prices, setPrices }) {
+  const [form, setForm] = useState({ wrapper: "SIPP", ticker: "", name: "", units: "", price: "" });
+
+  const rows = useMemo(() => {
+    const byKey = {};
+    for (const t of txns) {
+      const w = normWrapper(t.wrapper);
+      if (w !== "SIPP" && w !== "LISA") continue;
+      const key = w + "\u0000" + t.ticker;
+      const sign = t.side === "SELL" ? -1 : 1;
+      (byKey[key] ||= { wrapper: w, ticker: t.ticker, units: 0, cost: 0 });
+      byKey[key].units += sign * t.quantity;
+      byKey[key].cost += sign * t.gbpAmount;
+    }
+    return Object.values(byKey).filter((r) => Math.abs(r.units) > 1e-9)
+      .sort((a, b) => a.wrapper.localeCompare(b.wrapper) || a.ticker.localeCompare(b.ticker));
+  }, [txns]);
+
+  const total = rows.reduce((s, r) => s + r.cost, 0) + (+cash.LISA || 0);
+
+  // Replace ALL transactions for (wrapper, ticker) with a single consolidated
+  // snapshot row — this is a snapshot editor, not a running ledger, so an
+  // edit here means "this is now the position", not "add another trade".
+  const setRow = (wrapper, ticker, units, price) => {
+    const value = round2(units * price);
+    setTxns((all) => {
+      const rest = all.filter((t) => !(normWrapper(t.wrapper) === wrapper && t.ticker === ticker));
+      return [...rest, {
+        id: `pension_${wrapper}_${ticker}_${Date.now()}`, date: todayISO(), ticker, side: "BUY",
+        quantity: units, nativeCurrency: "GBP", nativeAmount: value, fxRate: 1, gbpAmount: value, wrapper,
+        note: "Pension/LISA snapshot — edited via the Pension & LISA tab, cost = value at last edit (no contribution history tracked).",
+      }];
+    });
+    setPrices((p) => ({ ...p, [ticker]: price }));
+  };
+  const removeRow = (wrapper, ticker) => setTxns((all) => all.filter((t) => !(normWrapper(t.wrapper) === wrapper && t.ticker === ticker)));
+
+  const addRow = () => {
+    const tk = form.ticker.toUpperCase().trim();
+    const units = +form.units, price = +form.price;
+    if (!tk || !Number.isFinite(units) || !Number.isFinite(price) || units <= 0) return;
+    setSecMeta((m) => ({ ...m, [tk]: { ...m[tk], name: form.name.trim() || tk, domicile: "GB", eri: false, kind: "fund" } }));
+    setRow(form.wrapper, tk, units, price);
+    setForm({ wrapper: form.wrapper, ticker: "", name: "", units: "", price: "" });
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+        <Stat label="Pension & LISA total" value={gbp(total)} big />
+        <Stat label="SIPP" value={gbp(rows.filter((r) => r.wrapper === "SIPP").reduce((s, r) => s + r.cost, 0))} />
+        <Stat label="LISA" value={gbp(rows.filter((r) => r.wrapper === "LISA").reduce((s, r) => s + r.cost, 0) + (+cash.LISA || 0))} />
+      </div>
+
+      {rows.length === 0 && !(+cash.LISA) ? (
+        <Empty msg="No pension or LISA holdings yet. Add a fund below, or set a LISA cash total if you don't want to itemise by fund." />
+      ) : (
+        <div className="rounded-xl border border-[var(--border)] overflow-hidden">
+          <table className="w-full text-sm">
+            <thead className="bg-[var(--panel2)] text-[var(--muted)] text-xs uppercase tracking-wide">
+              <tr>{["Wrapper", "Fund", "Units", "Price", "Value", ""].map((h, i) => <th key={i} className={"px-3 py-2 font-medium " + (i >= 2 && i <= 4 ? "text-right" : "text-left")}>{h}</th>)}</tr>
+            </thead>
+            <tbody className="divide-y divide-[var(--border)] bg-[var(--panel)]">
+              {rows.map((r) => {
+                const name = secMeta[r.ticker]?.name || r.ticker;
+                const price = r.units ? r.cost / r.units : 0;
+                return (
+                  <tr key={r.wrapper + r.ticker}>
+                    <td className="px-3 py-2"><WrapperChip wrapper={r.wrapper} /></td>
+                    <td className="px-3 py-2">
+                      <div className="font-medium">{r.ticker}</div>
+                      <div className="text-xs text-[var(--muted)]">{name}</div>
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      <input type="number" defaultValue={round2(r.units)} onBlur={(e) => setRow(r.wrapper, r.ticker, +e.target.value || 0, price)} className="input num w-28 text-right py-1" />
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      <input type="number" defaultValue={round2(price)} onBlur={(e) => setRow(r.wrapper, r.ticker, r.units, +e.target.value || 0)} className="input num w-24 text-right py-1" />
+                    </td>
+                    <td className="px-3 py-2 text-right num font-medium">{gbp(r.cost)}</td>
+                    <td className="px-3 py-2 text-right"><button onClick={() => removeRow(r.wrapper, r.ticker)} className="text-[var(--muted)] hover:text-[var(--loss)]"><Trash2 size={15} /></button></td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <div className="flex items-end gap-2 flex-wrap rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3">
+        <Field label="Wrapper"><select value={form.wrapper} onChange={(e) => setForm({ ...form, wrapper: e.target.value })} className="input">{["SIPP", "LISA"].map((w) => <option key={w}>{w}</option>)}</select></Field>
+        <Field label="Ticker / code"><input value={form.ticker} onChange={(e) => setForm({ ...form, ticker: e.target.value.toUpperCase() })} className="input num w-28" placeholder="e.g. CITIUS" /></Field>
+        <Field label="Fund name"><input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="input w-56" placeholder="e.g. L&G Global Equity" /></Field>
+        <Field label="Units"><input type="number" value={form.units} onChange={(e) => setForm({ ...form, units: e.target.value })} className="input num w-28" placeholder="0" /></Field>
+        <Field label="Price / unit (£)"><input type="number" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} className="input num w-28" placeholder="0.00" /></Field>
+        <button onClick={addRow} className="btn-accent"><Plus size={15} /> Add fund</button>
+      </div>
+
+      <div className="flex items-end gap-3 flex-wrap rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3">
+        <Field label="LISA cash / unallocated (£)"><CurrencyInput value={cash.LISA || 0} onChange={(v) => setCash((c) => ({ ...c, LISA: v }))} className="w-40" /></Field>
+        <p className="text-xs text-[var(--muted)] pb-2 max-w-md">Use this if you'd rather track LISA as a single total than itemise it fund-by-fund above.</p>
+      </div>
+
+      <p className="text-xs text-[var(--muted)]">
+        Editing units or price replaces the position outright (this is a snapshot, not a running ledger) — cost basis resets to the new value, since contribution history usually isn't available for insurer-administered pensions.
+        SIPP and LISA are both tax-sheltered, so nothing here affects any CGT or income-tax figure elsewhere in the app; it only feeds your total wealth.
+      </p>
+    </div>
+  );
+}
+
+
 function GiltsTab({ data, secMeta, setSecMeta, prices, setPrices }) {
   const [form, setForm] = React.useState({ ticker: "", name: "", coupon: "", maturity: "", isin: "" });
   const [dmoState, setDmoState] = React.useState({ status: "idle", message: "" }); // idle | loading | done | error
@@ -1850,7 +2083,7 @@ function GiltsTab({ data, secMeta, setSecMeta, prices, setPrices }) {
           </div>
 
           {/* ladder */}
-          <div className="rounded-xl border border-[var(--border)] overflow-hidden">
+          <div className="rounded-xl border border-[var(--border)] overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="bg-[var(--panel2)] text-[var(--muted)] text-xs uppercase tracking-wide">
                 <tr>{["Gilt", "Wrapper", "Maturity", "Nominal", "Clean /£100", "Accrued /£100", "Dirty value", "Next coupon", "GRY (semi)", "12m coupons"].map((h, i) => (
@@ -1865,7 +2098,7 @@ function GiltsTab({ data, secMeta, setSecMeta, prices, setPrices }) {
                       {h.exDiv && <span className="ml-1.5 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-[color:color-mix(in_srgb,var(--m-bb)_18%,transparent)] text-[var(--m-bb)] align-middle" title="In the ex-dividend window (7 business days before the coupon; bank holidays not modelled) — accrued is negative (rebate); the registered holder at ex-div gets the coupon">ex-div</span>}
                     </td>
                     <td className="px-3 py-2"><WrapperChip wrapper={h.wrapper} /></td>
-                    <td className="px-3 py-2 num text-[var(--muted)]">{h.maturity}</td>
+                    <td className="px-3 py-2 num text-[var(--muted)] whitespace-nowrap text-xs">{h.maturity}</td>
                     <td className="px-3 py-2 num text-right">{gbp(h.nominal)}</td>
                     <td className="px-3 py-2 text-right">
                       <input type="number" step="0.0001" value={prices[h.ticker] != null ? +(prices[h.ticker] * 100).toFixed(4) : ""} placeholder="—"
@@ -2003,7 +2236,7 @@ function HoldingsTab({ positions, prices, setPrices, avKey, setAvKey, avMeta, se
                 <td className="px-3 py-2">
                   <input value={r.sec.isin || ""} onChange={(e) => setISIN(r.tk, e.target.value)} placeholder="IE00…" className="input font-mono text-xs w-36 py-1" />
                 </td>
-                <td className="px-3 py-2 num text-right">{num(r.qty, r.qty % 1 ? 4 : 0)}</td>
+                <td className="px-3 py-2 num text-right">{num(r.qty, r.qty % 1 ? 2 : 0)}</td>
                 <td className="px-3 py-2 num text-right text-[var(--muted)]">{gbp(r.avg)}</td>
                 <td className="px-3 py-2 num text-right">{gbp(r.cost)}</td>
                 <td className="px-3 py-2 text-right">
@@ -2885,9 +3118,11 @@ function Empty({ msg }) {
 /* inline utility classes used above */
 const _style = document.createElement("style");
 _style.textContent = `
-  .input{background:var(--panel2);border:1px solid var(--border);border-radius:.5rem;padding:.4rem .6rem;font-size:.875rem;color:var(--fg);outline:none}
+  .input{background:var(--panel2);border:1px solid var(--border);border-radius:.5rem;padding:.4rem .6rem;font-size:.875rem;color:var(--fg);outline:none;box-sizing:border-box;height:2.25rem;line-height:1.25}
   .input:focus{border-color:var(--accent)}
-  .btn-accent{display:inline-flex;align-items:center;gap:.4rem;background:var(--accent);color:var(--accent-fg);font-size:.875rem;font-weight:600;padding:.45rem .8rem;border-radius:.5rem;cursor:pointer}
+  select.input{appearance:none;-webkit-appearance:none;background-image:url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='%23888' stroke-width='1.5'%3e%3cpath d='M5 7.5l5 5 5-5'/%3e%3c/svg%3e");background-repeat:no-repeat;background-position:right .5rem center;background-size:1rem;padding-right:1.75rem}
+  input[type="date"].input,input[type="number"].input{height:2.25rem}
+  .btn-accent{display:inline-flex;align-items:center;gap:.4rem;background:var(--accent);color:var(--accent-fg);font-size:.875rem;font-weight:600;padding:.45rem .8rem;border-radius:.5rem;cursor:pointer;height:2.25rem;box-sizing:border-box}
   .btn-accent:hover{opacity:.92}
 `;
 if (typeof document !== "undefined" && !document.getElementById("cgt-util")) { _style.id = "cgt-util"; document.head.appendChild(_style); }
