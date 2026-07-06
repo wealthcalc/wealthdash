@@ -5,17 +5,17 @@
    Providers export this kind of history in genuinely different shapes —
    confirmed against two real files this session:
      Citi/L&G:  Effective Date,Transaction Type,Transaction Currency,Amount
-                16/03/2026,Switch,,
-                30/11/2022,Regular Contribution,GBP,"£1,784.57"
+                15/03/2026,Switch,,
+                28/02/2025,Regular Contribution,GBP,"£1,234.56"
      Aviva:     Date,Symbol,Type,Currency,Amount
-                2023-01-06,Aviva Pension,Employer Contribution,GBP,1284.50
+                2023-02-10,Pension,Employer Contribution,GBP,600.00
    Different header names, different date formats (DD/MM/YYYY vs
    YYYY-MM-DD), different amount formatting (£ and commas vs plain), and
    "Switch" rows that carry no cash amount at all (a fund-to-fund transfer,
    not a contribution) — all handled here rather than assumed uniform.
    ====================================================================== */
 
-// "£1,784.57" / "1284.50" / "-£95.87" / "" / null -> number or null.
+// "£1,234.56" / "600.00" / "-£42.10" / "" / null -> number or null.
 // Never guesses a sign or magnitude it can't parse cleanly.
 export function parseMoney(raw) {
   if (raw == null) return null;

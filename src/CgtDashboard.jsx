@@ -1362,9 +1362,32 @@ function LedgerTab({ txns, setTxns }) {
     return next;
   }));
   const rows = [...txns].sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+  const [filterWrapper, setFilterWrapper] = useState(() => store.get("cgt.ledger.wrapper", "All"));
+  React.useEffect(() => store.set("cgt.ledger.wrapper", filterWrapper), [filterWrapper]);
+  const wrapperCounts = useMemo(() => {
+    const m = {};
+    for (const t of txns) { const w = normWrapper(t.wrapper); m[w] = (m[w] || 0) + 1; }
+    return m;
+  }, [txns]);
+  const filteredRows = filterWrapper === "All" ? rows : rows.filter((t) => normWrapper(t.wrapper) === filterWrapper);
+  // Adding a transaction while filtered to one wrapper should land in that
+  // wrapper by default — switching the filter re-defaults the add-form too,
+  // without fighting a manual override mid-edit.
+  React.useEffect(() => { if (filterWrapper !== "All") setDraft((d) => ({ ...d, wrapper: filterWrapper })); }, [filterWrapper]);
 
   return (
     <div className="space-y-4">
+      {/* wrapper filter — replaces the per-row Wrapper column */}
+      <div className="flex flex-wrap gap-1.5">
+        {["All", ...WRAPPERS].filter((w) => w === "All" || wrapperCounts[w]).map((w) => (
+          <button key={w} onClick={() => setFilterWrapper(w)}
+            className={"text-xs font-medium px-2.5 py-1 rounded-full border transition " +
+              (filterWrapper === w ? "border-[var(--accent)] bg-[var(--accent)] text-[var(--accent-fg)]" : "border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)]")}>
+            {w}{w !== "All" ? ` (${wrapperCounts[w] || 0})` : ` (${txns.length})`}
+          </button>
+        ))}
+      </div>
+
       {/* add row */}
       <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3">
         <div className="grid grid-cols-2 sm:grid-cols-9 gap-2 items-end">
@@ -1398,10 +1421,10 @@ function LedgerTab({ txns, setTxns }) {
       <div className="rounded-xl border border-[var(--border)] overflow-x-auto">
         <table className="w-full text-xs">
           <thead className="bg-[var(--panel2)] text-[var(--muted)] text-xs uppercase tracking-wide">
-            <tr>{["Date", "Ticker", "Side", "Wrapper", "Qty", "Ccy", "Native", "FX", "GBP", ""].map((h, i) => <th key={i} className={"px-1.5 py-1.5 font-medium " + (i >= 4 ? "text-right" : "text-left")}>{h}</th>)}</tr>
+            <tr>{["Date", "Ticker", "Side", "Qty", "Ccy", "Native", "FX", "GBP", ""].map((h, i) => <th key={i} className={"px-1.5 py-1.5 font-medium " + (i >= 3 ? "text-right" : "text-left")}>{h}</th>)}</tr>
           </thead>
           <tbody className="divide-y divide-[var(--border)] bg-[var(--panel)]">
-            {rows.map((t) => {
+            {filteredRows.map((t) => {
               const isGBP = (t.nativeCurrency || "GBP") === "GBP";
               return (
                 <tr key={t.id} className="hover:bg-[var(--panel2)]">
@@ -1411,11 +1434,6 @@ function LedgerTab({ txns, setTxns }) {
                     <select value={t.side} onChange={(e) => updateTxn(t.id, { side: e.target.value })}
                       className={"input w-[4.5rem] py-0.5 text-xs font-semibold " + (t.side === "BUY" ? "text-[var(--gain)]" : "text-[var(--loss)]")}>
                       <option>BUY</option><option>SELL</option>
-                    </select>
-                  </td>
-                  <td className="px-1 py-1">
-                    <select value={normWrapper(t.wrapper)} onChange={(e) => updateTxn(t.id, { wrapper: e.target.value })} className="input w-[4.5rem] py-0.5 text-xs">
-                      {WRAPPERS.map((w) => <option key={w}>{w}</option>)}
                     </select>
                   </td>
                   <td className="px-1 py-1 text-right"><input type="number" value={t.quantity} onChange={(e) => updateTxn(t.id, { quantity: +e.target.value || 0 })} className="input num w-20 py-0.5 text-xs text-right" /></td>
@@ -1920,6 +1938,7 @@ function ReturnsTab({ returns, valuations }) {
 // LISA can either be itemised the same way or left as a single cash figure.
 function PensionTab({ txns, setTxns, cash, setCash, secMeta, setSecMeta, prices, setPrices, pensionCashflows = [], setPensionCashflows }) {
   const [form, setForm] = useState({ wrapper: "SIPP", provider: "", ticker: "", name: "", units: "", price: "" });
+  const [cfForm, setCfForm] = useState({ provider: "", date: todayISO(), type: "Regular Contribution", amount: "" });
   const [confirmRemoveProvider, setConfirmRemoveProvider] = useState(null);
   const [renaming, setRenaming] = useState(null); // provider name currently being renamed
   const [renameValue, setRenameValue] = useState("");
@@ -2001,6 +2020,19 @@ function PensionTab({ txns, setTxns, cash, setCash, secMeta, setSecMeta, prices,
     setSecMeta((m) => ({ ...m, [tk]: { ...m[tk], name: form.name.trim() || tk, domicile: "GB", eri: false, kind: "fund", provider: form.provider.trim() || "Unassigned" } }));
     setRow(form.wrapper, tk, units, price);
     setForm({ ...form, ticker: "", name: "", units: "", price: "" });
+  };
+
+  // Adding a contribution one at a time — the alternative to bulk CSV import
+  // on the Import tab. Same cashflow shape either way, so both feed XIRR
+  // identically; this is just for a single payslip/statement at a time.
+  const addContribution = () => {
+    const amt = +cfForm.amount;
+    if (!cfForm.provider.trim() || !cfForm.date || !Number.isFinite(amt) || amt <= 0) return;
+    setPensionCashflows((p) => [...p, {
+      id: uid(), date: cfForm.date, provider: cfForm.provider.trim(), type: cfForm.type,
+      ccy: "GBP", nativeAmount: round2(amt), gbpAmount: round2(amt),
+    }]);
+    setCfForm({ ...cfForm, amount: "" });
   };
 
   // Removing a provider drops every holding tagged with it — for when a
@@ -2137,6 +2169,19 @@ function PensionTab({ txns, setTxns, cash, setCash, secMeta, setSecMeta, prices,
         <button onClick={addRow} className="btn-accent"><Plus size={15} /> Add fund</button>
       </div>
 
+      {/* One-off contribution — the alternative to bulk CSV import on the
+          Import tab. Either path feeds the same XIRR calculation; use this
+          for a single payslip, the CSV importer for a full history at once. */}
+      <div className="flex items-end gap-2 flex-wrap rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3">
+        <Field label="Provider">
+          <input list="pension-providers" value={cfForm.provider} onChange={(e) => setCfForm({ ...cfForm, provider: e.target.value })} className="input w-44" placeholder="e.g. L&G (Citi)" />
+        </Field>
+        <Field label="Date"><input type="date" value={cfForm.date} onChange={(e) => setCfForm({ ...cfForm, date: e.target.value })} className="input num" /></Field>
+        <Field label="Type"><select value={cfForm.type} onChange={(e) => setCfForm({ ...cfForm, type: e.target.value })} className="input"><option>Regular Contribution</option><option>Employer Contribution</option><option>Adjustment</option></select></Field>
+        <Field label="Amount (£)"><input type="number" value={cfForm.amount} onChange={(e) => setCfForm({ ...cfForm, amount: e.target.value })} className="input num w-32" placeholder="0.00" /></Field>
+        <button onClick={addContribution} className="btn-accent"><Plus size={15} /> Add contribution</button>
+      </div>
+
       <div className="flex items-end gap-3 flex-wrap rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3">
         <Field label="LISA cash / unallocated (£)"><CurrencyInput value={cash.LISA || 0} onChange={(v) => setCash((c) => ({ ...c, LISA: v }))} className="w-40" /></Field>
         <p className="text-xs text-[var(--muted)] pb-2 max-w-md">Use this if you'd rather track LISA as a single total than itemise it fund-by-fund above.</p>
@@ -2145,6 +2190,7 @@ function PensionTab({ txns, setTxns, cash, setCash, secMeta, setSecMeta, prices,
       <p className="text-xs text-[var(--muted)]">
         Holdings are grouped by provider — click a provider's name to rename it (e.g. when a scheme moves administrator), or "Remove provider" to drop every holding under it in one go (for a full transfer/consolidation elsewhere). New funds pick up whichever provider you type or select.
         Editing units or price replaces the position outright (this is a snapshot, not a running ledger) — cost basis resets to the new value, since contribution history usually isn't available for insurer-administered pensions.
+        Contributions feed each provider's XIRR — add them one at a time above, or in bulk on the Import CSV tab's "Pension contributions" mode.
         SIPP and LISA are both tax-sheltered, so nothing here affects any CGT or income-tax figure elsewhere in the app; it only feeds your total wealth.
       </p>
     </div>
@@ -3144,7 +3190,7 @@ function ImportTab({ setTxns, setTab, setIncomeEntries, setEriEntries, secMeta, 
               <input list="import-pension-providers" value={pensionProvider} onChange={(e) => setPensionProvider(e.target.value)} className="input w-56" placeholder="e.g. L&G (Citi)" />
               <datalist id="import-pension-providers">{existingProviders.map((p) => <option key={p} value={p} />)}</datalist>
             </Field>
-            <textarea value={rawPension} onChange={(e) => setRawPension(e.target.value)} rows={7} placeholder={"Date,Symbol,Type,Currency,Amount\n2023-01-06,Aviva Pension,Employer Contribution,GBP,1284.50\n2023-01-27,Aviva Pension,Employer Contribution,GBP,7129.50"} className="input num w-full font-mono text-xs" />
+            <textarea value={rawPension} onChange={(e) => setRawPension(e.target.value)} rows={7} placeholder={"Date,Symbol,Type,Currency,Amount\n2023-01-06,Pension,Employer Contribution,GBP,600.00\n2023-02-06,Pension,Employer Contribution,GBP,600.00"} className="input num w-full font-mono text-xs" />
             <button onClick={parsePension} className="btn-accent"><Wand2 size={15} /> Parse & map</button>
           </div>
           {parsedPension && (

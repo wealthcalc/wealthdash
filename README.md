@@ -105,6 +105,32 @@ and a sale-price pair that turned out to be [clean, dirty] in the RTF stream
 despite the header text listing them the other way round — were caught by
 that test before shipping, not discovered by a user later.
 
+## Transactions tab: wrapper filter instead of a column, contribution privacy fix
+
+- **Transactions tab now has wrapper filter pills** (All / GIA / ISA / SIPP /
+  LISA / VCT, each showing a count) instead of a Wrapper column in the
+  table — filtering to one wrapper makes the column redundant, and adding a
+  transaction while filtered defaults to that wrapper. Trade-off worth
+  knowing: reassigning an existing transaction's wrapper is no longer a
+  table-cell edit; if you need to move one, say so and I'll add it back in
+  some form.
+- **Pension contributions can be added individually now**, not just via
+  bulk CSV import — a small form on the Pension & LISA tab (provider, date,
+  type, amount) for a single payslip/statement. Both paths write the same
+  cashflow record and feed XIRR identically.
+- **Removed your real transaction history from the test fixtures.** The
+  pension-import tests were checking their parsing logic against your
+  actual Citi and Aviva CSV files, which meant your real contribution dates
+  and amounts were sitting in the shipped repo. Replaced with synthetic
+  fixtures that exercise the exact same edge cases (BOM, £/comma-formatted
+  amounts, DD/MM/YYYY vs ISO dates, Switch/Phasing/Adjustment row types,
+  an unquoted-comma CSV gotcha the synthetic data itself surfaced and got
+  fixed) — same test rigour, no personal data. A stray real-data leak was
+  also caught and fixed in one of the Import tab's placeholder examples.
+- **Checked the L&G price-history API you found** — its `robots.txt`
+  explicitly disallows automated access, on top of the general site ToS
+  prohibition found earlier. Won't build against it.
+
 ## Pension IRR + contribution import
 
 - **`core/pension-import.mjs`** — a new pure, tested module for parsing
