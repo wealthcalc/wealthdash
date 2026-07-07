@@ -4,6 +4,37 @@ Client-side React (Vite) CGT tracker + wealth dashboard, with a Yahoo Finance
 price proxy running as a Vercel serverless function. All personal data stays in
 the browser's localStorage; the deployment ships only code.
 
+## Phase 1 (this change set): engines out of the monolith, UI split, Home tab
+
+Three structural changes, all behaviour-preserving (142 node tests green,
+verified by SSR smoke renders, not just compilation):
+
+- **Engines extracted from the JSX monolith** into pure, node-tested core
+  modules: `core/uk-tax.mjs` (CGT liability incl. the 2024/25 mid-year rate
+  split, loss carry-forward chaining, investment-income tax, the multi-year
+  AEA harvesting optimiser), `core/ibkr-import.mjs` (Flex + Activity
+  statement parsing), and `core/ishares-eri.mjs` (UK Reportable Income
+  workbook parser). The test suites these engines' comments referenced
+  (`incometax`, `ibkr`, `optimiser`-adjacent) did not actually exist in the
+  repo — they do now (+53 tests, expectations hand-derived from GOV.UK
+  rules, not computed by the engine under test).
+- **UI split into feature modules** (`src/features/*` + `src/ui/shared.jsx`
+  + `src/ui/LivePricesPanel.jsx`), lazy-loaded per tab via `React.lazy`.
+  Initial JS drops 370 kB -> ~208 kB (xlsx/papaparse now load only when the
+  Import tab does). Persisted app state moved to a Zustand store
+  (`src/state/appStore.js`) with the SAME localStorage keys and
+  setState-compatible setters — existing data and backups load unchanged;
+  components can now subscribe to slices instead of re-rendering the world.
+- **New Home tab** (default for new users): total-wealth headline with 1d/30d
+  deltas, an SVG invested-value trend chart drawn from the automatic daily
+  valuation snapshots (time-scaled x-axis, honest empty state until two
+  snapshots exist), per-wrapper cards with unrealised gain and XIRR badges,
+  allocation bars, and a needs-attention rail (prices >3 days old, unpriced
+  holdings). Read-only by design — no editing on the most-visited screen.
+- Also: `.gitignore` restored (node_modules/dist were commit-able before);
+  fixed an unguarded `document.createElement` at module scope that crashed
+  any non-browser load of the UI bundle (caught by the new smoke render).
+
 ## Layout
 ```
 .

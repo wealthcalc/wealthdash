@@ -333,8 +333,10 @@ function Empty({ msg }) {
 }
 
 /* inline utility classes used above */
-const _style = document.createElement("style");
-_style.textContent = `
+// Guarded end-to-end so this module can load outside a browser (tests / SSR
+// smoke renders) — the original guarded only appendChild, not createElement.
+const _style = typeof document !== "undefined" ? document.createElement("style") : null;
+if (_style) _style.textContent = `
   .input{background:var(--panel2);border:1px solid var(--border);border-radius:.5rem;padding:.4rem .6rem;font-size:.875rem;color:var(--fg);outline:none;box-sizing:border-box;line-height:1.25}
   input.input,select.input{height:2.25rem}
   textarea.input{min-height:9rem;line-height:1.5;resize:vertical}
@@ -343,7 +345,7 @@ _style.textContent = `
   .btn-accent{display:inline-flex;align-items:center;gap:.4rem;background:var(--accent);color:var(--accent-fg);font-size:.875rem;font-weight:600;padding:.45rem .8rem;border-radius:.5rem;cursor:pointer;height:2.25rem;box-sizing:border-box}
   .btn-accent:hover{opacity:.92}
 `;
-if (typeof document !== "undefined" && !document.getElementById("cgt-util")) { _style.id = "cgt-util"; document.head.appendChild(_style); }
+if (_style && !document.getElementById("cgt-util")) { _style.id = "cgt-util"; document.head.appendChild(_style); }
 
 export {
   store, fmtRate, unitsHeldAt, SECURITY_SEED, gbp, gbp0,

@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useCallback, useRef, lazy, Suspense } from "react";
 import {
   Download, Upload, Moon, Sun, TableProperties, Receipt, FileUp, AlertTriangle,
-  Wallet, PoundSterling, PieChart, Percent, Landmark, PiggyBank,
+  Wallet, PoundSterling, PieChart, Percent, Landmark, PiggyBank, TrendingUp,
 } from "lucide-react";
 import { matchPortfolio, ukTaxYear } from "./core/cgt-engine.mjs";
 import { buildWealthModel, classifyInstrument, normWrapper } from "./core/portfolio.mjs";
@@ -14,6 +14,7 @@ import useAppStore from "./state/appStore.js";
 
 // Feature sections are lazy-loaded so the initial bundle carries only the
 // shell + shared primitives; each tab loads on first visit.
+const HomeTab = lazy(() => import("./features/HomeTab.jsx"));
 const WealthTab = lazy(() => import("./features/WealthTab.jsx"));
 const ReturnsTab = lazy(() => import("./features/ReturnsTab.jsx"));
 const GiltsTab = lazy(() => import("./features/GiltsTab.jsx"));
@@ -290,7 +291,7 @@ export default function App() {
 
           {/* tabs */}
           <div className="flex flex-wrap gap-1 mt-5 border-b border-[var(--border)]">
-            {[["wealth", "Wealth", PieChart], ["returns", "Returns", Percent], ["gilts", "Gilts", Landmark], ["pension", "Pension & LISA", PiggyBank], ["cgt", "CGT", TableProperties], ["holdings", "Holdings", Wallet], ["income", "Income", PoundSterling], ["ledger", "Transactions", Receipt], ["import", "Import CSV", FileUp]].map(([k, label, Icon]) => (
+            {[["home", "Home", TrendingUp], ["wealth", "Wealth", PieChart], ["returns", "Returns", Percent], ["gilts", "Gilts", Landmark], ["pension", "Pension & LISA", PiggyBank], ["cgt", "CGT", TableProperties], ["holdings", "Holdings", Wallet], ["income", "Income", PoundSterling], ["ledger", "Transactions", Receipt], ["import", "Import CSV", FileUp]].map(([k, label, Icon]) => (
               <button key={k} onClick={() => setTab(k)}
                 className={"px-3 py-2 text-sm font-medium flex items-center gap-1.5 border-b-2 -mb-px transition " +
                   (tab === k ? "border-[var(--accent)] text-[var(--fg)]" : "border-transparent text-[var(--muted)] hover:text-[var(--fg)]")}>
@@ -308,6 +309,7 @@ export default function App() {
 
           <div className="mt-5">
           <Suspense fallback={<div className="text-sm text-[var(--muted)] py-6">Loading…</div>}>
+            {tab === "home" && <HomeTab {...{ model: wealthModel, valuations, returns, priceMeta, setTab }} />}
             {tab === "wealth" && <WealthTab {...{ model: wealthModel, cash, setCash, prices, setPrices, avKey, setAvKey, avMeta, setAvMeta, priceMeta, setPriceMeta, txns, secMeta, setSecMeta, dmoReportDate, setDmoReportDate }} />}
             {tab === "returns" && <ReturnsTab {...{ returns, valuations, pensionCashflows, secMeta, txns }} />}
             {tab === "gilts" && <GiltsTab {...{ data: giltData, secMeta, setSecMeta, prices, setPrices, dmoReportDate, setDmoReportDate }} />}

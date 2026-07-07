@@ -3,3 +3,4 @@ dist/
 .vercel
 vite.config.js.timestamp-*
 *.timestamp-*.mjs
+node_modules/.smoke/
