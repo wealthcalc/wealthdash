@@ -17,7 +17,7 @@ import { computeReturns, xirr } from "./core/returns.mjs";
 // Gilt engine (build step 4): coupon schedule, accrued interest, clean/dirty,
 // GRY, Accrued Income Scheme. DMO/HMRC-verified conventions (gilts.test.mjs).
 import { giltAnalytics } from "./core/gilts.mjs";
-import { guessPensionColumns, mapPensionRow } from "./core/pension-import.mjs";
+import { guessPensionColumns, mapPensionRow, allocateCostByValueWeight } from "./core/pension-import.mjs";
 // xlsx (SheetJS) is ~120kb gzipped and only needed for the iShares ERI
 // importer, so it's loaded on demand (see readWorkbookFile) rather than
 // bundled into the initial page load.
@@ -451,6 +451,7 @@ function parseISharesWorkbook(sheets, holdingIsins) {
 
 /* ----------------------------- helpers ------------------------------ */
 const gbp = (x) => (x < 0 ? "−£" : "£") + Math.abs(x).toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const gbp0 = (x) => (x < 0 ? "−£" : "£") + Math.round(Math.abs(x)).toLocaleString("en-GB");
 // One chip style per wrapper, used everywhere a wrapper tag is shown, so
 // adding a wrapper (like VCT) means updating one place, not three.
 const WRAPPER_CHIP_CLASS = {
@@ -522,6 +523,31 @@ function CurrencyInput({ value, onChange, className = "" }) {
         onBlur={() => { setEditing(false); onChange(+raw || 0); }}
       />
     </div>
+  );
+}
+// Same show-formatted/edit-plain pattern as CurrencyInput, but for
+// non-currency numbers (quantities, FX-converted amounts not in GBP) —
+// thousands separators while not focused, no £ prefix, decimals preserved
+// (quantities are often fractional, e.g. DRIP shares).
+function NumberInput({ value, onChange, className = "", dp = 2, disabled = false }) {
+  const [editing, setEditing] = useState(false);
+  const [raw, setRaw] = useState(String(value ?? 0));
+  React.useEffect(() => { if (!editing) setRaw(String(value ?? 0)); }, [value, editing]);
+  const display = () => {
+    const v = +value || 0;
+    const decimals = v % 1 ? Math.min(dp, 6) : 0;
+    return num(v, decimals);
+  };
+  return (
+    <input
+      type={editing ? "number" : "text"}
+      disabled={disabled}
+      className={"input num text-right disabled:opacity-50 " + className}
+      value={editing ? raw : display()}
+      onFocus={() => { setEditing(true); setRaw(String(value ?? 0)); }}
+      onChange={(e) => setRaw(e.target.value)}
+      onBlur={() => { setEditing(false); onChange(+raw || 0); }}
+    />
   );
 }
 const uid = () => Math.random().toString(36).slice(2, 9);
@@ -625,6 +651,35 @@ export default function App() {
   const [avMeta, setAvMeta] = useState(() => store.get("cgt.avmeta", {}));       // { ticker: {symbol, currency} }
   const [priceMeta, setPriceMeta] = useState(() => store.get("cgt.pricemeta", {})); // { ticker: {asOf, raw, ccy} }
   const [secMeta, setSecMeta] = useState(() => ({ ...SECURITY_SEED, ...store.get("cgt.secmeta", {}) })); // { ticker: {isin, name, domicile, eri} }
+  // Shared by the Pension tab (one-off add) and the Import tab (bulk CSV) —
+  // one allocation function, not two copies that could drift. Accepts an
+  // optional cashflow list override so a caller can pass "current + about to
+  // be added" directly, rather than racing a setState that hasn't landed yet.
+  const recomputeProviderCost = useCallback((provider, cashflowsOverride) => {
+    const cfs = (cashflowsOverride || pensionCashflows).filter((c) => c.provider === provider && c.gbpAmount != null);
+    const totalContributed = cfs.reduce((s, c) => s + c.gbpAmount, 0);
+    if (totalContributed <= 0) return;
+    const providerTickers = Object.entries(secMeta).filter(([, m]) => m.provider === provider).map(([tk]) => tk);
+    const byTicker = {};
+    for (const t of txns) {
+      if (!providerTickers.includes(t.ticker)) continue;
+      const w = normWrapper(t.wrapper);
+      if (w !== "SIPP" && w !== "LISA") continue;
+      const sign = t.side === "SELL" ? -1 : 1;
+      (byTicker[t.ticker] ||= { qty: 0, cost: 0 });
+      byTicker[t.ticker].qty += sign * t.quantity;
+      byTicker[t.ticker].cost += sign * t.gbpAmount;
+    }
+    const funds = Object.entries(byTicker).filter(([, v]) => v.qty > 1e-9)
+      .map(([tk, v]) => ({ ticker: tk, value: (prices[tk] ?? (v.qty ? v.cost / v.qty : 0)) * v.qty }));
+    if (!funds.length) return;
+    const allocated = allocateCostByValueWeight(totalContributed, funds);
+    setTxns((all) => all.map((t) => {
+      const hit = allocated.find((a) => a.ticker === t.ticker);
+      if (!hit || !providerTickers.includes(t.ticker)) return t;
+      return { ...t, gbpAmount: hit.cost, nativeAmount: hit.cost, note: `Cost basis allocated from ${provider}'s total contributions (£${totalContributed.toFixed(2)}) by current-value weight — recomputed ${todayISO()}.` };
+    }));
+  }, [pensionCashflows, secMeta, txns, prices]);
   const [error, setError] = useState(null);
 
   // persist (guarded; no-ops in sandbox)
@@ -886,7 +941,7 @@ export default function App() {
             {tab === "wealth" && <WealthTab {...{ model: wealthModel, cash, setCash, prices, setPrices, avKey, setAvKey, avMeta, setAvMeta, priceMeta, setPriceMeta, txns, secMeta, setSecMeta }} />}
             {tab === "returns" && <ReturnsTab {...{ returns, valuations }} />}
             {tab === "gilts" && <GiltsTab {...{ data: giltData, secMeta, setSecMeta, prices, setPrices }} />}
-            {tab === "pension" && <PensionTab {...{ txns, setTxns, cash, setCash, secMeta, setSecMeta, prices, setPrices, pensionCashflows, setPensionCashflows }} />}
+            {tab === "pension" && <PensionTab {...{ txns, setTxns, cash, setCash, secMeta, setSecMeta, prices, setPrices, pensionCashflows, setPensionCashflows, recomputeProviderCost }} />}
             {tab === "cgt" && <CgtSection {...{
               taxYears, activeYear, setYear, yearDisposals, liab, income, setIncome, carried, setCarried,
               carryForward: allYears.carriedForward, exemptGiltDisposalCount,
@@ -895,7 +950,7 @@ export default function App() {
             {tab === "income" && <IncomeTab {...{ incomeEntries, setIncomeEntries, eriEntries, setEriEntries, eriTxns, incomeByYear, incomeAllWrappers, income, setIncome, txns: giaTxns, secMeta, setSecMeta }} />}
             {tab === "holdings" && <HoldingsTab {...{ positions: wealthModel ? wealthModel.positions : [], prices, setPrices, avKey, setAvKey, avMeta, setAvMeta, priceMeta, setPriceMeta, txns, secMeta, setSecMeta }} />}
             {tab === "ledger" && <LedgerTab {...{ txns, setTxns }} />}
-            {tab === "import" && <ImportTab {...{ setTxns, setTab, setIncomeEntries, setEriEntries, secMeta, setPensionCashflows }} />}
+            {tab === "import" && <ImportTab {...{ setTxns, setTab, setIncomeEntries, setEriEntries, secMeta, setPensionCashflows, pensionCashflows, recomputeProviderCost }} />}
           </div>
 
           <p className="text-xs text-[var(--muted)] mt-8 leading-relaxed">
@@ -1419,37 +1474,37 @@ function LedgerTab({ txns, setTxns }) {
 
       {/* table — every field editable inline; edits recompute GBP from native×fx same as the add form */}
       <div className="rounded-xl border border-[var(--border)] overflow-x-auto">
-        <table className="w-full text-xs">
+        <table className="w-full text-sm">
           <thead className="bg-[var(--panel2)] text-[var(--muted)] text-xs uppercase tracking-wide">
-            <tr>{["Date", "Ticker", "Side", "Qty", "Ccy", "Native", "FX", "GBP", ""].map((h, i) => <th key={i} className={"px-1.5 py-1.5 font-medium " + (i >= 3 ? "text-right" : "text-left")}>{h}</th>)}</tr>
+            <tr>{["Date", "Ticker", "Side", "Qty", "Ccy", "Native", "FX", "GBP", ""].map((h, i) => <th key={i} className={"px-2 py-1.5 font-medium " + (i >= 3 ? "text-right" : "text-left")}>{h}</th>)}</tr>
           </thead>
           <tbody className="divide-y divide-[var(--border)] bg-[var(--panel)]">
             {filteredRows.map((t) => {
               const isGBP = (t.nativeCurrency || "GBP") === "GBP";
               return (
                 <tr key={t.id} className="hover:bg-[var(--panel2)]">
-                  <td className="px-1 py-1"><input type="date" value={t.date} onChange={(e) => updateTxn(t.id, { date: e.target.value })} className="input num w-[8.5rem] py-0.5 text-xs" /></td>
-                  <td className="px-1 py-1"><input value={t.ticker} onChange={(e) => updateTxn(t.id, { ticker: e.target.value.toUpperCase() })} className="input w-16 py-0.5 text-xs font-medium" /></td>
-                  <td className="px-1 py-1">
+                  <td className="px-2 py-1"><input type="date" value={t.date} onChange={(e) => updateTxn(t.id, { date: e.target.value })} className="input num w-[9.5rem] py-1 text-sm" /></td>
+                  <td className="px-2 py-1"><input value={t.ticker} onChange={(e) => updateTxn(t.id, { ticker: e.target.value.toUpperCase() })} className="input w-24 py-1 text-sm font-medium" /></td>
+                  <td className="px-2 py-1">
                     <select value={t.side} onChange={(e) => updateTxn(t.id, { side: e.target.value })}
-                      className={"input w-[4.5rem] py-0.5 text-xs font-semibold " + (t.side === "BUY" ? "text-[var(--gain)]" : "text-[var(--loss)]")}>
+                      className={"input w-24 py-1 text-sm font-semibold " + (t.side === "BUY" ? "text-[var(--gain)]" : "text-[var(--loss)]")}>
                       <option>BUY</option><option>SELL</option>
                     </select>
                   </td>
-                  <td className="px-1 py-1 text-right"><input type="number" value={t.quantity} onChange={(e) => updateTxn(t.id, { quantity: +e.target.value || 0 })} className="input num w-20 py-0.5 text-xs text-right" /></td>
-                  <td className="px-1 py-1">
-                    <select value={t.nativeCurrency || "GBP"} onChange={(e) => updateTxn(t.id, { nativeCurrency: e.target.value })} className="input w-16 py-0.5 text-xs">
+                  <td className="px-2 py-1 text-right"><NumberInput value={t.quantity} onChange={(v) => updateTxn(t.id, { quantity: v })} className="w-28 py-1 text-sm" dp={4} /></td>
+                  <td className="px-2 py-1">
+                    <select value={t.nativeCurrency || "GBP"} onChange={(e) => updateTxn(t.id, { nativeCurrency: e.target.value })} className="input w-20 py-1 text-sm">
                       {["GBP", "USD", "EUR", "CHF"].map((c) => <option key={c}>{c}</option>)}
                     </select>
                   </td>
-                  <td className="px-1 py-1 text-right">
-                    <input type="number" value={isGBP ? t.gbpAmount : t.nativeAmount} disabled={isGBP} onChange={(e) => updateTxn(t.id, { nativeAmount: +e.target.value || 0 })} className="input num w-20 py-0.5 text-xs text-right disabled:opacity-50" />
+                  <td className="px-2 py-1 text-right">
+                    <NumberInput value={isGBP ? t.gbpAmount : t.nativeAmount} onChange={(v) => updateTxn(t.id, { nativeAmount: v })} disabled={isGBP} className="w-28 py-1 text-sm" />
                   </td>
-                  <td className="px-1 py-1 text-right">
-                    <input type="number" value={t.fxRate ?? 1} disabled={isGBP} onChange={(e) => updateTxn(t.id, { fxRate: +e.target.value || 0 })} className="input num w-16 py-0.5 text-xs text-right disabled:opacity-50" />
+                  <td className="px-2 py-1 text-right">
+                    <input type="number" value={t.fxRate ?? 1} disabled={isGBP} onChange={(e) => updateTxn(t.id, { fxRate: +e.target.value || 0 })} className="input num w-20 py-1 text-sm text-right disabled:opacity-50" />
                   </td>
-                  <td className="px-1 py-1 text-right"><input type="number" value={t.gbpAmount} onChange={(e) => updateTxn(t.id, { gbpAmount: +e.target.value || 0 })} className="input num w-20 py-0.5 text-xs text-right font-medium" /></td>
-                  <td className="px-1 py-1 text-right"><button onClick={() => setTxns((p) => p.filter((x) => x.id !== t.id))} className="text-[var(--muted)] hover:text-[var(--loss)]"><Trash2 size={13} /></button></td>
+                  <td className="px-2 py-1 text-right"><NumberInput value={t.gbpAmount} onChange={(v) => updateTxn(t.id, { gbpAmount: v })} className="w-28 py-1 text-sm font-medium" /></td>
+                  <td className="px-2 py-1 text-right"><button onClick={() => setTxns((p) => p.filter((x) => x.id !== t.id))} className="text-[var(--muted)] hover:text-[var(--loss)]"><Trash2 size={14} /></button></td>
                 </tr>
               );
             })}
@@ -1674,15 +1729,29 @@ function WealthTab({ model, cash, setCash, prices, setPrices, avKey, setAvKey, a
   const tickers = [...new Set(positions.map((p) => p.ticker))].sort();
   const wrapperOrder = [...WRAPPERS, ...Object.keys(byWrapper).filter((w) => !WRAPPERS.includes(w))].filter((w) => byWrapper[w]);
   const setWrapperCash = (w, v) => setCash((c) => { const n = { ...c }; if (v === "" || isNaN(+v)) delete n[w]; else n[w] = +v; return n; });
+  // Pension wrappers aren't accessible until retirement age — split out from
+  // everything else ("readily available": GIA, ISA, VCT) so Total Wealth
+  // doesn't imply money you can't actually get at right now.
+  const PENSION_WRAPPERS = ["SIPP", "LISA"];
+  const pensionTotal = PENSION_WRAPPERS.reduce((s, w) => s + (byWrapper[w]?.total || 0), 0);
+  const readilyAvailable = total.total - pensionTotal;
 
   return (
     <div className="space-y-4">
       {/* headline */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <Stat label="Total wealth" value={gbp(total.total)} sub={`${total.positions} holding${total.positions === 1 ? "" : "s"} + cash across ${wrapperOrder.length} wrapper${wrapperOrder.length === 1 ? "" : "s"}`} big />
-        <Stat label="Invested (priced)" value={total.priced ? gbp(total.marketValue) : "—"} sub={total.unpriced ? `${total.priced}/${total.positions} priced` : "all priced"} />
-        <Stat label="Cash" value={gbp(total.cash)} />
-        <Stat label="Unrealised gain" value={total.priced ? gbp(total.unrealised) : "—"} sub={total.bookCostPriced ? `${total.unrealised >= 0 ? "+" : ""}${num((total.unrealised / total.bookCostPriced) * 100)}% on priced book cost` : undefined} tone={total.unrealised >= 0 ? "gain" : "loss"} />
+        <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] px-4 py-3 col-span-2 sm:col-span-1">
+          <div className="text-xs text-[var(--muted)]">Total wealth</div>
+          <div className="num font-semibold text-2xl mt-0.5">{gbp0(total.total)}</div>
+          <div className="text-xs text-[var(--muted)] mt-0.5">{total.positions} holding{total.positions === 1 ? "" : "s"} + cash across {wrapperOrder.length} wrapper{wrapperOrder.length === 1 ? "" : "s"}</div>
+          <div className="mt-2 pt-2 border-t border-[var(--border)] flex justify-between gap-3 text-xs">
+            <span><span className="text-[var(--muted)]">Readily available</span> <span className="num font-medium">{gbp0(readilyAvailable)}</span></span>
+            <span><span className="text-[var(--muted)]">Pension (SIPP+LISA)</span> <span className="num font-medium">{gbp0(pensionTotal)}</span></span>
+          </div>
+        </div>
+        <Stat label="Invested (priced)" value={total.priced ? gbp0(total.marketValue) : "—"} sub={total.unpriced ? `${total.priced}/${total.positions} priced` : "all priced"} />
+        <Stat label="Cash" value={gbp0(total.cash)} />
+        <Stat label="Unrealised gain" value={total.priced ? gbp0(total.unrealised) : "—"} sub={total.bookCostPriced ? `${total.unrealised >= 0 ? "+" : ""}${num((total.unrealised / total.bookCostPriced) * 100)}% on priced book cost` : undefined} tone={total.unrealised >= 0 ? "gain" : "loss"} />
       </div>
 
       {total.unpriced > 0 && (
@@ -1825,12 +1894,14 @@ function RateCell({ r }) {
 }
 
 function ReturnsTab({ returns, valuations }) {
+  const [selectedWrapper, setSelectedWrapper] = useState(null); // click a per-wrapper row to filter the per-holding table below
   if (!returns) return <Empty msg="Couldn't compute returns — check the Transactions tab for ledger errors." />;
   const { perHolding, byWrapper, total, portfolioTWR } = returns;
   if (!perHolding.length) return <Empty msg="No transactions yet. Returns appear once you have holdings (any wrapper)." />;
 
   const wrapperOrder = [...WRAPPERS, ...Object.keys(byWrapper).filter((w) => !WRAPPERS.includes(w))].filter((w) => byWrapper[w]);
-  const openH = perHolding.filter((h) => h.open), closedH = perHolding.filter((h) => !h.open);
+  const openH = perHolding.filter((h) => h.open && (!selectedWrapper || h.wrapper === selectedWrapper));
+  const closedH = perHolding.filter((h) => !h.open && (!selectedWrapper || h.wrapper === selectedWrapper));
 
   return (
     <div className="space-y-4">
@@ -1861,7 +1932,7 @@ function ReturnsTab({ returns, valuations }) {
         )}
       </div>
 
-      {/* per-wrapper */}
+      {/* per-wrapper — click a row to filter the per-holding table below */}
       <div className="rounded-xl border border-[var(--border)] overflow-hidden">
         <table className="w-full text-sm">
           <thead className="bg-[var(--panel2)] text-[var(--muted)] text-xs uppercase tracking-wide">
@@ -1872,8 +1943,11 @@ function ReturnsTab({ returns, valuations }) {
           <tbody className="divide-y divide-[var(--border)] bg-[var(--panel)]">
             {wrapperOrder.map((w) => {
               const a = byWrapper[w];
+              const selected = selectedWrapper === w;
               return (
-                <tr key={w} className="hover:bg-[var(--panel2)]">
+                <tr key={w} onClick={() => setSelectedWrapper(selected ? null : w)}
+                  className={"cursor-pointer " + (selected ? "bg-[color:color-mix(in_srgb,var(--accent)_10%,transparent)]" : "hover:bg-[var(--panel2)]")}
+                  title="Click to filter the holdings table below to this wrapper">
                   <td className="px-3 py-2 font-medium">{w}{a.unpricedOpen > 0 && <span className="text-[var(--m-bb)]" title={`${a.unpricedOpen} open holding(s) unpriced — profit/XIRR unavailable`}> *</span>}</td>
                   <td className="px-3 py-2 num text-right">{gbp(a.moneyIn)}</td>
                   <td className="px-3 py-2 num text-right">{gbp(a.moneyOut + a.income)}</td>
@@ -1892,6 +1966,10 @@ function ReturnsTab({ returns, valuations }) {
 
       {/* per-holding */}
       <div className="rounded-xl border border-[var(--border)] overflow-x-auto">
+        <div className="flex items-center justify-between px-3 pt-2">
+          <span className="text-xs text-[var(--muted)]">{selectedWrapper ? `Filtered to ${selectedWrapper}` : "All wrappers"}</span>
+          {selectedWrapper && <button onClick={() => setSelectedWrapper(null)} className="text-xs text-[var(--accent)] hover:underline">Clear filter</button>}
+        </div>
         <table className="w-full text-sm">
           <thead className="bg-[var(--panel2)] text-[var(--muted)] text-xs uppercase tracking-wide">
             <tr>{["", "Ticker", "Since", "Money in", "Out + income", "Value", "Profit", "XIRR", "TWR (episode)", "Yield 12m", "Yield fwd"].map((h, i) => (
@@ -1936,7 +2014,7 @@ function ReturnsTab({ returns, valuations }) {
 // fund holding (units × price), not a transaction history. Editing a row
 // replaces its underlying "opening balance" transaction(s) in one go, and
 // LISA can either be itemised the same way or left as a single cash figure.
-function PensionTab({ txns, setTxns, cash, setCash, secMeta, setSecMeta, prices, setPrices, pensionCashflows = [], setPensionCashflows }) {
+function PensionTab({ txns, setTxns, cash, setCash, secMeta, setSecMeta, prices, setPrices, pensionCashflows = [], setPensionCashflows, recomputeProviderCost }) {
   const [form, setForm] = useState({ wrapper: "SIPP", provider: "", ticker: "", name: "", units: "", price: "" });
   const [cfForm, setCfForm] = useState({ provider: "", date: todayISO(), type: "Regular Contribution", amount: "" });
   const [confirmRemoveProvider, setConfirmRemoveProvider] = useState(null);
@@ -1944,11 +2022,15 @@ function PensionTab({ txns, setTxns, cash, setCash, secMeta, setSecMeta, prices,
   const [renameValue, setRenameValue] = useState("");
   const [expandedCf, setExpandedCf] = useState(null); // provider whose contribution history is expanded
 
+  // LISA "invested but not itemised by fund" ticker — excluded from the
+  // normal per-provider fund tables below, shown in its own summary instead.
+  const LISA_INVESTED_TICKER = "LISA_INVESTED";
   const rows = useMemo(() => {
     const byKey = {};
     for (const t of txns) {
       const w = normWrapper(t.wrapper);
       if (w !== "SIPP" && w !== "LISA") continue;
+      if (t.ticker === LISA_INVESTED_TICKER) continue;
       const key = w + "\u0000" + t.ticker;
       const sign = t.side === "SELL" ? -1 : 1;
       (byKey[key] ||= { wrapper: w, ticker: t.ticker, units: 0, cost: 0 });
@@ -1960,7 +2042,27 @@ function PensionTab({ txns, setTxns, cash, setCash, secMeta, setSecMeta, prices,
       .sort((a, b) => a.provider.localeCompare(b.provider) || a.wrapper.localeCompare(b.wrapper) || a.ticker.localeCompare(b.ticker));
   }, [txns, secMeta]);
 
-  const total = rows.reduce((s, r) => s + r.cost, 0) + (+cash.LISA || 0);
+  // LISA "invested but not itemised by fund" — book cost + market value as
+  // a single pair, for when you don't have (or don't want) per-fund units.
+  // Reuses the same position machinery as everything else (qty fixed at 1,
+  // price = market value, cost = book cost) rather than a parallel schema.
+  const lisaInvestedCost = txns.find((t) => normWrapper(t.wrapper) === "LISA" && t.ticker === LISA_INVESTED_TICKER)?.gbpAmount || 0;
+  const lisaInvestedValue = prices[LISA_INVESTED_TICKER] || 0;
+  const setLisaInvested = (cost, value) => {
+    setSecMeta((m) => ({ ...m, [LISA_INVESTED_TICKER]: { ...m[LISA_INVESTED_TICKER], name: "LISA — invested, not itemised by fund", domicile: "GB", eri: false, kind: "fund" } }));
+    setTxns((all) => {
+      const rest = all.filter((t) => !(normWrapper(t.wrapper) === "LISA" && t.ticker === LISA_INVESTED_TICKER));
+      if (cost <= 0 && value <= 0) return rest; // both cleared -> remove the row entirely
+      return [...rest, {
+        id: `pension_LISA_${LISA_INVESTED_TICKER}`, date: todayISO(), ticker: LISA_INVESTED_TICKER, side: "BUY",
+        quantity: 1, nativeCurrency: "GBP", nativeAmount: round2(cost), fxRate: 1, gbpAmount: round2(cost), wrapper: "LISA",
+        note: "LISA invested total (book cost / market value), not broken down by fund.",
+      }];
+    });
+    setPrices((p) => ({ ...p, [LISA_INVESTED_TICKER]: round2(value) }));
+  };
+
+  const total = rows.reduce((s, r) => s + (prices[r.ticker] != null ? r.units * prices[r.ticker] : r.cost), 0) + (+cash.LISA || 0) + lisaInvestedValue;
   const providers = useMemo(() => [...new Set(rows.map((r) => r.provider))].sort(), [rows]);
   const byProvider = useMemo(() => {
     const m = {};
@@ -1997,42 +2099,59 @@ function PensionTab({ txns, setTxns, cash, setCash, secMeta, setSecMeta, prices,
   }, [providers, cashflowsByProvider, byProvider, prices]);
 
   // Replace ALL transactions for (wrapper, ticker) with a single consolidated
-  // snapshot row — this is a snapshot editor, not a running ledger, so an
-  // edit here means "this is now the position", not "add another trade".
-  const setRow = (wrapper, ticker, units, price) => {
-    const value = round2(units * price);
+  // snapshot — quantity only. Cost is set separately (see setManualCost /
+  // recomputeProviderCost below): conflating "price you tell us" with "cost
+  // you paid" was the original design's bug — a contribution added later had
+  // nowhere to go, since cost was always just units × price at last edit.
+  const setUnits = (wrapper, ticker, units, fallbackCostIfNew) => {
     setTxns((all) => {
+      const existing = all.find((t) => normWrapper(t.wrapper) === wrapper && t.ticker === ticker);
+      const cost = existing ? existing.gbpAmount : round2(units * (fallbackCostIfNew || 0));
       const rest = all.filter((t) => !(normWrapper(t.wrapper) === wrapper && t.ticker === ticker));
       return [...rest, {
-        id: `pension_${wrapper}_${ticker}_${Date.now()}`, date: todayISO(), ticker, side: "BUY",
-        quantity: units, nativeCurrency: "GBP", nativeAmount: value, fxRate: 1, gbpAmount: value, wrapper,
-        note: "Pension/LISA snapshot — edited via the Pension & LISA tab, cost = value at last edit (no contribution history tracked).",
+        id: existing?.id || `pension_${wrapper}_${ticker}_${Date.now()}`, date: existing?.date || todayISO(), ticker, side: "BUY",
+        quantity: units, nativeCurrency: "GBP", nativeAmount: cost, fxRate: 1, gbpAmount: cost, wrapper,
+        note: existing?.note || "Pension/LISA snapshot — units set via the Pension & LISA tab; cost tracked separately.",
       }];
     });
-    setPrices((p) => ({ ...p, [ticker]: price }));
   };
+  // Price is purely a market-value input (same as every other holding's live
+  // price elsewhere in the app) — it does NOT touch cost.
+  const setPrice = (ticker, price) => setPrices((p) => ({ ...p, [ticker]: price }));
+  // Manual cost override — only meaningful (and only offered in the UI) for
+  // a provider with no contribution history to derive cost from instead.
+  const setManualCost = (wrapper, ticker, cost) => setTxns((all) => all.map((t) =>
+    (normWrapper(t.wrapper) === wrapper && t.ticker === ticker) ? { ...t, gbpAmount: cost, nativeAmount: cost } : t
+  ));
   const removeRow = (wrapper, ticker) => setTxns((all) => all.filter((t) => !(normWrapper(t.wrapper) === wrapper && t.ticker === ticker)));
+
+  // recomputeProviderCost is now passed in as a prop (shared with the Import
+  // tab's bulk CSV path) so both use the exact same allocation logic.
 
   const addRow = () => {
     const tk = form.ticker.toUpperCase().trim();
     const units = +form.units, price = +form.price;
     if (!tk || !Number.isFinite(units) || !Number.isFinite(price) || units <= 0) return;
     setSecMeta((m) => ({ ...m, [tk]: { ...m[tk], name: form.name.trim() || tk, domicile: "GB", eri: false, kind: "fund", provider: form.provider.trim() || "Unassigned" } }));
-    setRow(form.wrapper, tk, units, price);
+    setUnits(form.wrapper, tk, units, price);
+    setPrice(tk, price);
     setForm({ ...form, ticker: "", name: "", units: "", price: "" });
   };
 
   // Adding a contribution one at a time — the alternative to bulk CSV import
   // on the Import tab. Same cashflow shape either way, so both feed XIRR
-  // identically; this is just for a single payslip/statement at a time.
+  // identically. Immediately reallocates that provider's fund cost so it
+  // shows up in the book cost right away, not just in XIRR.
   const addContribution = () => {
     const amt = +cfForm.amount;
     if (!cfForm.provider.trim() || !cfForm.date || !Number.isFinite(amt) || amt <= 0) return;
-    setPensionCashflows((p) => [...p, {
-      id: uid(), date: cfForm.date, provider: cfForm.provider.trim(), type: cfForm.type,
-      ccy: "GBP", nativeAmount: round2(amt), gbpAmount: round2(amt),
-    }]);
+    const provider = cfForm.provider.trim();
+    const newEntry = { id: uid(), date: cfForm.date, provider, type: cfForm.type, ccy: "GBP", nativeAmount: round2(amt), gbpAmount: round2(amt) };
+    setPensionCashflows((p) => [...p, newEntry]);
     setCfForm({ ...cfForm, amount: "" });
+    // Pass the about-to-be-current list directly rather than reading state
+    // that hasn't re-rendered with this addition yet.
+    recomputeProviderCost(provider, [...pensionCashflows, newEntry]);
   };
 
   // Removing a provider drops every holding tagged with it — for when a
@@ -2059,8 +2178,8 @@ function PensionTab({ txns, setTxns, cash, setCash, secMeta, setSecMeta, prices,
     <div className="space-y-4">
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
         <Stat label="Pension & LISA total" value={gbp(total)} big />
-        <Stat label="SIPP" value={gbp(rows.filter((r) => r.wrapper === "SIPP").reduce((s, r) => s + r.cost, 0))} />
-        <Stat label="LISA" value={gbp(rows.filter((r) => r.wrapper === "LISA").reduce((s, r) => s + r.cost, 0) + (+cash.LISA || 0))} />
+        <Stat label="SIPP" value={gbp(rows.filter((r) => r.wrapper === "SIPP").reduce((s, r) => s + (prices[r.ticker] != null ? r.units * prices[r.ticker] : r.cost), 0))} />
+        <Stat label="LISA" value={gbp(rows.filter((r) => r.wrapper === "LISA").reduce((s, r) => s + (prices[r.ticker] != null ? r.units * prices[r.ticker] : r.cost), 0) + (+cash.LISA || 0) + lisaInvestedValue)} />
       </div>
 
       {rows.length === 0 && !(+cash.LISA) ? (
@@ -2069,13 +2188,15 @@ function PensionTab({ txns, setTxns, cash, setCash, secMeta, setSecMeta, prices,
         <div className="space-y-4">
           {providers.map((provider) => {
             const providerRows = byProvider[provider];
-            const providerTotal = providerRows.reduce((s, r) => s + r.cost, 0);
+            const providerCost = providerRows.reduce((s, r) => s + r.cost, 0);
+            const providerValue = providerRows.reduce((s, r) => s + (prices[r.ticker] != null ? r.units * prices[r.ticker] : r.cost), 0);
             const xr = xirrByProvider[provider];
             const cfs = (cashflowsByProvider[provider] || []).slice().sort((a, b) => (a.date < b.date ? 1 : -1));
             const showingCf = expandedCf === provider;
+            const hasContributions = (cashflowsByProvider[provider] || []).some((c) => c.gbpAmount != null);
             return (
               <div key={provider} className="rounded-xl border border-[var(--border)] overflow-hidden">
-                <div className="flex items-center justify-between px-3 py-2 bg-[var(--panel2)]">
+                <div className="flex items-center justify-between px-3 py-2 bg-[var(--panel2)] flex-wrap gap-y-1">
                   {renaming === provider ? (
                     <div className="flex items-center gap-1.5">
                       <input autoFocus value={renameValue} onChange={(e) => setRenameValue(e.target.value)}
@@ -2087,7 +2208,7 @@ function PensionTab({ txns, setTxns, cash, setCash, secMeta, setSecMeta, prices,
                   ) : (
                     <button onClick={() => { setRenaming(provider); setRenameValue(provider); }} className="text-sm font-medium hover:underline decoration-dotted">{provider}</button>
                   )}
-                  <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-3 flex-wrap">
                     {xr && xr.result.rate != null && (
                       <span className={"text-xs font-medium num " + (xr.result.rate >= 0 ? "text-[var(--gain)]" : "text-[var(--loss)]")} title={`Money-weighted return (XIRR) from ${xr.nCashflows} contribution${xr.nCashflows === 1 ? "" : "s"}${xr.needsFx ? `; ${xr.needsFx} non-GBP row(s) need FX, excluded` : ""}`}>
                         XIRR {(xr.result.rate * 100).toFixed(1)}%
@@ -2098,21 +2219,31 @@ function PensionTab({ txns, setTxns, cash, setCash, secMeta, setSecMeta, prices,
                         {cfs.length} contribution{cfs.length === 1 ? "" : "s"} {showingCf ? "▲" : "▼"}
                       </button>
                     )}
-                    <span className="num text-sm font-medium">{gbp(providerTotal)}</span>
+                    {hasContributions && (
+                      <button onClick={() => recomputeProviderCost(provider)} className="text-xs text-[var(--accent)] hover:underline" title="Reallocate cost across this provider's funds from its total contributions, by current value weight">
+                        Recalculate cost
+                      </button>
+                    )}
+                    <span className="num text-sm font-medium" title={`Cost £${providerCost.toFixed(2)}`}>{gbp(providerValue)}</span>
                     <button onClick={() => removeProvider(provider)}
                       className={"text-xs px-2 py-1 rounded " + (confirmRemoveProvider === provider ? "bg-[var(--loss)] text-white" : "text-[var(--muted)] hover:text-[var(--loss)]")}>
                       {confirmRemoveProvider === provider ? "Click again to remove all holdings" : "Remove provider"}
                     </button>
                   </div>
                 </div>
+                {!hasContributions && (
+                  <p className="text-xs text-[var(--muted)] px-3 pt-2">No contributions logged for this provider yet — cost below is set directly. Add contributions (below, or via Import CSV) to have cost derived from them instead.</p>
+                )}
                 <table className="w-full text-sm">
                   <thead className="text-[var(--muted)] text-xs uppercase tracking-wide">
-                    <tr>{["Wrapper", "Fund", "Units", "Price", "Value", ""].map((h, i) => <th key={i} className={"px-3 py-1.5 font-medium " + (i >= 2 && i <= 4 ? "text-right" : "text-left")}>{h}</th>)}</tr>
+                    <tr>{["Wrapper", "Fund", "Units", "Price", "Cost", "Value", "Gain", ""].map((h, i) => <th key={i} className={"px-3 py-1.5 font-medium " + (i >= 2 ? "text-right" : "text-left")}>{h}</th>)}</tr>
                   </thead>
                   <tbody className="divide-y divide-[var(--border)] bg-[var(--panel)]">
                     {providerRows.map((r) => {
                       const name = secMeta[r.ticker]?.name || r.ticker;
-                      const price = r.units ? r.cost / r.units : 0;
+                      const price = prices[r.ticker] ?? (r.units ? r.cost / r.units : 0);
+                      const value = r.units * price;
+                      const gain = value - r.cost;
                       return (
                         <tr key={r.wrapper + r.ticker}>
                           <td className="px-3 py-2"><WrapperChip wrapper={r.wrapper} /></td>
@@ -2121,12 +2252,20 @@ function PensionTab({ txns, setTxns, cash, setCash, secMeta, setSecMeta, prices,
                             <div className="text-xs text-[var(--muted)]">{name}</div>
                           </td>
                           <td className="px-3 py-2 text-right">
-                            <input type="number" defaultValue={round2(r.units)} onBlur={(e) => setRow(r.wrapper, r.ticker, +e.target.value || 0, price)} className="input num w-28 text-right py-1" />
+                            <input type="number" defaultValue={round2(r.units)} onBlur={(e) => setUnits(r.wrapper, r.ticker, +e.target.value || 0, price)} className="input num w-24 text-right py-1" />
                           </td>
                           <td className="px-3 py-2 text-right">
-                            <input type="number" defaultValue={round2(price)} onBlur={(e) => setRow(r.wrapper, r.ticker, r.units, +e.target.value || 0)} className="input num w-24 text-right py-1" />
+                            <input type="number" defaultValue={round2(price)} onBlur={(e) => setPrice(r.ticker, +e.target.value || 0)} className="input num w-20 text-right py-1" title="Market price — for valuation only, doesn't affect cost" />
                           </td>
-                          <td className="px-3 py-2 text-right num font-medium">{gbp(r.cost)}</td>
+                          <td className="px-3 py-2 text-right">
+                            {hasContributions ? (
+                              <span className="num" title="Derived from this provider's contributions — use Recalculate cost above after editing units or a contribution">{gbp(r.cost)}</span>
+                            ) : (
+                              <input type="number" defaultValue={round2(r.cost)} onBlur={(e) => setManualCost(r.wrapper, r.ticker, +e.target.value || 0)} className="input num w-24 text-right py-1" />
+                            )}
+                          </td>
+                          <td className="px-3 py-2 text-right num font-medium">{gbp(value)}</td>
+                          <td className={"px-3 py-2 text-right num " + (gain >= 0 ? "text-[var(--gain)]" : "text-[var(--loss)]")}>{gbp(gain)}</td>
                           <td className="px-3 py-2 text-right"><button onClick={() => removeRow(r.wrapper, r.ticker)} className="text-[var(--muted)] hover:text-[var(--loss)]"><Trash2 size={15} /></button></td>
                         </tr>
                       );
@@ -2183,8 +2322,10 @@ function PensionTab({ txns, setTxns, cash, setCash, secMeta, setSecMeta, prices,
       </div>
 
       <div className="flex items-end gap-3 flex-wrap rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3">
+        <Field label="LISA invested — book cost (£)"><CurrencyInput value={lisaInvestedCost} onChange={(v) => setLisaInvested(v, lisaInvestedValue)} className="w-44" /></Field>
+        <Field label="LISA invested — market value (£)"><CurrencyInput value={lisaInvestedValue} onChange={(v) => setLisaInvested(lisaInvestedCost, v)} className="w-44" /></Field>
         <Field label="LISA cash / unallocated (£)"><CurrencyInput value={cash.LISA || 0} onChange={(v) => setCash((c) => ({ ...c, LISA: v }))} className="w-40" /></Field>
-        <p className="text-xs text-[var(--muted)] pb-2 max-w-md">Use this if you'd rather track LISA as a single total than itemise it fund-by-fund above.</p>
+        <p className="text-xs text-[var(--muted)] pb-2 max-w-md">Most LISAs hold stocks & shares, not just cash — use the cost/value pair for a single running total (e.g. a S&amp;S LISA statement), the per-fund table above for detail, or plain cash if that's genuinely all it is. Any combination is fine; all three add up into the LISA total.</p>
       </div>
 
       <p className="text-xs text-[var(--muted)]">
@@ -2855,7 +2996,7 @@ function WhatIfTab({ pools, disposals, income, carried, prices = {} }) {
 /* --------------------------- Import tab ----------------------------- */
 const FIELDS = ["date", "ticker", "side", "quantity", "nativeCurrency", "nativeAmount", "fxRate", "gbpAmount"];
 const FIELDS_DIV = ["date", "ticker", "kind", "nativeCurrency", "nativeAmount", "fxRate", "gbpAmount"];
-function ImportTab({ setTxns, setTab, setIncomeEntries, setEriEntries, secMeta, setPensionCashflows }) {
+function ImportTab({ setTxns, setTab, setIncomeEntries, setEriEntries, secMeta, setPensionCashflows, pensionCashflows = [], recomputeProviderCost }) {
   const [mode, setMode] = useState("ibkr");
   const [wrapper, setWrapper] = useState("GIA");
   const [raw, setRaw] = useState("");
@@ -2965,9 +3106,11 @@ function ImportTab({ setTxns, setTab, setIncomeEntries, setEriEntries, secMeta, 
   );
   const doImportPension = () => {
     if (!pensionProvider.trim()) return;
-    const rows = parsedPension.map((r) => mapPensionRow(r, mapPension, pensionProvider.trim())).filter(Boolean)
+    const provider = pensionProvider.trim();
+    const rows = parsedPension.map((r) => mapPensionRow(r, mapPension, provider)).filter(Boolean)
       .map((r) => ({ id: uid(), ...r, gbpAmount: r.ccy === "GBP" ? r.nativeAmount : null }));
     setPensionCashflows((p) => [...p, ...rows]);
+    if (recomputeProviderCost) recomputeProviderCost(provider, [...pensionCashflows, ...rows]);
     setTab("pension");
   };
 
@@ -3042,9 +3185,21 @@ function ImportTab({ setTxns, setTab, setIncomeEntries, setEriEntries, secMeta, 
     <div className="space-y-4">
       <div className="flex items-center gap-2 flex-wrap">
         <Tab k="ibkr" label="Interactive Brokers" /><Tab k="generic" label="Generic CSV" /><Tab k="dividends" label="Dividends CSV" /><Tab k="pension" label="Pension contributions" /><Tab k="ishares" label="iShares ERI" />
-        <span className="ml-auto" />
-        {mode !== "ishares" && <Field label="Import into wrapper"><select value={wrapper} onChange={(e) => setWrapper(e.target.value)} className="input">{WRAPPERS.map((w) => <option key={w}>{w}</option>)}</select></Field>}
       </div>
+
+      {mode !== "ishares" && mode !== "pension" && (
+        <div className="flex items-center gap-2 flex-wrap rounded-xl border border-[var(--border)] bg-[var(--panel2)] px-3 py-2">
+          <span className="text-xs font-medium text-[var(--muted)]">Import into wrapper:</span>
+          {WRAPPERS.map((w) => (
+            <button key={w} onClick={() => setWrapper(w)}
+              className={"text-xs font-medium px-2.5 py-1 rounded-full border transition " +
+                (wrapper === w ? "border-[var(--accent)] bg-[var(--accent)] text-[var(--accent-fg)]" : "border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)]")}>
+              {w}
+            </button>
+          ))}
+          {wrapper !== "GIA" && <span className="text-xs text-[var(--muted)] ml-1">{wrapper} is tax-sheltered — these rows won't affect CGT or income tax.</span>}
+        </div>
+      )}
 
       {mode === "ibkr" && (
         <>

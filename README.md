@@ -105,6 +105,72 @@ and a sale-price pair that turned out to be [clean, dirty] in the RTF stream
 despite the header text listing them the other way round — were caught by
 that test before shipping, not discovered by a user later.
 
+## Bug fix: pension cost basis wasn't tracking new contributions
+
+Real bug from the previous session: contributions added via the Pension tab
+or bulk import went into `pensionCashflows` for XIRR, but the fund
+positions' book cost (shown on Wealth/Holdings) was a separate, static
+number that never updated — so a new contribution improved XIRR but not the
+"invested" figure everywhere else, and the two could visibly disagree.
+
+Root cause: cost and price had been conflated. The original design set a
+fund's book cost to `units × price` every time either was edited — a
+reasonable placeholder when there was no contribution data at all, but wrong
+once contributions exist, since price is a live market input (like every
+other holding in the app) and has nothing to do with what was actually paid in.
+
+Fixed by separating the two:
+- **Units** editing changes quantity only, cost untouched.
+- **Price** editing changes only `prices[ticker]` (market value), same as
+  everywhere else in the app — never cost.
+- **Cost** is either derived from contributions (once any exist for that
+  provider, via `core/pension-import.mjs`'s new `allocateCostByValueWeight` —
+  pure, tested, exact-sum-preserving allocation by current-value weight) or
+  manually editable (only offered when a provider has no contribution
+  history yet, as a sensible fallback).
+- Reallocation runs automatically right after adding a contribution
+  (individually or via bulk import — one shared `recomputeProviderCost`
+  function, not two copies), plus a manual "Recalculate cost" button for
+  after editing units/price or deleting a contribution.
+- The fund table now shows Cost, Value, and Gain as separate columns
+  (previously "Value" was silently just cost).
+
+## LISA: book cost / market value, not just cash
+
+Most LISAs hold stocks & shares, not just cash. Added a book cost / market
+value pair (alongside the existing cash figure and the per-fund table) —
+reuses the same position machinery as every other holding (a `qty=1`
+synthetic position, price = market value) rather than a parallel schema, so
+it flows into the Wealth tab exactly like anything else.
+
+## Returns tab: click a wrapper to filter the holdings below
+
+Clicking a row in the per-wrapper table now filters the per-holding table
+underneath to just that wrapper (click again, or "Clear filter", to reset).
+
+## Import CSV: wrapper selection made prominent, not hidden
+
+The wrapper selector already worked for ISA/SIPP/LISA/VCT — verified by
+reading `mapRow`/`mapDivRow`, which already threaded it through correctly.
+The actual problem was visibility: a small dropdown tucked in the top-right
+corner, easy to miss entirely. Replaced with the same pill-toggle style used
+elsewhere, directly above each mode's content, with a visible sheltered-wrapper note.
+
+## Live prices: how the refresh actually works
+
+No auto-refresh anywhere in the app (verified — no polling, no timers).
+Prices only update when you click "Fetch" (bulk, or the per-row ↻) or type a
+value directly; each ticker shows an "Updated" timestamp so staleness is
+visible rather than assumed.
+
+## Transactions tab: wider fields, thousands separators
+
+Columns widened again (the previous tightening pass overcorrected — narrow
+enough to fit didn't leave enough room to read). Quantity, native amount, and
+GBP amount now use a `NumberInput` component (same show-formatted/edit-plain
+pattern as the existing `CurrencyInput`) — thousands separators while not
+focused, plain editable number while typing.
+
 ## Transactions tab: wrapper filter instead of a column, contribution privacy fix
 
 - **Transactions tab now has wrapper filter pills** (All / GIA / ISA / SIPP /

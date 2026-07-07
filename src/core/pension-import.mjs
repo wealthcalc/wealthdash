@@ -77,3 +77,25 @@ export function mapPensionRow(row, colMap, provider) {
   if (!date || type === "switch" || amount == null || amount === 0) return null;
   return { date, provider, type: row[colMap.type] || "Contribution", ccy, nativeAmount: amount };
 }
+
+// Distributes a provider's total contributed cost across its funds,
+// weighted by each fund's current market value (qty × price) — the best
+// available proxy for how contributions were actually split, since these
+// contribution exports don't break amounts down by fund. Sums to exactly
+// totalCost (the rounding remainder goes on the last fund, so three funds
+// splitting £100 evenly don't drift to £99.99 or £100.01 across roundings).
+// funds: [{ ticker, value }]. Returns [{ ticker, cost }].
+export function allocateCostByValueWeight(totalCost, funds) {
+  const totalValue = funds.reduce((s, f) => s + Math.max(0, f.value), 0);
+  if (totalValue <= 0 || !Number.isFinite(totalCost) || totalCost < 0) {
+    // no sensible weighting available -> split evenly rather than guess
+    const even = funds.length ? Math.round((totalCost / funds.length) * 100) / 100 : 0;
+    const out = funds.map((f) => ({ ticker: f.ticker, cost: even }));
+    if (out.length) out[out.length - 1].cost = Math.round((totalCost - even * (out.length - 1)) * 100) / 100;
+    return out;
+  }
+  const out = funds.map((f) => ({ ticker: f.ticker, cost: Math.round((totalCost * Math.max(0, f.value) / totalValue) * 100) / 100 }));
+  const drift = Math.round((totalCost - out.reduce((s, f) => s + f.cost, 0)) * 100) / 100;
+  if (out.length) out[out.length - 1].cost = Math.round((out[out.length - 1].cost + drift) * 100) / 100;
+  return out;
+}

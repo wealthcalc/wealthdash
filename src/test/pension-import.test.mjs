@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import Papa from "papaparse";
 import {
-  parseMoney, parsePensionDate, classifyPensionType, guessPensionColumns, mapPensionRow,
+  parseMoney, parsePensionDate, classifyPensionType, guessPensionColumns, mapPensionRow, allocateCostByValueWeight,
 } from "../core/pension-import.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -87,4 +87,31 @@ test("mapPensionRow returns null for a zero-amount row regardless of type label 
   const colMap = { date: "Effective Date", type: "Transaction Type", currency: "Transaction Currency", amount: "Amount" };
   assert.equal(mapPensionRow({ "Effective Date": "27/10/2023", "Transaction Type": "Phasing", "Transaction Currency": "GBP", "Amount": "£0.00" }, colMap, "L&G (Citi)"), null);
   assert.equal(mapPensionRow({ "Effective Date": "18/10/2023", "Transaction Type": "Switch", "Transaction Currency": "GBP", "Amount": "£0.00" }, colMap, "L&G (Citi)"), null);
+});
+
+test("allocateCostByValueWeight splits proportionally by current value and sums exactly to totalCost", () => {
+  const funds = [{ ticker: "A", value: 600 }, { ticker: "B", value: 400 }];
+  const out = allocateCostByValueWeight(1000, funds);
+  assert.equal(out.find((f) => f.ticker === "A").cost, 600);
+  assert.equal(out.find((f) => f.ticker === "B").cost, 400);
+  assert.equal(out.reduce((s, f) => s + f.cost, 0), 1000);
+});
+
+test("allocateCostByValueWeight handles a rounding-prone three-way split without drifting off the total", () => {
+  const funds = [{ ticker: "A", value: 1 }, { ticker: "B", value: 1 }, { ticker: "C", value: 1 }];
+  const out = allocateCostByValueWeight(100, funds);
+  const total = out.reduce((s, f) => s + f.cost, 0);
+  assert.equal(total, 100); // not 99.99 or 100.01
+});
+
+test("allocateCostByValueWeight falls back to an even split when no fund has a positive value", () => {
+  const funds = [{ ticker: "A", value: 0 }, { ticker: "B", value: 0 }];
+  const out = allocateCostByValueWeight(500, funds);
+  assert.equal(out.reduce((s, f) => s + f.cost, 0), 500);
+  assert.equal(out[0].cost, 250);
+});
+
+test("allocateCostByValueWeight with a single fund gives it the full amount", () => {
+  const out = allocateCostByValueWeight(777.77, [{ ticker: "A", value: 12345 }]);
+  assert.equal(out[0].cost, 777.77);
 });
