@@ -1,24 +1,158 @@
 import React, { useState, useMemo, useCallback, useRef } from "react";
 import { AlertCircle, Download, Wand2, FlaskConical, Check, Printer, Info } from "lucide-react";
 import { ukTaxYear } from "../core/cgt-engine.mjs";
-import { cfgFor, aeaForYear, liabilityForYear, sharesForTargetGain, nextTaxYear, optimiseDisposals } from "../core/uk-tax.mjs";
-import { store, fmtRate, gbp, SubTabs, num, todayISO, METHOD, Field, Stat, Row, MethodChip, Empty } from "../ui/shared.jsx";
+import { cfgFor, aeaForYear, paFor, liabilityForYear, sharesForTargetGain, nextTaxYear, optimiseDisposals } from "../core/uk-tax.mjs";
+import { ISA_LIMIT, isaSubscriptionsByYear, realisedForYear, bedAndIsaPlan } from "../core/allowances.mjs";
+import { store, fmtRate, gbp, gbp0, SubTabs, num, uid, todayISO, METHOD, CurrencyInput, NumberInput, Field, Stat, Row, MethodChip, Empty } from "../ui/shared.jsx";
 
 function CgtSection(props) {
   const { taxYears, activeYear, setYear, yearDisposals, liab, income, setIncome, carried, setCarried,
-    carryForward, exemptGiltDisposalCount, pools, disposals, prices, setPrices, txns } = props;
+    carryForward, exemptGiltDisposalCount, pools, disposals, prices, setPrices, txns,
+    allTxns, secMeta, setTxns } = props;
   const [sub, setSub] = useState(() => store.get("cgt.cgtsubtab", "summary"));
   React.useEffect(() => store.set("cgt.cgtsubtab", sub), [sub]);
   return (
     <div>
       <SubTabs
-        tabs={[["summary", "Summary"], ["planning", "Planning"], ["report", "Report"], ["whatif", "What-if"]]}
+        tabs={[["summary", "Summary"], ["planning", "Planning"], ["bedisa", "Bed & ISA"], ["report", "Report"], ["whatif", "What-if"]]}
         active={sub} onChange={setSub}
       />
       {sub === "summary" && <CgtTab {...{ taxYears, activeYear, setYear, yearDisposals, liab, income, setIncome, carried, setCarried, carryForward, exemptGiltDisposalCount }} />}
       {sub === "planning" && <PlanningTab {...{ pools, prices, setPrices, disposals, txns, income }} />}
+      {sub === "bedisa" && <BedIsaTab {...{ pools, prices, disposals, income, allTxns, secMeta, setTxns }} />}
       {sub === "report" && <ReportTab {...{ taxYears, disposals, income, carried }} />}
       {sub === "whatif" && <WhatIfTab {...{ pools, disposals, income, carried, prices }} />}
+    </div>
+  );
+}
+
+/* --------------------------- Bed & ISA tool -------------------------- */
+// Sell in the GIA, rebuy inside the ISA: gains crystallise against the AEA
+// (tax-free up to the remaining exempt amount), the base cost resets, and
+// future growth is sheltered. The 30-day rule does NOT match an ISA
+// repurchase against the GIA disposal — that's what makes this work.
+function BedIsaTab({ pools = {}, prices = {}, disposals = [], income = 0, allTxns = [], secMeta = {}, setTxns }) {
+  const year = ukTaxYear(todayISO());
+  const aea = aeaForYear(year);
+  const realised = useMemo(() => realisedForYear(disposals, year, aea), [disposals, year, aea]);
+  const isaUsed = useMemo(() => (isaSubscriptionsByYear(allTxns)[year] || { total: 0 }).total, [allTxns, year]);
+
+  const [aeaLeft, setAeaLeft] = useState(null);   // null = use computed
+  const [isaLeft, setIsaLeft] = useState(null);
+  const [spread, setSpread] = useState(0.25);     // % round-trip estimate
+  const [mode, setMode] = useState("value");
+  const [confirming, setConfirming] = useState(false);
+  const [done, setDone] = useState("");
+
+  const effAea = aeaLeft ?? realised.aeaLeft;
+  const effIsa = isaLeft ?? Math.max(0, ISA_LIMIT - isaUsed);
+  const plan = useMemo(
+    () => bedAndIsaPlan({ pools, prices, secMeta, aeaLeft: effAea, isaLeft: effIsa, mode, spreadPct: spread / 100 }),
+    [pools, prices, secMeta, effAea, effIsa, mode, spread]
+  );
+
+  // Marginal CGT rate for the "future tax avoided" estimate (latest rates).
+  const cfg = cfgFor(year);
+  const rate = cfg.rates[cfg.rates.length - 1];
+  const marginal = Math.max(0, income - paFor(cfg.pa, income)) > cfg.basicLimit ? rate.higher : rate.basic;
+
+  const generate = () => {
+    if (!setTxns || !plan.rows.length) return;
+    const date = todayISO();
+    const entries = [];
+    for (const r of plan.rows) {
+      entries.push({ id: uid(), date, ticker: r.ticker, side: "SELL", quantity: r.shares, nativeCurrency: "GBP", nativeAmount: r.value, fxRate: 1, gbpAmount: r.value, wrapper: "GIA", note: `Bed & ISA ${date} — GIA sale` });
+      entries.push({ id: uid(), date, ticker: r.ticker, side: "BUY", quantity: r.shares, nativeCurrency: "GBP", nativeAmount: r.value + r.costs, fxRate: 1, gbpAmount: Math.round((r.value + r.costs) * 100) / 100, wrapper: "ISA", note: `Bed & ISA ${date} — ISA rebuy (incl. est. costs)` });
+    }
+    setTxns((all) => [...all, ...entries]);
+    setConfirming(false);
+    setDone(`${plan.rows.length * 2} ledger entries added (${plan.rows.length} GIA sales + ${plan.rows.length} ISA rebuys). The disposals now show in the CGT summary; adjust any figures against your contract notes on the Transactions tab.`);
+  };
+
+  if (!Object.keys(pools).length) return <Empty msg="No GIA pools yet — Bed & ISA needs unsheltered holdings to move." />;
+
+  return (
+    <div className="space-y-4">
+      <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
+        <Stat label={`AEA remaining ${year}`} value={gbp0(realised.aeaLeft)} sub={`net realised so far ${gbp0(Math.max(0, realised.net))} of ${gbp0(aea)}`} />
+        <Stat label="ISA allowance remaining" value={gbp0(Math.max(0, ISA_LIMIT - isaUsed))} sub={`purchases in ISA/LISA this year ${gbp0(isaUsed)} (proxy — override below)`} />
+        <Stat label="Plan moves" value={gbp0(plan.totalValue)} sub={`${plan.rows.length} holding${plan.rows.length === 1 ? "" : "s"}, est. costs ${gbp(plan.totalCosts)}`} />
+        <Stat label="Gain washed tax-free" value={gbp0(plan.totalGain)} sub={`future CGT avoided up to ${gbp0(plan.totalGain * marginal)} at ${fmtRate(marginal)}`} tone="gain" />
+      </div>
+
+      <div className="flex flex-wrap items-end gap-4">
+        <Field label={`AEA to use (computed ${gbp0(realised.aeaLeft)})`}>
+          <CurrencyInput value={effAea} onChange={setAeaLeft} />
+        </Field>
+        <Field label={`ISA room to use (computed ${gbp0(Math.max(0, ISA_LIMIT - isaUsed))})`}>
+          <CurrencyInput value={effIsa} onChange={setIsaLeft} />
+        </Field>
+        <Field label="Spread/dealing estimate (%)">
+          <NumberInput value={spread} onChange={setSpread} dp={2} className="w-24" />
+        </Field>
+        <Field label="Objective">
+          <div className="flex gap-1">
+            {[["value", "Max value sheltered"], ["gain", "Max gain washed"]].map(([k, label]) => (
+              <button key={k} onClick={() => setMode(k)}
+                className={"px-3 py-1.5 text-xs rounded-lg border " + (mode === k ? "border-[var(--accent)] text-[var(--fg)] bg-[var(--panel2)]" : "border-[var(--border)] text-[var(--muted)]")}>
+                {label}
+              </button>
+            ))}
+          </div>
+        </Field>
+      </div>
+
+      {plan.rows.length === 0 ? (
+        <Empty msg={effAea <= 0 ? "No AEA left this tax year — gains would be taxable, so there's nothing free to wash. Losses can still be bed-and-ISA'd without AEA (sell freely)." : "No priced GIA holdings with unrealised gains fit the current limits."} />
+      ) : (
+        <div className="overflow-x-auto rounded-xl border border-[var(--border)]">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-xs text-[var(--muted)] text-left bg-[var(--panel2)]">
+                <th className="px-3 py-2">Holding</th><th className="px-3 py-2 text-right">Shares to move</th>
+                <th className="px-3 py-2 text-right">Value</th><th className="px-3 py-2 text-right">Gain crystallised</th>
+                <th className="px-3 py-2 text-right">Est. costs</th><th className="px-3 py-2">Notes</th>
+              </tr>
+            </thead>
+            <tbody>
+              {plan.rows.map((r) => (
+                <tr key={r.ticker} className="border-t border-[var(--border)]">
+                  <td className="px-3 py-1.5 font-medium">{r.ticker}</td>
+                  <td className="px-3 py-1.5 text-right num">{num(r.shares, 4)}{r.wholePosition && <span className="text-[var(--muted)]"> (all)</span>}</td>
+                  <td className="px-3 py-1.5 text-right num">{gbp(r.value)}</td>
+                  <td className="px-3 py-1.5 text-right num text-[var(--gain)]">{gbp(r.gain)}</td>
+                  <td className="px-3 py-1.5 text-right num">{gbp(r.costs)}</td>
+                  <td className="px-3 py-1.5 text-xs text-[var(--muted)]">{r.stamp > 0 ? "incl. 0.5% stamp on rebuy" : "no stamp (fund/ETF)"}</td>
+                </tr>
+              ))}
+              <tr className="border-t border-[var(--border)] font-semibold bg-[var(--panel2)]">
+                <td className="px-3 py-1.5">Total</td><td />
+                <td className="px-3 py-1.5 text-right num">{gbp(plan.totalValue)}</td>
+                <td className="px-3 py-1.5 text-right num text-[var(--gain)]">{gbp(plan.totalGain)}</td>
+                <td className="px-3 py-1.5 text-right num">{gbp(plan.totalCosts)}</td><td />
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {plan.rows.length > 0 && setTxns && (
+        <div className="flex items-center gap-3 flex-wrap">
+          {!confirming ? (
+            <button className="btn-accent" onClick={() => setConfirming(true)}>Generate ledger entries…</button>
+          ) : (
+            <>
+              <button className="btn-accent" onClick={generate}>Confirm — add {plan.rows.length * 2} entries at today&apos;s prices</button>
+              <button className="px-3 py-2 text-sm rounded-lg border border-[var(--border)]" onClick={() => setConfirming(false)}>Cancel</button>
+            </>
+          )}
+          {done && <span className="text-xs text-[var(--gain)] max-w-md">{done}</span>}
+        </div>
+      )}
+
+      <p className="text-[11px] text-[var(--muted)] leading-relaxed">
+        How this works: selling in the GIA crystallises the gain against your remaining AEA; the same-day repurchase <em>inside the ISA</em> is not matched by the 30-day rule (it applies to repurchases in the same capacity), so the base cost resets and all future growth is sheltered. The rebuy consumes ISA allowance; stamp duty (0.5%) applies to UK shares and investment trusts but not ETFs/funds; spreads and dealing fees are estimates — reconcile the generated entries against contract notes. Gilts never need this: they&apos;re already CGT-exempt.
+      </p>
     </div>
   );
 }

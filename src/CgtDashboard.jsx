@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useCallback, useRef, lazy, Suspense } from "react";
 import {
   Download, Upload, Moon, Sun, TableProperties, Receipt, FileUp, AlertTriangle,
-  Wallet, PoundSterling, PieChart, Percent, Landmark, PiggyBank, TrendingUp, Gauge,
+  Wallet, PoundSterling, PieChart, Percent, Landmark, PiggyBank, TrendingUp, Gauge, Target,
 } from "lucide-react";
 import { matchPortfolio, ukTaxYear } from "./core/cgt-engine.mjs";
 import { buildWealthModel, classifyInstrument, normWrapper } from "./core/portfolio.mjs";
@@ -16,6 +16,7 @@ import useAppStore from "./state/appStore.js";
 // shell + shared primitives; each tab loads on first visit.
 const HomeTab = lazy(() => import("./features/HomeTab.jsx"));
 const PlanTab = lazy(() => import("./features/PlanTab.jsx"));
+const AllowancesTab = lazy(() => import("./features/AllowancesTab.jsx"));
 const WealthTab = lazy(() => import("./features/WealthTab.jsx"));
 const ReturnsTab = lazy(() => import("./features/ReturnsTab.jsx"));
 const GiltsTab = lazy(() => import("./features/GiltsTab.jsx"));
@@ -292,7 +293,7 @@ export default function App() {
 
           {/* tabs */}
           <div className="flex flex-wrap gap-1 mt-5 border-b border-[var(--border)]">
-            {[["home", "Home", TrendingUp], ["plan", "Plan", Gauge], ["wealth", "Wealth", PieChart], ["returns", "Returns", Percent], ["gilts", "Gilts", Landmark], ["pension", "Pension & LISA", PiggyBank], ["cgt", "CGT", TableProperties], ["holdings", "Holdings", Wallet], ["income", "Income", PoundSterling], ["ledger", "Transactions", Receipt], ["import", "Import CSV", FileUp]].map(([k, label, Icon]) => (
+            {[["home", "Home", TrendingUp], ["plan", "Plan", Gauge], ["wealth", "Wealth", PieChart], ["returns", "Returns", Percent], ["gilts", "Gilts", Landmark], ["pension", "Pension & LISA", PiggyBank], ["cgt", "CGT", TableProperties], ["allowances", "Allowances", Target], ["holdings", "Holdings", Wallet], ["income", "Income", PoundSterling], ["ledger", "Transactions", Receipt], ["import", "Import CSV", FileUp]].map(([k, label, Icon]) => (
               <button key={k} onClick={() => setTab(k)}
                 className={"px-3 py-2 text-sm font-medium flex items-center gap-1.5 border-b-2 -mb-px transition " +
                   (tab === k ? "border-[var(--accent)] text-[var(--fg)]" : "border-transparent text-[var(--muted)] hover:text-[var(--fg)]")}>
@@ -325,7 +326,9 @@ export default function App() {
               taxYears, activeYear, setYear, yearDisposals, liab, income, setIncome, carried, setCarried,
               carryForward: allYears.carriedForward, exemptGiltDisposalCount,
               pools: taxablePools, disposals: taxableDisposals, prices, setPrices, txns: giaTxns,
+              allTxns: txns, secMeta, setTxns,
             }} />}
+            {tab === "allowances" && <AllowancesTab {...{ txns, pensionCashflows, incomeEntries, eriTxns, income, taxableDisposals }} />}
             {tab === "income" && <IncomeTab {...{ incomeEntries, setIncomeEntries, eriEntries, setEriEntries, eriTxns, incomeByYear, incomeAllWrappers, income, setIncome, txns: giaTxns, secMeta, setSecMeta }} />}
             {tab === "holdings" && <HoldingsTab {...{ positions: wealthModel ? wealthModel.positions : [], prices, setPrices, avKey, setAvKey, avMeta, setAvMeta, priceMeta, setPriceMeta, txns, secMeta, setSecMeta, dmoReportDate, setDmoReportDate }} />}
             {tab === "ledger" && <LedgerTab {...{ txns, setTxns }} />}

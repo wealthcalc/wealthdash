@@ -35,6 +35,29 @@ verified by SSR smoke renders, not just compilation):
   fixed an unguarded `document.createElement` at module scope that crashed
   any non-browser load of the UI bundle (caught by the new smoke render).
 
+## Phase 1 continued: Plan tab, Allowances hub, Bed & ISA
+
+- **Plan tab** — the standalone UK retirement planner is now integrated as a
+  lazy-loaded tab (deterministic projection, Monte Carlo, historical replay,
+  drawdown sequencing incl. tax-optimised order, triple-lock state pension,
+  DB pensions, annuities, BTL, variable spending, Scottish rates). Theme
+  follows the app's dark toggle; a "Sync from portfolio" button prefills the
+  SIPP/ISA/GIA/LISA pots and salary from the live wealth model. recharts
+  ships only in the Plan chunk — the main bundle is unchanged.
+- **Allowances tab** — one screen for the annual limits: ISA £20k (derived
+  from ISA/LISA purchases, stated as an upper bound, manual override wins),
+  LISA £4k, pension annual allowance with taper + 3-year carry-forward
+  table (from the recorded contribution history), CGT AEA headroom from
+  this year's realised disposals, dividend allowance and PSA with estimated
+  tax at your band, and a 5-April countdown.
+- **CGT ▸ Bed & ISA** — new engine (`core/allowances.mjs`, node-tested,
+  12 tests) solves the max transfer under both the remaining AEA and the
+  remaining ISA allowance, with two objectives (max value sheltered / max
+  gain washed), 0.5% stamp on shares & ITs (not funds), spread estimate,
+  and one-click generation of the paired GIA-sale + ISA-rebuy ledger
+  entries (two-step confirm). The 30-day rule note is in the UI: an ISA
+  repurchase is not matched against the GIA disposal — that's the point.
+
 ## Layout
 ```
 .
