@@ -480,12 +480,24 @@ function SubTabs({ tabs, active, onChange }) {
   );
 }
 
+// DD/MM/YYYY (DMO's format) -> ISO (YYYY-MM-DD), for comparing/storing report dates.
+const dmoDateToIso = (ddmmyyyy) => { const [d, m, y] = ddmmyyyy.split("/"); return `${y}-${m}-${d}`; };
+
 // Shared DMO gilt-price fetch, used by both the Gilts tab and the Wealth tab's
 // live-prices panel (individual gilts aren't on Yahoo/Alpha Vantage, so they
 // need the DMO proxy). Given [{ticker, isin}] targets, fetches clean prices and
 // returns { pricesByTicker: {tk: clean/100}, matched, date }. Clean price is
 // per £100 nominal; the app stores price per £1 nominal, hence /100.
-async function fetchDmoGiltPrices(targets) {
+//
+// DMO publishes ONE report per business day (~2pm) — once we already have
+// today's report, a re-fetch is guaranteed to return identical data. Pass
+// `knownReportDate` (the ISO date of the last report already fetched) and
+// this skips the network round-trip entirely unless `force` is set.
+async function fetchDmoGiltPrices(targets, { knownReportDate, force = false } = {}) {
+  const todayIso = todayISO();
+  if (!force && knownReportDate === todayIso) {
+    return { pricesByTicker: {}, matched: 0, date: null, total: 0, skipped: true, knownReportDate };
+  }
   const withIsin = targets.filter((t) => t.isin);
   if (!withIsin.length) return { pricesByTicker: {}, matched: 0, date: null, error: "No gilt has an ISIN to look up." };
   const isins = withIsin.map((t) => t.isin).join(",");
@@ -498,7 +510,7 @@ async function fetchDmoGiltPrices(targets) {
     const hit = body.prices[t.isin];
     if (hit) { pricesByTicker[t.ticker] = hit.clean / 100; matched++; }
   }
-  return { pricesByTicker, matched, date: body.date, total: withIsin.length };
+  return { pricesByTicker, matched, date: body.date, reportDateIso: body.date ? dmoDateToIso(body.date) : null, total: withIsin.length };
 }
 const num = (x, dp = 2) => (x ?? 0).toLocaleString("en-GB", { minimumFractionDigits: dp, maximumFractionDigits: dp });
 const round2 = (x) => Math.round((+x || 0) * 100) / 100;
@@ -643,6 +655,11 @@ export default function App() {
   const [carried, setCarried] = useState(() => store.get("cgt.carried", 0));
   const [cash, setCash] = useState(() => store.get("cgt.cash", {})); // { wrapper: GBP balance }
   const [pensionCashflows, setPensionCashflows] = useState(() => store.get("cgt.pensioncf", [])); // [{id, date, provider, type, ccy, nativeAmount}]
+  // DMO publishes one gilt-price report per business day (~2pm) — once we
+  // have today's report, re-fetching would just return the same data. This
+  // tracks the report DATE (not fetch time) of the last successful pull, in
+  // ISO, so callers can skip the network round-trip when nothing's changed.
+  const [dmoReportDate, setDmoReportDate] = useState(() => store.get("cgt.dmoreportdate", null));
   const [valuations, setValuations] = useState(() => store.get("cgt.valuations", [])); // [{date, value, byWrapper}]
   const [incomeEntries, setIncomeEntries] = useState(() => store.get("cgt.incomeEntries", [])); // dividends/interest ledger
   const [eriEntries, setEriEntries] = useState(() => store.get("cgt.eriEntries", []));           // excess reportable income
@@ -696,6 +713,7 @@ export default function App() {
   React.useEffect(() => store.set("cgt.dark", dark), [dark]);
   React.useEffect(() => store.set("cgt.cash", cash), [cash]);
   React.useEffect(() => store.set("cgt.pensioncf", pensionCashflows), [pensionCashflows]);
+  React.useEffect(() => store.set("cgt.dmoreportdate", dmoReportDate), [dmoReportDate]);
   React.useEffect(() => store.set("cgt.tab", tab), [tab]);
   React.useEffect(() => store.set("cgt.valuations", valuations), [valuations]);
 
@@ -938,9 +956,9 @@ export default function App() {
           )}
 
           <div className="mt-5">
-            {tab === "wealth" && <WealthTab {...{ model: wealthModel, cash, setCash, prices, setPrices, avKey, setAvKey, avMeta, setAvMeta, priceMeta, setPriceMeta, txns, secMeta, setSecMeta }} />}
-            {tab === "returns" && <ReturnsTab {...{ returns, valuations }} />}
-            {tab === "gilts" && <GiltsTab {...{ data: giltData, secMeta, setSecMeta, prices, setPrices }} />}
+            {tab === "wealth" && <WealthTab {...{ model: wealthModel, cash, setCash, prices, setPrices, avKey, setAvKey, avMeta, setAvMeta, priceMeta, setPriceMeta, txns, secMeta, setSecMeta, dmoReportDate, setDmoReportDate }} />}
+            {tab === "returns" && <ReturnsTab {...{ returns, valuations, pensionCashflows, secMeta, txns }} />}
+            {tab === "gilts" && <GiltsTab {...{ data: giltData, secMeta, setSecMeta, prices, setPrices, dmoReportDate, setDmoReportDate }} />}
             {tab === "pension" && <PensionTab {...{ txns, setTxns, cash, setCash, secMeta, setSecMeta, prices, setPrices, pensionCashflows, setPensionCashflows, recomputeProviderCost }} />}
             {tab === "cgt" && <CgtSection {...{
               taxYears, activeYear, setYear, yearDisposals, liab, income, setIncome, carried, setCarried,
@@ -948,7 +966,7 @@ export default function App() {
               pools: taxablePools, disposals: taxableDisposals, prices, setPrices, txns: giaTxns,
             }} />}
             {tab === "income" && <IncomeTab {...{ incomeEntries, setIncomeEntries, eriEntries, setEriEntries, eriTxns, incomeByYear, incomeAllWrappers, income, setIncome, txns: giaTxns, secMeta, setSecMeta }} />}
-            {tab === "holdings" && <HoldingsTab {...{ positions: wealthModel ? wealthModel.positions : [], prices, setPrices, avKey, setAvKey, avMeta, setAvMeta, priceMeta, setPriceMeta, txns, secMeta, setSecMeta }} />}
+            {tab === "holdings" && <HoldingsTab {...{ positions: wealthModel ? wealthModel.positions : [], prices, setPrices, avKey, setAvKey, avMeta, setAvMeta, priceMeta, setPriceMeta, txns, secMeta, setSecMeta, dmoReportDate, setDmoReportDate }} />}
             {tab === "ledger" && <LedgerTab {...{ txns, setTxns }} />}
             {tab === "import" && <ImportTab {...{ setTxns, setTab, setIncomeEntries, setEriEntries, secMeta, setPensionCashflows, pensionCashflows, recomputeProviderCost }} />}
           </div>
@@ -1516,7 +1534,7 @@ function LedgerTab({ txns, setTxns }) {
 }
 
 /* ----------------------- Live prices (Alpha Vantage) ---------------- */
-function LivePricesPanel({ tickers, avKey, setAvKey, avMeta, setAvMeta, prices, setPrices, priceMeta, setPriceMeta, txns, secMeta = {} }) {
+function LivePricesPanel({ tickers, avKey, setAvKey, avMeta, setAvMeta, prices, setPrices, priceMeta, setPriceMeta, txns, secMeta = {}, dmoReportDate, setDmoReportDate }) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [prog, setProg] = useState("");
@@ -1526,7 +1544,13 @@ function LivePricesPanel({ tickers, avKey, setAvKey, avMeta, setAvMeta, prices, 
   // (see api/gilt-prices.mjs) — so they're fetched from the DMO instead,
   // wherever they show up in a price list (Wealth tab included, not just Gilts).
   const giltTickers = tickers.filter((tk) => secMeta[tk]?.kind === "gilt");
-  const otherTickers = tickers.filter((tk) => secMeta[tk]?.kind !== "gilt");
+  // Pension/LISA fund units (kind "fund") are insurer-administered, not
+  // exchange-traded — sending them to Yahoo/AV risks a coincidental ticker
+  // collision silently overwriting a fund's price with an unrelated stock's,
+  // which is exactly the bug that prompted this fix. No live source exists
+  // for these (checked; L&G's own ToS blocks scraping) — manual entry only.
+  const pensionFundTickers = tickers.filter((tk) => secMeta[tk]?.kind === "fund");
+  const otherTickers = tickers.filter((tk) => secMeta[tk]?.kind !== "gilt" && secMeta[tk]?.kind !== "fund");
 
   const ledgerCcy = useMemo(() => {
     const m = {}; for (const t of txns) if (!m[t.ticker] && t.nativeCurrency) m[t.ticker] = t.nativeCurrency; return m;
@@ -1561,13 +1585,19 @@ function LivePricesPanel({ tickers, avKey, setAvKey, avMeta, setAvMeta, prices, 
     setBusy(true); setProg(`Fetching ${tk}...`); setMsg("");
     if (secMeta[tk]?.kind === "gilt") {
       try {
-        const { pricesByTicker, matched, date } = await fetchDmoGiltPrices([{ ticker: tk, isin: secMeta[tk]?.isin }]);
+        const { pricesByTicker, matched, date, skipped } = await fetchDmoGiltPrices([{ ticker: tk, isin: secMeta[tk]?.isin }], { knownReportDate: dmoReportDate });
+        if (skipped) { setMsg(`${tk}: already have today's DMO report (${dmoReportDate}) — no need to ask again.`); setBusy(false); setProg(""); return; }
         if (matched) {
           setPrices((p) => ({ ...p, [tk]: pricesByTicker[tk] }));
           setPriceMeta((p) => ({ ...p, [tk]: { asOf: new Date().toISOString(), raw: pricesByTicker[tk] * 100, ccy: "GBP", source: "DMO" } }));
+          if (setDmoReportDate && date) setDmoReportDate(dmoDateToIso(date));
           setMsg(`${tk}: clean price ${gbp(pricesByTicker[tk] * 100)}/£100 nominal from DMO (${date})`);
         } else setMsg(`${tk}: not in today's DMO report — try again after ~2pm, or enter manually.`);
       } catch (e) { setMsg(`${tk}: ${e.message}`); }
+      setBusy(false); setProg(""); return;
+    }
+    if (secMeta[tk]?.kind === "fund") {
+      setMsg(`${tk}: no live source for pension/LISA fund units (insurer-administered, not exchange-traded) — enter manually, on the Pension & LISA tab.`);
       setBusy(false); setProg(""); return;
     }
     const m = meta(tk);
@@ -1596,13 +1626,19 @@ function LivePricesPanel({ tickers, avKey, setAvKey, avMeta, setAvMeta, prices, 
     if (giltTickers.length) {
       setProg("Fetching gilts from the DMO...");
       try {
-        const { pricesByTicker, matched, date } = await fetchDmoGiltPrices(giltTickers.map((tk) => ({ ticker: tk, isin: secMeta[tk]?.isin })));
-        if (Object.keys(pricesByTicker).length) {
-          setPrices((p) => ({ ...p, ...pricesByTicker }));
-          setPriceMeta((p) => { const n = { ...p }; for (const tk of Object.keys(pricesByTicker)) n[tk] = { asOf: new Date().toISOString(), raw: pricesByTicker[tk] * 100, ccy: "GBP", source: "DMO" }; return n; });
-          for (const tk of Object.keys(pricesByTicker)) done[tk] = true;
+        const { pricesByTicker, matched, date, skipped } = await fetchDmoGiltPrices(giltTickers.map((tk) => ({ ticker: tk, isin: secMeta[tk]?.isin })), { knownReportDate: dmoReportDate });
+        if (skipped) {
+          giltMsg = `gilts already up to date (DMO report ${dmoReportDate})`;
+          for (const tk of giltTickers) done[tk] = true; // don't count these against "enter the rest manually"
+        } else {
+          if (Object.keys(pricesByTicker).length) {
+            setPrices((p) => ({ ...p, ...pricesByTicker }));
+            setPriceMeta((p) => { const n = { ...p }; for (const tk of Object.keys(pricesByTicker)) n[tk] = { asOf: new Date().toISOString(), raw: pricesByTicker[tk] * 100, ccy: "GBP", source: "DMO" }; return n; });
+            for (const tk of Object.keys(pricesByTicker)) done[tk] = true;
+            if (setDmoReportDate && date) setDmoReportDate(dmoDateToIso(date));
+          }
+          giltMsg = `${matched}/${giltTickers.length} gilt${giltTickers.length === 1 ? "" : "s"} from DMO (${date})`;
         }
-        giltMsg = `${matched}/${giltTickers.length} gilt${giltTickers.length === 1 ? "" : "s"} from DMO (${date})`;
       } catch (e) { giltMsg = `gilts: ${e.message}`; }
     }
     try {
@@ -1621,14 +1657,15 @@ function LivePricesPanel({ tickers, avKey, setAvKey, avMeta, setAvMeta, prices, 
       }
     }
     const got = Object.keys(done).length;
-    setProg(""); setMsg(`Updated ${got}/${tickers.length} prices${got < tickers.length ? " - enter the rest manually." : "."}${giltMsg ? ` (${giltMsg})` : ""}`);
+    const fundNote = pensionFundTickers.length ? ` ${pensionFundTickers.length} pension fund${pensionFundTickers.length === 1 ? "" : "s"} skipped — no live source, enter manually or use the Pension & LISA tab.` : "";
+    setProg(""); setMsg(`Updated ${got}/${otherTickers.length + giltTickers.length} prices${got < otherTickers.length + giltTickers.length ? " - enter the rest manually." : "."}${giltMsg ? ` (${giltMsg})` : ""}${fundNote}`);
     setBusy(false);
   };
 
   return (
     <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)]">
       <button onClick={() => setOpen((o) => !o)} className="w-full flex items-center justify-between px-4 py-2.5 text-sm">
-        <span className="font-medium flex items-center gap-2"><RefreshCw size={14} className="text-[var(--accent)]" /> Live prices <span className="text-xs font-normal text-[var(--muted)]">- {giltTickers.length ? "DMO for gilts, " : ""}Yahoo then Alpha Vantage then manual</span></span>
+        <span className="font-medium flex items-center gap-2"><RefreshCw size={14} className="text-[var(--accent)]" /> Live prices <span className="text-xs font-normal text-[var(--muted)]">- {giltTickers.length ? "DMO for gilts, " : ""}Yahoo then Alpha Vantage then manual{pensionFundTickers.length ? ` (${pensionFundTickers.length} pension fund${pensionFundTickers.length === 1 ? "" : "s"} excluded — no live source)` : ""}</span></span>
         <span className="text-xs text-[var(--muted)]">{open ? "hide" : "set up"}</span>
       </button>
       {open && (
@@ -1646,12 +1683,15 @@ function LivePricesPanel({ tickers, avKey, setAvKey, avMeta, setAvMeta, prices, 
               <tbody>
                 {tickers.map((tk) => {
                   const isGilt = secMeta[tk]?.kind === "gilt";
+                  const isFund = secMeta[tk]?.kind === "fund";
                   const m = meta(tk), pm = priceMeta[tk];
                   return (
                     <tr key={tk} className="border-t border-[var(--border)]">
                       <td className="py-1 px-2 font-medium">{tk}</td>
                       {isGilt ? (
                         <td className="py-1 px-2 text-[var(--muted)]" colSpan={3}>DMO (via ISIN {secMeta[tk]?.isin || "— not set"})</td>
+                      ) : isFund ? (
+                        <td className="py-1 px-2 text-[var(--muted)]" colSpan={3}>No live source — pension/LISA fund, set manually on the Pension &amp; LISA tab</td>
                       ) : (<>
                         <td className="py-1 px-2"><input value={m.yahoo} onChange={(e) => setMeta(tk, { yahoo: e.target.value.trim() })} className="input num w-24 py-0.5" /></td>
                         <td className="py-1 px-2"><input value={m.av} onChange={(e) => setMeta(tk, { av: e.target.value.trim() })} className="input num w-24 py-0.5" /></td>
@@ -1661,7 +1701,7 @@ function LivePricesPanel({ tickers, avKey, setAvKey, avMeta, setAvMeta, prices, 
                           </select>
                         </td>
                       </>)}
-                      <td className="py-1 px-2"><button onClick={() => fetchOne(tk)} disabled={busy} className="text-[var(--accent)] disabled:opacity-40" title="Fetch this one">&#8635;</button></td>
+                      <td className="py-1 px-2"><button onClick={() => fetchOne(tk)} disabled={busy || isFund} className="text-[var(--accent)] disabled:opacity-40" title={isFund ? "No live source for pension funds" : "Fetch this one"}>&#8635;</button></td>
                       <td className="py-1 px-2 num text-[var(--muted)]">{pm ? `${num(pm.raw, 2)} ${pm.ccy}` : "-"}</td>
                       <td className="py-1 px-2">{pm?.source ? <span className="text-[10px] px-1.5 py-0.5 rounded-full" style={{ color: pm.source === "Yahoo" ? "var(--m-pool)" : pm.source === "DMO" ? "var(--gain)" : "var(--m-bb)", background: "var(--chip)" }}>{pm.source}</span> : <span className="text-[var(--muted)]">-</span>}</td>
                       <td className="py-1 px-2 num text-[var(--muted)]">{pm ? new Date(pm.asOf).toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : "-"}</td>
@@ -1720,7 +1760,7 @@ function AllocBar({ title, buckets, labelOf = (k) => k }) {
   );
 }
 
-function WealthTab({ model, cash, setCash, prices, setPrices, avKey, setAvKey, avMeta, setAvMeta, priceMeta, setPriceMeta, txns, secMeta }) {
+function WealthTab({ model, cash, setCash, prices, setPrices, avKey, setAvKey, avMeta, setAvMeta, priceMeta, setPriceMeta, txns, secMeta, dmoReportDate, setDmoReportDate }) {
   if (!model) return <Empty msg="Couldn't build the portfolio model — check the Transactions tab for ledger errors." />;
   const { positions, byWrapper, total, income } = model;
   if (!positions.length && !Object.keys(cash).length)
@@ -1761,7 +1801,7 @@ function WealthTab({ model, cash, setCash, prices, setPrices, avKey, setAvKey, a
         </div>
       )}
 
-      <LivePricesPanel {...{ tickers, avKey, setAvKey, avMeta, setAvMeta, prices, setPrices, priceMeta, setPriceMeta, txns, secMeta }} />
+      <LivePricesPanel {...{ tickers, avKey, setAvKey, avMeta, setAvMeta, prices, setPrices, priceMeta, setPriceMeta, txns, secMeta, dmoReportDate, setDmoReportDate }} />
 
       {/* per-wrapper roll-up with editable cash */}
       <div className="rounded-xl border border-[var(--border)] overflow-hidden">
@@ -1893,15 +1933,44 @@ function RateCell({ r }) {
   );
 }
 
-function ReturnsTab({ returns, valuations }) {
+function ReturnsTab({ returns, valuations, pensionCashflows = [], secMeta = {}, txns = [] }) {
   const [selectedWrapper, setSelectedWrapper] = useState(null); // click a per-wrapper row to filter the per-holding table below
+
+  // Pension funds (SIPP/LISA) only ever have ONE consolidated transaction
+  // (a snapshot, not a purchase history), so the normal txn-based XIRR above
+  // just measures the time since that snapshot/last edit — meaningless, and
+  // was the actual source of "the pension XIRR looks wrong" here (the
+  // Pension tab's own XIRR is correct, since it uses the real contribution
+  // dates in pensionCashflows; this tab wasn't using them at all before).
+  // Fix: recompute wrapper-level XIRR for SIPP/LISA from real contribution
+  // dates when available, and blank the misleading per-fund figure (real
+  // per-fund attribution isn't possible — contributions aren't tied to a
+  // specific fund in these exports) rather than show a wrong number.
+  const byWrapper = returns?.byWrapper;
+  const pensionXirrByWrapper = useMemo(() => {
+    const out = {};
+    if (!byWrapper) return out;
+    for (const w of ["SIPP", "LISA"]) {
+      const providers = new Set(Object.entries(secMeta).filter(([tk, m]) => m.provider && txns.some((t) => t.ticker === tk && normWrapper(t.wrapper) === w)).map(([, m]) => m.provider));
+      if (!providers.size) continue;
+      const cfs = pensionCashflows.filter((c) => providers.has(c.provider) && c.gbpAmount != null);
+      if (!cfs.length) continue;
+      const flows = cfs.map((c) => ({ date: c.date, amount: -Math.abs(c.gbpAmount) }));
+      const currentValue = byWrapper[w]?.value ?? 0;
+      if (currentValue > 0) flows.push({ date: todayISO(), amount: currentValue });
+      out[w] = xirr(flows);
+    }
+    return out;
+  }, [secMeta, txns, pensionCashflows, byWrapper]);
+
   if (!returns) return <Empty msg="Couldn't compute returns — check the Transactions tab for ledger errors." />;
-  const { perHolding, byWrapper, total, portfolioTWR } = returns;
+  const { perHolding, total, portfolioTWR } = returns;
   if (!perHolding.length) return <Empty msg="No transactions yet. Returns appear once you have holdings (any wrapper)." />;
 
   const wrapperOrder = [...WRAPPERS, ...Object.keys(byWrapper).filter((w) => !WRAPPERS.includes(w))].filter((w) => byWrapper[w]);
   const openH = perHolding.filter((h) => h.open && (!selectedWrapper || h.wrapper === selectedWrapper));
   const closedH = perHolding.filter((h) => !h.open && (!selectedWrapper || h.wrapper === selectedWrapper));
+  const pensionTickers = new Set(Object.entries(secMeta).filter(([, m]) => m.provider).map(([tk]) => tk));
 
   return (
     <div className="space-y-4">
@@ -1954,7 +2023,10 @@ function ReturnsTab({ returns, valuations }) {
                   <td className="px-3 py-2 num text-right">{a.unpricedOpen ? "—" : gbp(a.value)}</td>
                   <td className={"px-3 py-2 num text-right font-medium " + (a.profit == null ? "text-[var(--muted)]" : a.profit >= 0 ? "text-[var(--gain)]" : "text-[var(--loss)]")}>{a.profit != null ? gbp(a.profit) : "—"}</td>
                   <td className="px-3 py-2 num text-right">{pct(a.simpleReturn)}</td>
-                  <td className="px-3 py-2 text-right"><RateCell r={a.xirr} /></td>
+                  <td className="px-3 py-2 text-right">
+                    <RateCell r={pensionXirrByWrapper[w] || a.xirr} />
+                    {pensionXirrByWrapper[w] && <span className="ml-1 text-[10px] text-[var(--muted)]" title="From real contribution dates (Pension & LISA tab), not the transaction ledger — the ledger only holds one snapshot per fund, not a purchase history">◆</span>}
+                  </td>
                   <td className="px-3 py-2 num text-right text-[var(--muted)]">{pctPlain(a.actualYield)}</td>
                   <td className="px-3 py-2 num text-right text-[var(--muted)]">{pctPlain(a.forwardYield)}</td>
                 </tr>
@@ -1986,8 +2058,16 @@ function ReturnsTab({ returns, valuations }) {
                 <td className="px-3 py-2 num text-right">{gbp(h.moneyOut + h.incomeReceived)}</td>
                 <td className="px-3 py-2 num text-right">{h.open ? (h.priced ? gbp(h.marketValue) : "—") : gbp(0)}</td>
                 <td className={"px-3 py-2 num text-right font-medium " + (h.profit == null ? "text-[var(--muted)]" : h.profit >= 0 ? "text-[var(--gain)]" : "text-[var(--loss)]")}>{h.profit != null ? gbp(h.profit) : "—"}</td>
-                <td className="px-3 py-2 text-right"><RateCell r={h.xirr} /></td>
-                <td className="px-3 py-2 text-right">{h.twr.twr == null ? <span className="text-[var(--muted)]" title={h.twr.reason || ""}>—</span> : <span className={"num " + (h.twr.twr >= 0 ? "text-[var(--gain)]" : "text-[var(--loss)]")} title={`Since ${h.twr.episodeStart} (${h.twr.spanDays}d)${h.twr.annualised != null && h.twr.spanDays >= SHORT_SPAN ? ` · ${pct(h.twr.annualised)} annualised` : ""}`}>{pct(h.twr.twr)}</span>}</td>
+                <td className="px-3 py-2 text-right">
+                  {pensionTickers.has(h.ticker)
+                    ? <span className="text-[var(--muted)]" title={`Not shown per-fund — contributions aren't tied to a specific fund in this provider's export. See the ${h.wrapper} row above for a real, contribution-dated XIRR.`}>see {h.wrapper}</span>
+                    : <RateCell r={h.xirr} />}
+                </td>
+                <td className="px-3 py-2 text-right">
+                  {pensionTickers.has(h.ticker)
+                    ? <span className="text-[var(--muted)]" title="Not meaningful for a snapshot-only holding (no real trade-price history)">—</span>
+                    : (h.twr.twr == null ? <span className="text-[var(--muted)]" title={h.twr.reason || ""}>—</span> : <span className={"num " + (h.twr.twr >= 0 ? "text-[var(--gain)]" : "text-[var(--loss)]")} title={`Since ${h.twr.episodeStart} (${h.twr.spanDays}d)${h.twr.annualised != null && h.twr.spanDays >= SHORT_SPAN ? ` · ${pct(h.twr.annualised)} annualised` : ""}`}>{pct(h.twr.twr)}</span>)}
+                </td>
                 <td className="px-3 py-2 num text-right text-[var(--muted)]">{h.open ? pctPlain(h.income.actualYield) : "—"}</td>
                 <td className="px-3 py-2 num text-right text-[var(--muted)]">{h.open ? pctPlain(h.income.forwardYield) : "—"}</td>
               </tr>
@@ -1997,7 +2077,7 @@ function ReturnsTab({ returns, valuations }) {
       </div>
 
       <p className="text-xs text-[var(--muted)] leading-relaxed">
-        Everything here is pre-tax and in GBP. <span className="font-medium">XIRR</span> is your money-weighted annual return — cashflow-timing included — computed from every trade, cash distribution, and the current value (365-day count; † marks histories under {SHORT_SPAN} days, where annualised rates are noise). <span className="font-medium">TWR (episode)</span> is the cumulative time-weighted return on the current holding episode, exact from your own trade prices, with distributions treated as reinvested — compare it to a benchmark; compare XIRR to your own expectations. ERI counts toward income yields (it's real accumulation) but is never an XIRR cashflow (no cash moves). Cash balances sit outside all return figures. Forward yield applies the last 12 months' per-unit distributions to your current unit count — an estimate, not a promise.
+        Everything here is pre-tax and in GBP. <span className="font-medium">XIRR</span> is your money-weighted annual return — cashflow-timing included — computed from every trade, cash distribution, and the current value (365-day count; † marks histories under {SHORT_SPAN} days, where annualised rates are noise). A <span className="text-[var(--muted)]">◆</span> marks a wrapper's XIRR as computed from real pension contribution dates (Pension &amp; LISA tab) rather than the transaction ledger, which only holds one snapshot per fund — individual pension fund rows show "see {"{wrapper}"}" instead of their own XIRR/TWR for the same reason. <span className="font-medium">TWR (episode)</span> is the cumulative time-weighted return on the current holding episode, exact from your own trade prices, with distributions treated as reinvested — compare it to a benchmark; compare XIRR to your own expectations. ERI counts toward income yields (it's real accumulation) but is never an XIRR cashflow (no cash moves). Cash balances sit outside all return figures. Forward yield applies the last 12 months' per-unit distributions to your current unit count — an estimate, not a promise.
       </p>
     </div>
   );
@@ -2177,9 +2257,9 @@ function PensionTab({ txns, setTxns, cash, setCash, secMeta, setSecMeta, prices,
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-        <Stat label="Pension & LISA total" value={gbp(total)} big />
-        <Stat label="SIPP" value={gbp(rows.filter((r) => r.wrapper === "SIPP").reduce((s, r) => s + (prices[r.ticker] != null ? r.units * prices[r.ticker] : r.cost), 0))} />
-        <Stat label="LISA" value={gbp(rows.filter((r) => r.wrapper === "LISA").reduce((s, r) => s + (prices[r.ticker] != null ? r.units * prices[r.ticker] : r.cost), 0) + (+cash.LISA || 0) + lisaInvestedValue)} />
+        <Stat label="Pension & LISA total" value={gbp0(total)} big />
+        <Stat label="SIPP" value={gbp0(rows.filter((r) => r.wrapper === "SIPP").reduce((s, r) => s + (prices[r.ticker] != null ? r.units * prices[r.ticker] : r.cost), 0))} />
+        <Stat label="LISA" value={gbp0(rows.filter((r) => r.wrapper === "LISA").reduce((s, r) => s + (prices[r.ticker] != null ? r.units * prices[r.ticker] : r.cost), 0) + (+cash.LISA || 0) + lisaInvestedValue)} />
       </div>
 
       {rows.length === 0 && !(+cash.LISA) ? (
@@ -2339,7 +2419,7 @@ function PensionTab({ txns, setTxns, cash, setCash, secMeta, setSecMeta, prices,
 }
 
 
-function GiltsTab({ data, secMeta, setSecMeta, prices, setPrices }) {
+function GiltsTab({ data, secMeta, setSecMeta, prices, setPrices, dmoReportDate, setDmoReportDate }) {
   const [form, setForm] = React.useState({ ticker: "", name: "", coupon: "", maturity: "", isin: "" });
   const [dmoState, setDmoState] = React.useState({ status: "idle", message: "" }); // idle | loading | done | error
   const registered = Object.entries(secMeta).filter(([, m]) => m && m.kind === "gilt");
@@ -2357,13 +2437,20 @@ function GiltsTab({ data, secMeta, setSecMeta, prices, setPrices }) {
   // Live gilt prices from the DMO's own official daily Purchase & Sale Service
   // prices (see api/gilt-prices.mjs) — neither Alpha Vantage nor Yahoo Finance
   // covers individual gilts by ISIN, verified by hand before building this.
-  const fetchDmoPrices = async () => {
+  // DMO publishes once/day, so a same-day re-fetch is skipped by default
+  // (see fetchDmoGiltPrices) — "Force refresh" bypasses that if ever needed.
+  const fetchDmoPrices = async (force = false) => {
     const targets = registered.map(([tk, m]) => ({ ticker: tk, isin: m.isin }));
     if (!targets.some((t) => t.isin)) { setDmoState({ status: "error", message: "No registered gilt has an ISIN to look up." }); return; }
     setDmoState({ status: "loading", message: "" });
     try {
-      const { pricesByTicker, matched, date, total } = await fetchDmoGiltPrices(targets);
+      const { pricesByTicker, matched, date, total, skipped } = await fetchDmoGiltPrices(targets, { knownReportDate: dmoReportDate, force });
+      if (skipped) {
+        setDmoState({ status: "done", message: `Already up to date — today's DMO report (${dmoReportDate}) was already fetched. No need to ask the DMO again.`, skippable: true });
+        return;
+      }
       setPrices((pr) => ({ ...pr, ...pricesByTicker }));
+      if (matched) setDmoReportDate(dmoDateToIso(date));
       setDmoState({
         status: "done",
         message: matched
@@ -2390,12 +2477,15 @@ function GiltsTab({ data, secMeta, setSecMeta, prices, setPrices }) {
         <>
           {/* DMO live price fetch */}
           <div className="flex items-center gap-3 flex-wrap">
-            <button className="btn-accent" onClick={fetchDmoPrices} disabled={dmoState.status === "loading"}>
+            <button className="btn-accent" onClick={() => fetchDmoPrices(false)} disabled={dmoState.status === "loading"}>
               <Landmark size={15} /> {dmoState.status === "loading" ? "Fetching…" : "Fetch DMO gilt prices"}
             </button>
+            {dmoState.skippable && (
+              <button onClick={() => fetchDmoPrices(true)} className="text-xs text-[var(--accent)] hover:underline">Force refresh anyway</button>
+            )}
             {dmoState.status === "done" && <span className="text-sm text-[var(--gain)]">{dmoState.message}</span>}
             {dmoState.status === "error" && <span className="text-sm text-[var(--loss)]">{dmoState.message}</span>}
-            <span className="text-xs text-[var(--muted)]">Official DMO daily clean prices (midpoint of their published purchase/sale quotes) — not Alpha Vantage or Yahoo, neither covers individual gilts.</span>
+            <span className="text-xs text-[var(--muted)]">Official DMO daily clean prices (midpoint of their published purchase/sale quotes) — not Alpha Vantage or Yahoo, neither covers individual gilts. DMO publishes once/day, so a same-day re-fetch is skipped automatically.</span>
           </div>
 
           {/* headline */}
@@ -2502,7 +2592,7 @@ function GiltsTab({ data, secMeta, setSecMeta, prices, setPrices }) {
 }
 
 /* --------------------------- Holdings tab --------------------------- */
-function HoldingsTab({ positions, prices, setPrices, avKey, setAvKey, avMeta, setAvMeta, priceMeta, setPriceMeta, txns, secMeta, setSecMeta }) {
+function HoldingsTab({ positions, prices, setPrices, avKey, setAvKey, avMeta, setAvMeta, priceMeta, setPriceMeta, txns, secMeta, setSecMeta, dmoReportDate, setDmoReportDate }) {
   const open = positions.filter((p) => p.qty > 1e-6);
   if (!open.length) return <Empty msg="No open holdings yet. Add buy transactions (any wrapper) to see your positions and unrealised gains." />;
 
@@ -2534,13 +2624,13 @@ function HoldingsTab({ positions, prices, setPrices, avKey, setAvKey, avMeta, se
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <Stat label="Open pool cost" value={gbp(rows.reduce((s, r) => s + r.cost, 0))} sub={`taxable ${gbp(taxableCost)} · sheltered ${gbp(shelteredCost)}`} />
-        <Stat label="Market value (priced)" value={priced.length ? gbp(totValue) : "—"} sub={priced.length < rows.length ? `${priced.length}/${rows.length} priced` : "all priced"} />
-        <Stat label="Unrealised gain" value={priced.length ? gbp(totUnreal) : "—"} tone={totUnreal >= 0 ? "gain" : "loss"} big />
+        <Stat label="Open pool cost" value={gbp0(rows.reduce((s, r) => s + r.cost, 0))} sub={`taxable ${gbp0(taxableCost)} · sheltered ${gbp0(shelteredCost)}`} />
+        <Stat label="Market value (priced)" value={priced.length ? gbp0(totValue) : "—"} sub={priced.length < rows.length ? `${priced.length}/${rows.length} priced` : "all priced"} />
+        <Stat label="Unrealised gain" value={priced.length ? gbp0(totUnreal) : "—"} tone={totUnreal >= 0 ? "gain" : "loss"} big />
         <Stat label="Unrealised %" value={priced.length && totCost ? `${totUnreal >= 0 ? "+" : ""}${num((totUnreal / totCost) * 100)}%` : "—"} tone={totUnreal >= 0 ? "gain" : "loss"} />
       </div>
 
-      <LivePricesPanel {...{ tickers, avKey, setAvKey, avMeta, setAvMeta, prices, setPrices, priceMeta, setPriceMeta, txns, secMeta }} />
+      <LivePricesPanel {...{ tickers, avKey, setAvKey, avMeta, setAvMeta, prices, setPrices, priceMeta, setPriceMeta, txns, secMeta, dmoReportDate, setDmoReportDate }} />
 
       <div className="rounded-xl border border-[var(--border)] overflow-hidden">
         <table className="w-full text-sm">

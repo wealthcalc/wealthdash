@@ -105,6 +105,56 @@ and a sale-price pair that turned out to be [clean, dirty] in the RTF stream
 despite the header text listing them the other way round — were caught by
 that test before shipping, not discovered by a user later.
 
+## Bug fix: pension funds were being sent to Yahoo/Alpha Vantage
+
+Real bug: pension/LISA fund tickers (CITIUS, CITIGL, AVWXUK, etc.) were
+included in the same live-price pull as everything else, meaning the app
+would try to look them up on Yahoo/Alpha Vantage — these aren't exchange-
+traded, so at best that's a wasted call, at worst a coincidental ticker
+collision silently overwrites a fund's price with an unrelated stock's.
+
+Fixed the same way gilts were handled earlier: `LivePricesPanel` now
+detects `secMeta[tk].kind === "fund"` and excludes those tickers from the
+Yahoo/AV pull entirely (both the bulk fetch and the per-row button), showing
+"No live source — set manually on the Pension & LISA tab" instead of
+Yahoo/AV symbol inputs it can never actually use.
+
+## Feature: DMO gilt prices skip a same-day re-fetch
+
+DMO publishes one gilt-price report per business day (~2pm) — a same-day
+re-fetch is guaranteed to return identical data, so it's just a wasted
+round-trip. The shared `fetchDmoGiltPrices()` helper now takes a
+`knownReportDate` (the ISO date of the last report actually fetched,
+persisted at app level) and skips the network call entirely when it
+already matches today — across all three places gilts get fetched from
+(Gilts tab, and both the bulk and per-row fetch in the Wealth/Holdings tabs'
+live-prices panel), so the check only needed writing once. A "Force refresh
+anyway" link appears when a fetch was skipped, in case you want to
+double-check regardless.
+
+## Bug fix: Returns tab's pension XIRR used the wrong dates entirely
+
+Real bug: the Pension & LISA tab's own XIRR was already correct (built on
+real contribution dates from `pensionCashflows`), but the Returns tab
+computes XIRR generically from `txns` — and a pension fund only ever has
+ONE consolidated transaction (a snapshot, not a purchase history). So the
+Returns tab's per-fund and per-wrapper XIRR was measuring the time since
+that one snapshot/last edit, not since money was actually contributed —
+meaningless, and the two tabs visibly disagreed.
+
+Kept `core/returns.mjs` itself general-purpose (it doesn't need to know
+what a pension is) and fixed it at the UI layer instead:
+- **Per-wrapper (SIPP/LISA) XIRR** is now recomputed from real contribution
+  dates when available — same cashflow convention as the Pension tab,
+  marked with a ◆ so it's clear which figure it is.
+- **Per-fund rows** (CITIUS, CITIGL, etc.) now show "see SIPP" instead of
+  their own XIRR/TWR — real per-fund attribution isn't possible, since
+  contributions aren't tied to a specific fund in these provider exports.
+  Showing "see {wrapper}" is more honest than a number that looks precise
+  but isn't.
+
+## Pension & LISA and Holdings tabs: whole-number totals
+
 ## Bug fix: pension cost basis wasn't tracking new contributions
 
 Real bug from the previous session: contributions added via the Pension tab
