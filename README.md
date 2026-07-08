@@ -126,26 +126,37 @@ step 4, below.)
   - **Fixed-term cash account maturities** — from the cash accounts model
     (Phase 2, step 2); variable/easy-access accounts have no maturity date
     and are correctly never forecast.
-  - **Dividends, interest and pension contributions** — the genuinely new
-    piece: each (ticker, kind) series or pension provider's payment history
-    is classified into a cadence (monthly/quarterly/semi-annual/annual) by
-    its *median* gap between historical dates (median, not mean, so one
-    irregular special dividend doesn't derail an otherwise regular
-    quarterly series), then the next occurrences are projected forward at
-    the average of the last 3 payments.
+  - **Dividends and interest** — the genuinely new piece: each (ticker,
+    kind) series' payment history is classified into a cadence (monthly/
+    quarterly/semi-annual/annual) by its *median* gap between historical
+    dates (median, not mean, so one irregular special dividend doesn't
+    derail an otherwise regular quarterly series), then the next
+    occurrences are projected forward at the average of the last 3
+    payments.
 - **Every row is explicitly tagged "scheduled" or "estimated"** — gilt
-  coupons and cash maturities are contractual dates; dividends/interest/
-  pension figures are a forecast that assumes the recent pattern holds.
-  This distinction is shown in the UI, not just internal to the engine,
-  since conflating "this will happen" with "this is my best guess" would be
-  the wrong kind of confidence to hand someone planning around it.
+  coupons and cash maturities are contractual dates; dividend/interest
+  figures are a forecast that assumes the recent pattern holds. This
+  distinction is shown in the UI, not just internal to the engine, since
+  conflating "this will happen" with "this is my best guess" would be the
+  wrong kind of confidence to hand someone planning around it.
 - **Guardrails against inventing income**: a series needs at least 2
   historical payments before anything is forecast (one payment tells you
-  nothing about cadence); a holding that's been fully sold by today gets no
-  forecast dividends, checked via units-held-at-today against the full
-  transaction ledger; a cadence that doesn't fit any of the four bands
-  (gaps too irregular — e.g. ad-hoc special dividends) is left out entirely
-  rather than forced into the nearest bucket.
+  nothing about cadence) — in practice this means a **recently-acquired
+  holding won't show a forecast** until the user has recorded two dividend
+  entries against it, even if the underlying company/fund pays reliably;
+  this is a stated, deliberate trade-off (no external ex-dividend/payment-
+  calendar data source is wired in) rather than a silent gap. A holding
+  that's been fully sold by today gets no forecast dividends, checked via
+  units-held-at-today against the full transaction ledger; a cadence that
+  doesn't fit any of the four bands (gaps too irregular — e.g. ad-hoc
+  special dividends) is left out entirely rather than forced into the
+  nearest bucket.
+- **Pension contributions are deliberately excluded** — an earlier version
+  of this feature forecast them the same way as dividends, which was wrong:
+  a contribution is money moving from the investor's pocket INTO the
+  pension pot, not income received, so it doesn't belong in an "income"
+  calendar. `buildIncomeCalendar` no longer accepts a `pensionCashflows`
+  input at all (removed, not just unused, so it can't silently come back).
 - **New "Calendar" sub-tab on Income** (`SubTabs`, alongside "Tax by year" /
   "Dividends & interest" / "ERI") — a summary strip (count + total per
   source, plus a 12-month grand total) above a sortable table (reusing

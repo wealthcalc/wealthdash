@@ -252,7 +252,7 @@ function IncomeTab({ incomeEntries, setIncomeEntries, eriEntries, setEriEntries,
       {sub === "calendar" && (
         <div className="space-y-2">
           <h3 className="font-semibold text-sm">Income calendar <span className="font-normal text-[var(--muted)]">— next 12 months</span></h3>
-          <p className="text-xs text-[var(--muted)] max-w-3xl">Gilt coupons/redemptions and fixed-term cash maturities are contractual dates ("Scheduled"). Dividends, interest and pension contributions are forecast from at least two historical payments at a detected cadence, at the recent average amount ("Estimated") — nothing is forecast for a fully sold holding.</p>
+          <p className="text-xs text-[var(--muted)] max-w-3xl">Gilt coupons/redemptions and fixed-term cash maturities are contractual dates ("Scheduled"). Dividends and interest are forecast from at least two historical payments at a detected cadence, at the recent average amount ("Estimated") — nothing is forecast for a fully sold holding, or for a holding with fewer than two payments recorded yet (a recently-acquired position, for instance). Pension contributions are deliberately excluded — they're money going into the pension pot, not income received.</p>
           <IncomeCalendarView events={incomeCalendar} />
         </div>
       )}
@@ -267,7 +267,6 @@ const SOURCE_LABELS = {
   dividend: "Dividend",
   interest: "Interest",
   "cash-maturity": "Cash maturity",
-  "pension-contribution": "Pension contribution",
 };
 
 function IncomeCalendarView({ events }) {

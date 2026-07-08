@@ -3,9 +3,18 @@
    income already modelled elsewhere in the app: gilt coupons/redemptions
    (core/gilts.mjs — contractually SCHEDULED, not estimated), cash account
    maturities (core/cash.mjs), and a genuinely new piece: a forward
-   dividend/interest/pension-contribution forecast, built by detecting each
-   series' historical cadence (monthly/quarterly/semi-annual/annual) and
-   projecting the next occurrences at the recent average amount.
+   dividend/interest forecast, built by detecting each series' historical
+   cadence (monthly/quarterly/semi-annual/annual) and projecting the next
+   occurrences at the recent average amount.
+
+   Deliberately scoped to money actually received (or receivable): pension
+   CONTRIBUTIONS are excluded on purpose, even though they're scheduled and
+   forecastable the same way dividends are — a contribution is money moving
+   from the investor's pocket INTO the pension pot, not income coming back
+   out. Including it here would net an outflow against inflows and overstate
+   "income." (Pension INCOME — i.e. drawdown once in payment — isn't
+   currently modelled in this app at all, so there's nothing to add for that
+   side yet either.)
 
    Every forecast row is explicitly marked "estimated" (dividends can be
    cut, cadence can change) vs "scheduled" (gilt coupons, cash maturities —
@@ -80,7 +89,7 @@ export function nextOccurrences(lastDate, stepDays, today, horizonDays = 365) {
 // already produced by core/gilts.mjs's giltAnalytics() — this module
 // doesn't recompute gilt schedules, just folds them in.
 export function buildIncomeCalendar({
-  incomeEntries = [], txns = [], pensionCashflows = [], cashAccounts = [],
+  incomeEntries = [], txns = [], cashAccounts = [],
   giltCashflows = [], today, horizonDays = 365,
 } = {}) {
   if (!today) throw new Error("buildIncomeCalendar requires `today` (ISO date) — pure functions don't read the clock themselves.");
@@ -131,28 +140,6 @@ export function buildIncomeCalendar({
     if (a.rateType !== "fixed" || !a.maturityDate) continue;
     if (a.maturityDate > today && a.maturityDate <= horizonISO) {
       events.push({ date: a.maturityDate, source: "cash-maturity", label: a.label || a.institution || a.wrapper, amount: +a.balance || 0, certainty: "scheduled" });
-    }
-  }
-
-  // 4. Pension contributions — per-provider cadence, same technique as
-  // dividends. "Switch" rows never reach pensionCashflows (excluded at
-  // import, core/pension-import.mjs), so every row here is a real cashflow.
-  const byProvider = new Map();
-  for (const c of pensionCashflows) {
-    if (!c || !c.date || !c.gbpAmount) continue;
-    if (!byProvider.has(c.provider)) byProvider.set(c.provider, []);
-    byProvider.get(c.provider).push(c);
-  }
-  for (const [provider, cfs] of byProvider) {
-    const sorted = [...cfs].sort((a, b) => (a.date < b.date ? -1 : 1));
-    const dates = sorted.map((c) => c.date);
-    if (dates.length < 2) continue;
-    const cadence = detectCadence(dates);
-    if (!cadence || cadence.label === "irregular") continue;
-    const recent = sorted.slice(-3).map((c) => c.gbpAmount);
-    const avgAmount = Math.round((recent.reduce((a, b) => a + b, 0) / recent.length) * 100) / 100;
-    for (const d of nextOccurrences(dates[dates.length - 1], cadence.medianDays, today, horizonDays)) {
-      events.push({ date: d, source: "pension-contribution", label: provider, amount: avgAmount, certainty: "estimated", cadence: cadence.label });
     }
   }
 

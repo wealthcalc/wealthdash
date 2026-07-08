@@ -118,17 +118,19 @@ test("buildIncomeCalendar: fixed-term cash maturity within horizon is scheduled;
   assert.equal(events[0].certainty, "scheduled");
 });
 
-test("buildIncomeCalendar: monthly pension contributions forecast per provider", () => {
-  const pensionCashflows = [
-    { date: "2026-04-06", provider: "L&G", gbpAmount: 600 },
-    { date: "2026-05-06", provider: "L&G", gbpAmount: 600 },
-    { date: "2026-06-06", provider: "L&G", gbpAmount: 600 },
-  ];
-  const events = buildIncomeCalendar({ pensionCashflows, today: TODAY, horizonDays: 60 });
-  const pension = events.filter((e) => e.source === "pension-contribution");
-  assert.equal(pension.length, 1); // next monthly date within 60 days
-  assert.equal(pension[0].label, "L&G");
-  assert.equal(pension[0].amount, 600);
+test("buildIncomeCalendar: pension contributions are never forecast — they're money going INTO the pot, not income", () => {
+  // Even a clean, obviously-forecastable monthly cadence must not appear:
+  // buildIncomeCalendar no longer accepts a pensionCashflows input at all.
+  const events = buildIncomeCalendar({
+    incomeEntries: [], txns: [], cashAccounts: [], giltCashflows: [],
+    pensionCashflows: [ // extra/unknown input — must be silently ignored, not throw
+      { date: "2026-04-06", provider: "L&G", gbpAmount: 600 },
+      { date: "2026-05-06", provider: "L&G", gbpAmount: 600 },
+    ],
+    today: TODAY, horizonDays: 60,
+  });
+  assert.equal(events.filter((e) => e.source === "pension-contribution").length, 0);
+  assert.equal(events.length, 0);
 });
 
 test("buildIncomeCalendar: everything sorted chronologically across sources", () => {

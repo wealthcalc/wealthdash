@@ -147,16 +147,19 @@ export default function App() {
 
   // Phase 2, step 4: forward income calendar — gilt coupons/redemptions
   // (contractually scheduled, from giltData.cashflows), cash account
-  // maturities, and a cadence-detected forecast of recurring dividends,
-  // interest and pension contributions. Uses the FULL ledger (all wrappers),
-  // not just GIA, since dividends in ISA/SIPP are just as real a forward
-  // cashflow as taxable ones — this is a "what's coming in" view, not a tax
-  // computation.
+  // maturities, and a cadence-detected forecast of recurring dividends and
+  // interest. Uses the FULL ledger (all wrappers), not just GIA, since
+  // dividends in ISA/SIPP are just as real a forward cashflow as taxable
+  // ones — this is a "what's coming in" view, not a tax computation.
+  // Pension CONTRIBUTIONS are deliberately excluded (see
+  // core/income-calendar.mjs's header comment) — money going into the
+  // pension pot isn't income, so pensionCashflows is intentionally not
+  // passed here even though it's available in this component.
   const incomeCalendar = useMemo(() => buildIncomeCalendar({
-    incomeEntries, txns, pensionCashflows,
+    incomeEntries, txns,
     cashAccounts, giltCashflows: giltData ? giltData.cashflows : [],
     today: todayISO(), horizonDays: 365,
-  }), [incomeEntries, txns, pensionCashflows, cashAccounts, giltData]);
+  }), [incomeEntries, txns, cashAccounts, giltData]);
 
   // Individual gilts are CGT-exempt (TCGA 1992 s115), but `matched` (the raw
   // matching engine output) doesn't know about instrument type — it'll happily
