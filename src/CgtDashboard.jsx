@@ -8,6 +8,7 @@ import { allocateCostByValueWeight } from "./core/pension-import.mjs";
 import { liabilityForYear, liabilityAllYears } from "./core/uk-tax.mjs";
 import { householdNetWorth } from "./core/property.mjs";
 import { effectiveCashByWrapper } from "./core/cash.mjs";
+import { buildIncomeCalendar } from "./core/income-calendar.mjs";
 import { unitsHeldAt, uid, todayISO, IconBtn } from "./ui/shared.jsx";
 import { DesktopSidebar, MobileDrawer } from "./ui/Sidebar.jsx";
 import useAppStore from "./state/appStore.js";
@@ -142,6 +143,19 @@ export default function App() {
     try { return giltAnalytics({ txns, secMeta, prices }); }
     catch { return null; }
   }, [txns, secMeta, prices]);
+
+  // Phase 2, step 4: forward income calendar — gilt coupons/redemptions
+  // (contractually scheduled, from giltData.cashflows), cash account
+  // maturities, and a cadence-detected forecast of recurring dividends,
+  // interest and pension contributions. Uses the FULL ledger (all wrappers),
+  // not just GIA, since dividends in ISA/SIPP are just as real a forward
+  // cashflow as taxable ones — this is a "what's coming in" view, not a tax
+  // computation.
+  const incomeCalendar = useMemo(() => buildIncomeCalendar({
+    incomeEntries, txns, pensionCashflows,
+    cashAccounts, giltCashflows: giltData ? giltData.cashflows : [],
+    today: todayISO(), horizonDays: 365,
+  }), [incomeEntries, txns, pensionCashflows, cashAccounts, giltData]);
 
   // Individual gilts are CGT-exempt (TCGA 1992 s115), but `matched` (the raw
   // matching engine output) doesn't know about instrument type — it'll happily
@@ -358,7 +372,7 @@ export default function App() {
                 allTxns: txns, secMeta, setTxns,
               }} />}
               {tab === "allowances" && <AllowancesTab {...{ txns, pensionCashflows, incomeEntries, eriTxns, income, taxableDisposals }} />}
-              {tab === "income" && <IncomeTab {...{ incomeEntries, setIncomeEntries, eriEntries, setEriEntries, eriTxns, incomeByYear, incomeAllWrappers, income, setIncome, txns: giaTxns, secMeta, setSecMeta }} />}
+              {tab === "income" && <IncomeTab {...{ incomeEntries, setIncomeEntries, eriEntries, setEriEntries, eriTxns, incomeByYear, incomeAllWrappers, income, setIncome, txns: giaTxns, secMeta, setSecMeta, incomeCalendar }} />}
               {tab === "holdings" && <HoldingsTab {...{ positions: wealthModel ? wealthModel.positions : [], prices, setPrices, avKey, setAvKey, avMeta, setAvMeta, priceMeta, setPriceMeta, txns, secMeta, setSecMeta, dmoReportDate, setDmoReportDate }} />}
               {tab === "property" && <PropertyTab {...{ properties, setProperties, mortgages, setMortgages, otherLiabilities, setOtherLiabilities }} />}
               {tab === "ledger" && <LedgerTab {...{ txns, setTxns }} />}

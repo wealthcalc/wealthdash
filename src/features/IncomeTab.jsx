@@ -4,6 +4,7 @@ import { ukTaxYear } from "../core/cgt-engine.mjs";
 import { WRAPPERS, isWrapperTaxable } from "../core/portfolio.mjs";
 import { investmentIncomeTax } from "../core/uk-tax.mjs";
 import { addMonthsISO } from "../core/ishares-eri.mjs";
+import { summariseBySource } from "../core/income-calendar.mjs";
 import { store, unitsHeldAt, gbp, SubTabs, num, uid, todayISO, fxToGBP, Field, Empty, useSort, sortRows, SortTh } from "../ui/shared.jsx";
 
 /* ----------------------------- Income tab --------------------------- */
@@ -20,7 +21,7 @@ const ERI_COLS = [
   { label: "", align: "right" },
 ];
 
-function IncomeTab({ incomeEntries, setIncomeEntries, eriEntries, setEriEntries, eriTxns, incomeByYear, incomeAllWrappers = {}, income, setIncome, txns, secMeta, setSecMeta }) {
+function IncomeTab({ incomeEntries, setIncomeEntries, eriEntries, setEriEntries, eriTxns, incomeByYear, incomeAllWrappers = {}, income, setIncome, txns, secMeta, setSecMeta, incomeCalendar = [] }) {
   const [dv, setDv] = useState(DIV_BLANK());
   const [er, setEr] = useState(ERI_BLANK());
   const [fxBusy, setFxBusy] = useState(false);
@@ -63,7 +64,7 @@ function IncomeTab({ incomeEntries, setIncomeEntries, eriEntries, setEriEntries,
       </div>
 
       <SubTabs
-        tabs={[["byyear", "Tax by year"], ["divint", "Dividends & interest"], ["eri", "ERI"]]}
+        tabs={[["byyear", "Tax by year"], ["divint", "Dividends & interest"], ["eri", "ERI"], ["calendar", "Calendar"]]}
         active={sub} onChange={setSub}
       />
 
@@ -247,6 +248,82 @@ function IncomeTab({ incomeEntries, setIncomeEntries, eriEntries, setEriEntries,
           <EriCoverage {...{ txns, eriEntries, secMeta, setSecMeta }} />
         </div>
       )}
+
+      {sub === "calendar" && (
+        <div className="space-y-2">
+          <h3 className="font-semibold text-sm">Income calendar <span className="font-normal text-[var(--muted)]">— next 12 months</span></h3>
+          <p className="text-xs text-[var(--muted)] max-w-3xl">Gilt coupons/redemptions and fixed-term cash maturities are contractual dates ("Scheduled"). Dividends, interest and pension contributions are forecast from at least two historical payments at a detected cadence, at the recent average amount ("Estimated") — nothing is forecast for a fully sold holding.</p>
+          <IncomeCalendarView events={incomeCalendar} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ------------------------- Income calendar view ------------------------ */
+const SOURCE_LABELS = {
+  "gilt-coupon": "Gilt coupon",
+  "gilt-redemption": "Gilt redemption",
+  dividend: "Dividend",
+  interest: "Interest",
+  "cash-maturity": "Cash maturity",
+  "pension-contribution": "Pension contribution",
+};
+
+function IncomeCalendarView({ events }) {
+  const [calSort, toggleCalSort] = useSort("date", "asc");
+  const summary = useMemo(() => summariseBySource(events), [events]);
+  const total = events.reduce((s, e) => s + (+e.amount || 0), 0);
+
+  if (!events.length) {
+    return <Empty msg="No forward income scheduled or forecast in the next 12 months. Dividend/interest forecasts need at least two historical payments on an open holding; gilt coupons and cash maturities show automatically once you hold them." />;
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap gap-2">
+        {Object.entries(summary).map(([source, s]) => (
+          <div key={source} className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-xs">
+            <div className="text-[var(--muted)]">{SOURCE_LABELS[source] || source}</div>
+            <div className="font-semibold num">{gbp(s.total)} <span className="text-[var(--muted)] font-normal">({s.count})</span></div>
+          </div>
+        ))}
+        <div className="rounded-lg border border-[var(--accent)] bg-[var(--panel)] px-3 py-2 text-xs">
+          <div className="text-[var(--muted)]">Total, next 12 months</div>
+          <div className="font-semibold num">{gbp(total)}</div>
+        </div>
+      </div>
+      <div className="rounded-xl border border-[var(--border)] overflow-hidden">
+        <table className="w-full text-sm">
+          <thead className="bg-[var(--panel2)] text-[var(--muted)] text-xs uppercase tracking-wide">
+            <tr>
+              <SortTh id="date" label="Date" sort={calSort} onSort={toggleCalSort} className="py-2 px-3 font-medium" />
+              <SortTh id="source" label="Source" sort={calSort} onSort={toggleCalSort} className="py-2 px-3 font-medium" />
+              <SortTh id="label" label="Holding / account" sort={calSort} onSort={toggleCalSort} className="py-2 px-3 font-medium" />
+              <SortTh id="amount" label="Amount" sort={calSort} onSort={toggleCalSort} align="right" className="py-2 px-3 font-medium" />
+              <th className="py-2 px-3 text-left font-medium">Certainty</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-[var(--border)]">
+            {sortRows(events, calSort, {
+              date: (e) => e.date, source: (e) => e.source, label: (e) => e.label || "", amount: (e) => +e.amount || 0,
+            }).map((e, i) => (
+              <tr key={`${e.date}-${e.source}-${e.label}-${i}`}>
+                <td className="py-2 px-3 num text-[var(--muted)]">{e.date}</td>
+                <td className="py-2 px-3">{SOURCE_LABELS[e.source] || e.source}</td>
+                <td className="py-2 px-3">{e.label || "—"}{e.cadence ? <span className="text-[var(--muted)]"> · {e.cadence}</span> : null}</td>
+                <td className="py-2 px-3 text-right num">{gbp(e.amount)}</td>
+                <td className="py-2 px-3">
+                  {e.certainty === "scheduled"
+                    ? <span className="text-[var(--gain)]">Scheduled</span>
+                    : <span className="text-[var(--muted)]">Estimated</span>}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="text-xs text-[var(--muted)]">Amounts are gross, before any tax. Dividend/interest/pension figures use the average of the last 3 payments at the detected cadence — a cut, special dividend or change in payment schedule will move the actual date/amount away from this estimate.</p>
     </div>
   );
 }

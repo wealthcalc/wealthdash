@@ -87,9 +87,10 @@ everything else in that plan sits on.
 - **Backup version 6** — adds `cashAccounts`; v5 and earlier restore
   exactly as before.
 
-Still open from the Phase 2 plan (not yet built): an income calendar,
-benchmark/volatility analytics, tax-aware rebalancing, an SA108 export
-pack, and an accessibility pass.
+Still open from the Phase 2 plan at this point (not yet built): an income
+calendar, benchmark/volatility analytics, tax-aware rebalancing, an SA108
+export pack, and an accessibility pass. (The income calendar is covered in
+step 4, below.)
 
 ## Phase 2, step 3: property/liabilities in the retirement projection
 
@@ -113,6 +114,55 @@ pack, and an accessibility pass.
   `otherNetWorthStart` only ever appears additively in the final
   `estateReal` figure, so this carries none of the risk of touching the
   already-complex, untested-by-node (UI-embedded) financial model.
+
+## Phase 2, step 4: income calendar + forward dividend forecast
+
+- **`core/income-calendar.mjs`** (new, pure, 15 node tests) — a forward-
+  looking view over income already modelled elsewhere, combined into one
+  sorted, 12-month calendar on the Income tab:
+  - **Gilt coupons/redemptions** — pulled straight from `giltAnalytics()`'s
+    existing `cashflows` array (contractual dates, computed in Phase 1's
+    gilt-ladder work) — nothing new to compute, just surfaced.
+  - **Fixed-term cash account maturities** — from the cash accounts model
+    (Phase 2, step 2); variable/easy-access accounts have no maturity date
+    and are correctly never forecast.
+  - **Dividends, interest and pension contributions** — the genuinely new
+    piece: each (ticker, kind) series or pension provider's payment history
+    is classified into a cadence (monthly/quarterly/semi-annual/annual) by
+    its *median* gap between historical dates (median, not mean, so one
+    irregular special dividend doesn't derail an otherwise regular
+    quarterly series), then the next occurrences are projected forward at
+    the average of the last 3 payments.
+- **Every row is explicitly tagged "scheduled" or "estimated"** — gilt
+  coupons and cash maturities are contractual dates; dividends/interest/
+  pension figures are a forecast that assumes the recent pattern holds.
+  This distinction is shown in the UI, not just internal to the engine,
+  since conflating "this will happen" with "this is my best guess" would be
+  the wrong kind of confidence to hand someone planning around it.
+- **Guardrails against inventing income**: a series needs at least 2
+  historical payments before anything is forecast (one payment tells you
+  nothing about cadence); a holding that's been fully sold by today gets no
+  forecast dividends, checked via units-held-at-today against the full
+  transaction ledger; a cadence that doesn't fit any of the four bands
+  (gaps too irregular — e.g. ad-hoc special dividends) is left out entirely
+  rather than forced into the nearest bucket.
+- **New "Calendar" sub-tab on Income** (`SubTabs`, alongside "Tax by year" /
+  "Dividends & interest" / "ERI") — a summary strip (count + total per
+  source, plus a 12-month grand total) above a sortable table (reusing
+  `useSort`/`sortRows`/`SortTh` from Phase 1) of every event with its date,
+  source, holding/account, amount and scheduled/estimated tag.
+- Computed once in `CgtDashboard.jsx` from the **full** transaction ledger
+  (all wrappers, not just GIA) — a forecast SIPP dividend is just as real a
+  forward cashflow as a taxable GIA one; this is a "what's coming in" view,
+  not a tax computation, so it deliberately doesn't reuse the GIA-filtered
+  `txns` the ERI/CGT parts of the Income tab use.
+
+### Still open from the Phase 2 plan
+
+- Benchmark comparison, volatility/drawdown, fee drag
+- Tax-aware rebalancing suggestions
+- SA108 export pack; tax-year-end mode
+- Accessibility pass + first-run experience
 
 ## Phase 1: engines out of the monolith, UI split, Home tab
 
