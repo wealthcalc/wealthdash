@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useCallback, useRef } from "react";
 import { RefreshCw, Check } from "lucide-react";
-import { gbp, dmoDateToIso, fetchDmoGiltPrices, num, avQuote, fxToGBP, toGBP, avBudget, avBump, sleep, Field } from "../ui/shared.jsx";
+import { gbp, dmoDateToIso, fetchDmoGiltPrices, num, avQuote, fxToGBP, toGBP, avBudget, avBump, Field } from "../ui/shared.jsx";
+import { refreshAllPrices } from "./priceRefresh.js";
 
 function LivePricesPanel({ tickers, avKey, setAvKey, avMeta, setAvMeta, prices, setPrices, priceMeta, setPriceMeta, txns, secMeta = {}, dmoReportDate, setDmoReportDate }) {
   const [open, setOpen] = useState(false);
@@ -87,46 +88,15 @@ function LivePricesPanel({ tickers, avKey, setAvKey, avMeta, setAvMeta, prices, 
     setBusy(false); setProg("");
   };
 
+  // Bulk fetch — delegated to the shared engine (ui/priceRefresh.js) so the
+  // Home tab's needs-attention rail can trigger the exact same refresh.
   const fetchAll = async () => {
-    setBusy(true); setMsg(""); const done = {}; const fxCache = {};
-    const getFx = async (ccy) => { if (ccy === "GBP" || ccy === "GBp") return 1; if (!(ccy in fxCache)) fxCache[ccy] = await fxToGBP(ccy); return fxCache[ccy]; };
-    let giltMsg = "";
-    if (giltTickers.length) {
-      setProg("Fetching gilts from the DMO...");
-      try {
-        const { pricesByTicker, matched, date, skipped } = await fetchDmoGiltPrices(giltTickers.map((tk) => ({ ticker: tk, isin: secMeta[tk]?.isin })), { knownReportDate: dmoReportDate });
-        if (skipped) {
-          giltMsg = `gilts already up to date (DMO report ${dmoReportDate})`;
-          for (const tk of giltTickers) done[tk] = true; // don't count these against "enter the rest manually"
-        } else {
-          if (Object.keys(pricesByTicker).length) {
-            setPrices((p) => ({ ...p, ...pricesByTicker }));
-            setPriceMeta((p) => { const n = { ...p }; for (const tk of Object.keys(pricesByTicker)) n[tk] = { asOf: new Date().toISOString(), raw: pricesByTicker[tk] * 100, ccy: "GBP", source: "DMO" }; return n; });
-            for (const tk of Object.keys(pricesByTicker)) done[tk] = true;
-            if (setDmoReportDate && date) setDmoReportDate(dmoDateToIso(date));
-          }
-          giltMsg = `${matched}/${giltTickers.length} gilt${giltTickers.length === 1 ? "" : "s"} from DMO (${date})`;
-        }
-      } catch (e) { giltMsg = `gilts: ${e.message}`; }
-    }
-    try {
-      setProg("Fetching from Yahoo...");
-      const by = await yahooFetch(otherTickers.map((tk) => meta(tk).yahoo));
-      for (const tk of otherTickers) { const q = by[meta(tk).yahoo]; if (q && q.price != null) { const fx = await getFx(q.currency); if (applyQuote(tk, q.price, q.currency, fx, "Yahoo")) done[tk] = true; } }
-    } catch { setMsg("Yahoo function unreachable - trying Alpha Vantage fallback."); }
-    const rest = otherTickers.filter((tk) => !done[tk]);
-    if (rest.length && avKey) {
-      for (let i = 0; i < rest.length; i++) {
-        if (avBudget().n >= 25) { setMsg("Alpha Vantage daily limit reached - enter the rest manually."); break; }
-        const tk = rest[i], m = meta(tk); setProg(`Alpha Vantage fallback ${i + 1}/${rest.length}: ${tk}...`);
-        try { const raw = await avQuote(m.av, avKey); avBump(); const fx = await getFx(m.currency); if (applyQuote(tk, raw, m.currency, fx, "AV")) done[tk] = true; }
-        catch (e) { if (/limit/i.test(e.message)) { setMsg("Alpha Vantage limit reached - stopping."); break; } }
-        if (i < rest.length - 1) { setProg("Waiting (AV 5/min)..."); await sleep(13000); }
-      }
-    }
-    const got = Object.keys(done).length;
-    const fundNote = pensionFundTickers.length ? ` ${pensionFundTickers.length} pension fund${pensionFundTickers.length === 1 ? "" : "s"} skipped — no live source, enter manually or use the Pension & LISA tab.` : "";
-    setProg(""); setMsg(`Updated ${got}/${otherTickers.length + giltTickers.length} prices${got < otherTickers.length + giltTickers.length ? " - enter the rest manually." : "."}${giltMsg ? ` (${giltMsg})` : ""}${fundNote}`);
+    setBusy(true); setMsg("");
+    const res = await refreshAllPrices({
+      tickers, txns, secMeta, avMeta, avKey, dmoReportDate,
+      setPrices, setPriceMeta, setDmoReportDate, onProgress: setProg,
+    });
+    setMsg(res.message);
     setBusy(false);
   };
 

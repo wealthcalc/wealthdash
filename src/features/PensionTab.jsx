@@ -2,7 +2,7 @@ import React, { useState, useMemo, useCallback, useRef } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import { normWrapper } from "../core/portfolio.mjs";
 import { xirr } from "../core/returns.mjs";
-import { gbp, gbp0, WrapperChip, num, round2, CurrencyInput, NumberInput, uid, todayISO, Field, Stat, Empty } from "../ui/shared.jsx";
+import { gbp, gbp0, WrapperChip, num, round2, CurrencyInput, NumberInput, uid, todayISO, rateIsDisplayable, Field, Stat, Empty } from "../ui/shared.jsx";
 
 function PensionTab({ txns, setTxns, cash, setCash, secMeta, setSecMeta, prices, setPrices, pensionCashflows = [], setPensionCashflows, recomputeProviderCost }) {
   const [form, setForm] = useState({ wrapper: "SIPP", provider: "", ticker: "", name: "", units: "", price: "" });
@@ -199,11 +199,13 @@ function PensionTab({ txns, setTxns, cash, setCash, secMeta, setSecMeta, prices,
                     <button onClick={() => { setRenaming(provider); setRenameValue(provider); }} className="text-sm font-medium hover:underline decoration-dotted">{provider}</button>
                   )}
                   <div className="flex items-center gap-3 flex-wrap">
-                    {xr && xr.result.rate != null && (
+                    {xr && xr.result.rate != null && (rateIsDisplayable(xr.result) ? (
                       <span className={"text-xs font-medium num " + (xr.result.rate >= 0 ? "text-[var(--gain)]" : "text-[var(--loss)]")} title={`Money-weighted return (XIRR) from ${xr.nCashflows} contribution${xr.nCashflows === 1 ? "" : "s"}${xr.needsFx ? `; ${xr.needsFx} non-GBP row(s) need FX, excluded` : ""}`}>
                         XIRR {(xr.result.rate * 100).toFixed(1)}%
                       </span>
-                    )}
+                    ) : (
+                      <span className="text-xs text-[var(--muted)]" title="Too little contribution history to annualise meaningfully — the XIRR badge appears once 90 days of history exist.">XIRR n/a</span>
+                    ))}
                     {cfs.length > 0 && (
                       <button onClick={() => setExpandedCf(showingCf ? null : provider)} className="text-xs text-[var(--muted)] hover:text-[var(--fg)]">
                         {cfs.length} contribution{cfs.length === 1 ? "" : "s"} {showingCf ? "▲" : "▼"}

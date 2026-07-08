@@ -292,13 +292,25 @@ const pctPlain = (x, dp = 2) => (x == null ? "—" : `${num(x * 100, dp)}%`);
 const toneOf = (x) => (x == null ? undefined : x >= 0 ? "gain" : "loss");
 const SHORT_SPAN = 90; // days below which an annualised rate is mostly noise
 
+// Annualised rates over short spans explode (2 days of +1% annualises to
+// six figures) — that's a solver artefact, not information. Below SHORT_SPAN
+// days, or beyond ±1,000%/yr, show n/a with the reason instead of the number.
+const ABSURD_RATE = 10; // |rate| > 1,000%/yr
+const rateIsDisplayable = (r) =>
+  r && r.rate != null && (r.spanDays ?? 9999) >= SHORT_SPAN && Math.abs(r.rate) <= ABSURD_RATE;
+
 function RateCell({ r }) {
   if (!r || r.rate == null) return <span className="text-[var(--muted)]" title={r?.reason || ""}>—</span>;
-  const shortSpan = (r.spanDays ?? 9999) < SHORT_SPAN;
+  if (!rateIsDisplayable(r)) {
+    const why = (r.spanDays ?? 9999) < SHORT_SPAN
+      ? `Only ${r.spanDays} day${r.spanDays === 1 ? "" : "s"} of history — annualising this young a position produces meaningless numbers. Shows once ${SHORT_SPAN} days exist.`
+      : "Annualised rate beyond ±1,000%/yr — a solver artefact of a near-zero time span or extreme cashflows, not a real return.";
+    return <span className="text-[var(--muted)]" title={why}>n/a</span>;
+  }
   return (
     <span className={"num " + (r.rate >= 0 ? "text-[var(--gain)]" : "text-[var(--loss)]")}
-      title={shortSpan ? `Only ${r.spanDays} days of history — annualised figures this young are noise` : `${r.spanDays} days of history`}>
-      {pct(r.rate)}{shortSpan && <span className="text-[var(--m-bb)]" title="Short history">†</span>}
+      title={`${r.spanDays} days of history`}>
+      {pct(r.rate)}
     </span>
   );
 }
@@ -353,6 +365,6 @@ export {
   dmoDateToIso, fetchDmoGiltPrices, num, round2, CurrencyInput, NumberInput,
   uid, todayISO, SAMPLE, METHOD,
   AV_URL, avQuote, fxViaFrankfurter, fxViaYahoo, fxViaAlphaVantage, fxHistorical, fxToGBP, toGBP, avBudget, avBump, sleep,
-  KIND_LABEL, ALLOC_COLORS, AllocBar, pct, pctPlain, toneOf, SHORT_SPAN, RateCell,
+  KIND_LABEL, ALLOC_COLORS, AllocBar, pct, pctPlain, toneOf, SHORT_SPAN, RateCell, rateIsDisplayable,
   IconBtn, Field, Stat, Row, MethodChip, Empty,
 };

@@ -311,7 +311,10 @@ export default function App() {
 
           <div className="mt-5">
           <Suspense fallback={<div className="text-sm text-[var(--muted)] py-6">Loading…</div>}>
-            {tab === "home" && <HomeTab {...{ model: wealthModel, valuations, returns, priceMeta, setTab }} />}
+            {tab === "home" && <HomeTab {...{
+              model: wealthModel, valuations, returns, priceMeta, setTab,
+              txns, secMeta, avKey, avMeta, setPrices, setPriceMeta, dmoReportDate, setDmoReportDate,
+            }} />}
             {tab === "plan" && <PlanTab {...{
               dark,
               // wrapper totals (holdings + cash) for one-click plan prefill

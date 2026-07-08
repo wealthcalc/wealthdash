@@ -3,7 +3,7 @@ import { Percent } from "lucide-react";
 import { WRAPPERS, normWrapper } from "../core/portfolio.mjs";
 import { xirr } from "../core/returns.mjs";
 import { giltAnalytics } from "../core/gilts.mjs";
-import { gbp, WrapperChip, num, todayISO, pct, pctPlain, toneOf, SHORT_SPAN, RateCell, Stat, Empty } from "../ui/shared.jsx";
+import { gbp, WrapperChip, num, todayISO, pct, pctPlain, toneOf, SHORT_SPAN, RateCell, rateIsDisplayable, Stat, Empty } from "../ui/shared.jsx";
 
 
 function ReturnsTab({ returns, valuations, pensionCashflows = [], secMeta = {}, txns = [] }) {
@@ -49,7 +49,12 @@ function ReturnsTab({ returns, valuations, pensionCashflows = [], secMeta = {}, 
     <div className="space-y-4">
       {/* headline */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <Stat label="Money-weighted return (XIRR)" value={total.xirr.rate != null ? pct(total.xirr.rate) : "—"} sub={total.xirr.rate != null ? "annualised, since first transaction" : total.xirr.reason} tone={toneOf(total.xirr.rate)} big />
+        <Stat label="Money-weighted return (XIRR)"
+          value={rateIsDisplayable(total.xirr) ? pct(total.xirr.rate) : "n/a"}
+          sub={rateIsDisplayable(total.xirr) ? "annualised, since first transaction"
+            : total.xirr.rate == null ? total.xirr.reason
+            : `only ${total.xirr.spanDays} days of history — annualised figures this young are noise (shows from ${SHORT_SPAN} days)`}
+          tone={rateIsDisplayable(total.xirr) ? toneOf(total.xirr.rate) : undefined} big />
         <Stat label="Total profit" value={total.profit != null ? gbp(total.profit) : "—"} sub={total.profit != null && total.moneyIn > 0 ? `${pct(total.simpleReturn)} simple, on ${gbp(total.moneyIn)} in` : undefined} tone={toneOf(total.profit)} />
         <Stat label="Income yield (trailing 12m)" value={pctPlain(total.actualYield)} sub={total.trailing12m ? `${gbp(total.trailing12m)} received incl. ERI` : "no income in the last year"} />
         <Stat label="Income yield (forward)" value={pctPlain(total.forwardYield)} sub={total.forwardIncome ? `${gbp(total.forwardIncome)} est. on current units` : undefined} />

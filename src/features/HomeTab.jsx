@@ -1,9 +1,10 @@
 import React, { useState, useMemo } from "react";
-import { TrendingUp, TrendingDown, AlertTriangle, PieChart } from "lucide-react";
+import { TrendingUp, TrendingDown, AlertTriangle, PieChart, RefreshCw } from "lucide-react";
 import { WRAPPERS } from "../core/portfolio.mjs";
 import {
   store, gbp, gbp0, num, pct, WrapperChip, AllocBar, KIND_LABEL, RateCell, Empty, todayISO,
 } from "../ui/shared.jsx";
+import { refreshAllPrices } from "../ui/priceRefresh.js";
 
 /* ======================================================================
    HOME — the daily check-in view. Read-only by design: one headline
@@ -106,24 +107,49 @@ function DeltaChip({ label, from, to }) {
 }
 
 /* ------------------------------- home ---------------------------------- */
-export default function HomeTab({ model, valuations = [], returns, priceMeta = {}, setTab }) {
-  if (!model) return <Empty msg="Couldn't build the portfolio model — check the Transactions tab for ledger errors." />;
-  const { byWrapper, total } = model;
+export default function HomeTab({
+  model, valuations = [], returns, priceMeta = {}, setTab,
+  // price-refresh plumbing (same engine as the Wealth/Holdings panels)
+  txns = [], secMeta = {}, avKey = "", avMeta = {},
+  setPrices, setPriceMeta, dmoReportDate, setDmoReportDate,
+}) {
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshMsg, setRefreshMsg] = useState("");
 
-  const last = valuations.length ? valuations[valuations.length - 1] : null;
-  const prev = valuations.length > 1 ? valuations[valuations.length - 2] : null;
-  const d30 = snapshotAtOrBefore(valuations, isoDaysAgo(30));
-  const investedNow = total.unpriced > 0 ? null : total.marketValue;
+  // ALL hooks must run before the null-model guard below (React's rules of
+  // hooks) — so everything here is written null-safe.
+  const positions = model?.positions || [];
 
   // Stale prices: open priced positions whose price is >3 days old.
   const staleTickers = useMemo(() => {
-    const open = new Set(model.positions.filter((p) => p.priced).map((p) => p.ticker));
+    const open = new Set(positions.filter((p) => p.priced).map((p) => p.ticker));
     const limit = isoDaysAgo(3);
     return [...open].filter((tk) => {
       const asOf = priceMeta[tk]?.asOf;
       return asOf && asOf.slice(0, 10) < limit;
     }).sort();
   }, [model, priceMeta]);
+
+  if (!model) return <Empty msg="Couldn't build the portfolio model — check the Transactions tab for ledger errors." />;
+  const { byWrapper, total } = model;
+
+  const openTickers = [...new Set(positions.filter((p) => p.qty > 1e-9).map((p) => p.ticker))];
+  const canRefresh = !!setPrices && !!setPriceMeta && openTickers.length > 0;
+  const doRefresh = async () => {
+    if (!canRefresh || refreshing) return;
+    setRefreshing(true); setRefreshMsg("");
+    const res = await refreshAllPrices({
+      tickers: openTickers, txns, secMeta, avMeta, avKey, dmoReportDate,
+      setPrices, setPriceMeta, setDmoReportDate, onProgress: setRefreshMsg,
+    });
+    setRefreshMsg(res.message);
+    setRefreshing(false);
+  };
+
+  const last = valuations.length ? valuations[valuations.length - 1] : null;
+  const prev = valuations.length > 1 ? valuations[valuations.length - 2] : null;
+  const d30 = snapshotAtOrBefore(valuations, isoDaysAgo(30));
+  const investedNow = total.unpriced > 0 ? null : total.marketValue;
 
   const wrappersPresent = WRAPPERS.filter((w) => byWrapper[w] && (byWrapper[w].positions > 0 || byWrapper[w].cash > 0));
 
@@ -151,17 +177,27 @@ export default function HomeTab({ model, valuations = [], returns, priceMeta = {
 
         {/* needs-attention rail */}
         <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 flex flex-col gap-3">
-          <div className="text-sm font-semibold flex items-center gap-1.5"><AlertTriangle size={15} className="text-[var(--m-bb)]" /> Needs attention</div>
+          <div className="flex items-center justify-between gap-2">
+            <div className="text-sm font-semibold flex items-center gap-1.5"><AlertTriangle size={15} className="text-[var(--m-bb)]" /> Needs attention</div>
+            {canRefresh && (
+              <button onClick={doRefresh} disabled={refreshing}
+                className="btn-accent !h-auto !py-1.5 text-xs disabled:opacity-50"
+                title="Fetch fresh prices for every open holding — DMO for gilts, Yahoo then Alpha Vantage for the rest (pension fund units stay manual)">
+                <RefreshCw size={13} className={refreshing ? "animate-spin" : ""} /> Refresh prices
+              </button>
+            )}
+          </div>
+          {refreshMsg && <div className="text-[11px] text-[var(--muted)] leading-snug">{refreshMsg}</div>}
           {staleTickers.length > 0 && (
-            <button onClick={() => setTab && setTab("wealth")} className="text-left text-xs rounded-lg border border-[var(--border)] bg-[var(--panel2)] px-3 py-2 hover:border-[var(--accent)]">
+            <div className="text-left text-xs rounded-lg border border-[var(--border)] bg-[var(--panel2)] px-3 py-2">
               <span className="font-semibold text-[var(--m-bb)]">{staleTickers.length} price{staleTickers.length > 1 ? "s" : ""} &gt;3 days old</span>
-              <span className="text-[var(--muted)]"> — {staleTickers.slice(0, 6).join(", ")}{staleTickers.length > 6 ? "…" : ""}. Refresh from the Wealth tab.</span>
-            </button>
+              <span className="text-[var(--muted)]"> — {staleTickers.slice(0, 6).join(", ")}{staleTickers.length > 6 ? "…" : ""}. Use Refresh prices above, or set them manually on the Wealth tab.</span>
+            </div>
           )}
           {total.unpriced > 0 && (
             <button onClick={() => setTab && setTab("wealth")} className="text-left text-xs rounded-lg border border-[var(--border)] bg-[var(--panel2)] px-3 py-2 hover:border-[var(--accent)]">
               <span className="font-semibold text-[var(--loss)]">{total.unpriced} holding{total.unpriced > 1 ? "s" : ""} with no price at all</span>
-              <span className="text-[var(--muted)]"> — set a price so snapshots (and this chart) can resume.</span>
+              <span className="text-[var(--muted)]"> — try Refresh prices; anything without a live source (pension funds) needs manual entry on the Wealth tab.</span>
             </button>
           )}
           {valuations.length < 2 && (

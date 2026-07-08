@@ -11,27 +11,10 @@
    verbatim.
    ====================================================================== */
 import { create } from "zustand";
-import { store as ls, SAMPLE, SECURITY_SEED } from "../ui/shared.jsx";
-
-// state key -> localStorage key (unchanged from the pre-store app)
-const PERSIST_KEYS = {
-  dark: "cgt.dark",
-  txns: "cgt.txns",
-  tab: "cgt.tab",
-  income: "cgt.income",
-  carried: "cgt.carried",
-  cash: "cgt.cash",
-  pensionCashflows: "cgt.pensioncf",
-  dmoReportDate: "cgt.dmoreportdate",
-  valuations: "cgt.valuations",
-  incomeEntries: "cgt.incomeEntries",
-  eriEntries: "cgt.eriEntries",
-  prices: "cgt.prices",
-  avKey: "cgt.avkey",
-  avMeta: "cgt.avmeta",
-  priceMeta: "cgt.pricemeta",
-  secMeta: "cgt.secmeta",
-};
+import { store as ls, SAMPLE, SECURITY_SEED, todayISO } from "../ui/shared.jsx";
+// state key -> localStorage key lives in durable.js (single source of truth
+// shared with the IndexedDB mirror, so new keys can't silently miss it).
+import { PERSIST_KEYS, saveDurable, saveDailySnapshot } from "./durable.js";
 
 const useAppStore = create((set) => {
   // setState-compatible setter: accepts a value or an updater function.
@@ -63,10 +46,24 @@ const useAppStore = create((set) => {
 
 // Persist on change — one subscription, writing only the keys that changed
 // (replaces the 16 per-key useEffect hooks that serialised on every render).
+// localStorage stays the synchronous primary; a debounced full-state mirror
+// goes to IndexedDB (durable.js) as eviction insurance, plus one snapshot
+// per day (rolling 30) as a corruption fallback.
+let _durableTimer = null;
 useAppStore.subscribe((state, prev) => {
+  let changed = false;
   for (const [key, lsKey] of Object.entries(PERSIST_KEYS)) {
-    if (state[key] !== prev[key]) ls.set(lsKey, state[key]);
+    if (state[key] !== prev[key]) { ls.set(lsKey, state[key]); changed = true; }
   }
+  if (!changed) return;
+  clearTimeout(_durableTimer);
+  _durableTimer = setTimeout(() => {
+    const s = useAppStore.getState();
+    const byLsKey = {};
+    for (const [key, lsKey] of Object.entries(PERSIST_KEYS)) byLsKey[lsKey] = s[key];
+    saveDurable(byLsKey);
+    saveDailySnapshot(todayISO(), byLsKey);
+  }, 1500);
 });
 
 export default useAppStore;

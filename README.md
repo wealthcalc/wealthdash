@@ -58,6 +58,30 @@ verified by SSR smoke renders, not just compilation):
   entries (two-step confirm). The 30-day rule note is in the UI: an ISA
   repurchase is not matched against the GIA disposal — that's the point.
 
+## Round 3: XIRR sanity, one-click price refresh, IndexedDB durability
+
+- **Short-span XIRR shows n/a, not noise.** Annualising a position days old
+  produces absurd figures (12 days of gain "annualises" to thousands of
+  percent). Every XIRR display (Home wrapper cards, Returns headline +
+  tables, Pension provider badges) now routes through one gate: under 90
+  days of history, or beyond ±1,000%/yr, it renders "n/a" with the reason
+  in the tooltip instead of the number.
+- **Refresh prices from Home.** The bulk fetch (DMO gilts with report-date
+  skip, Yahoo in bulk, Alpha Vantage fallback, pension funds excluded) is
+  extracted to `ui/priceRefresh.js` and shared by the Wealth/Holdings
+  panels and a new "Refresh prices" button on Home's needs-attention rail —
+  no more navigating away to update a stale price.
+- **IndexedDB durability.** localStorage remains the synchronous primary,
+  but every persisted key is now mirrored (debounced) into IndexedDB, with
+  one full-state snapshot per day (rolling 30). At boot, if localStorage
+  has been emptied (browser cleanup, "clear site data", Safari ITP) and
+  the mirror has data, it's restored before the app loads — the previous
+  single-catastrophe data-loss risk is gone. Degrades silently to the old
+  behaviour where IndexedDB is unavailable. Pure logic (key coverage,
+  snapshot pruning, restore decision) is node-tested (durable.test.mjs).
+- Fixed a latent rules-of-hooks hazard in HomeTab (memo after an early
+  return) that could crash on a null→model transition.
+
 ## Layout
 ```
 .
