@@ -35,6 +35,40 @@ verified by SSR smoke renders, not just compilation):
   fixed an unguarded `document.createElement` at module scope that crashed
   any non-browser load of the UI bundle (caught by the new smoke render).
 
+## Phase 1 continued: sidebar IA, sortable tables, import dedupe
+
+Closes out the three items left from Phase 1's original scope:
+
+- **Five-section sidebar** (`src/ui/Sidebar.jsx`) replaces the flat, wrapping
+  12-button top tab row — with Plan and Allowances added since the original
+  build, a single row no longer scaled (it wrapped to 2-3 lines below a wide
+  desktop) and gave no structure for finding a tab by what it's for. Grouped
+  by purpose: **Overview** (Home, Plan), **Portfolio** (Wealth, Holdings,
+  Returns), **Instruments** (Gilts, Pension & LISA), **Tax** (CGT, Allowances,
+  Income), **Data** (Transactions, Import CSV). Desktop gets a static, sticky
+  column; mobile (`<sm`) gets an overlay drawer opened by a header hamburger
+  button, so narrow screens don't lose vertical space to a permanent rail.
+- **Sortable table headers** — a shared `useSort`/`sortRows`/`SortTh`
+  primitive (`src/ui/shared.jsx`) rolled out across every data table:
+  Transactions, Holdings, the Gilts ladder, Returns' per-holding table, and
+  Income's Dividends/Interest and ERI tables. Click a header to sort by it,
+  click again to flip direction; blank/unpriced/unresolved values (no price,
+  no FX) always sort to the end regardless of direction rather than
+  collapsing to zero and jumping to the top. Returns' per-holding table keeps
+  its open-positions-first grouping — the chosen sort applies within each
+  group, not across both, so closed (always-£0) positions can't interleave
+  into the open list.
+- **CSV import dedupe** — every import path (generic CSV, dividends CSV,
+  pension contributions CSV, IBKR Flex/Activity, iShares ERI workbook) now
+  checks new rows against what's already in the ledger/income/pension-
+  cashflow/ERI lists before appending, via a shared `dedupeAgainstExisting()`
+  keyed on the fields that make a row the same transaction (date + ticker +
+  side/kind + wrapper + amount, rounded to the penny so re-exported
+  formatting differences don't defeat the match). Re-pasting an overlapping
+  date range — the normal way these exports get re-run, not an edge case —
+  now skips the already-imported rows instead of doubling them, with the
+  skipped count shown before you click Import, not discovered after.
+
 ## Phase 1 continued: Plan tab, Allowances hub, Bed & ISA
 
 - **Plan tab** — the standalone UK retirement planner is now integrated as a

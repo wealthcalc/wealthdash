@@ -1,15 +1,19 @@
 import React, { useState, useMemo, useCallback, useRef } from "react";
 import { isWrapperTaxable } from "../core/portfolio.mjs";
 import LivePricesPanel from "../ui/LivePricesPanel.jsx";
-import { gbp, gbp0, WrapperChip, num, pct, Stat, Empty } from "../ui/shared.jsx";
+import { gbp, gbp0, WrapperChip, num, pct, Stat, Empty, useSort, sortRows, SortTh } from "../ui/shared.jsx";
 
 function HoldingsTab({ positions, prices, setPrices, avKey, setAvKey, avMeta, setAvMeta, priceMeta, setPriceMeta, txns, secMeta, setSecMeta, dmoReportDate, setDmoReportDate }) {
   const open = positions.filter((p) => p.qty > 1e-6);
+  const [sort, toggleSort] = useSort("wrapper", "asc");
   if (!open.length) return <Empty msg="No open holdings yet. Add buy transactions (any wrapper) to see your positions and unrealised gains." />;
 
   const setISIN = (tk, v) => setSecMeta((m) => ({ ...m, [tk]: { ...m[tk], isin: v.toUpperCase().trim() } }));
 
-  const rows = open.map((p) => {
+  // Sorted by ticker first so that when the user's chosen sort key ties
+  // (e.g. every row shares a wrapper), the stable sort below keeps a
+  // sensible secondary order instead of falling back to insertion order.
+  const baseRows = open.map((p) => {
     const cost = p.bookCost;
     const avg = p.qty ? cost / p.qty : 0;
     const price = prices[p.ticker] ?? "";
@@ -19,7 +23,11 @@ function HoldingsTab({ positions, prices, setPrices, avKey, setAvKey, avMeta, se
     return { tk: p.ticker, wrapper: p.wrapper, qty: p.qty, cost, avg, price, value, unreal,
       pct: hasP && cost ? (unreal / cost) * 100 : null, sec: secMeta[p.ticker] || {},
       sheltered: !isWrapperTaxable(p.wrapper) };
-  }).sort((a, b) => a.wrapper.localeCompare(b.wrapper) || a.tk.localeCompare(b.tk));
+  }).sort((a, b) => a.tk.localeCompare(b.tk));
+  const rows = sortRows(baseRows, sort, {
+    wrapper: (r) => r.wrapper, tk: (r) => r.tk, qty: (r) => r.qty, avg: (r) => r.avg, cost: (r) => r.cost,
+    price: (r) => (r.price === "" ? null : +r.price), value: (r) => r.value, unreal: (r) => r.unreal, pct: (r) => r.pct,
+  });
 
   const priced = rows.filter((r) => r.value != null);
   const totCost = priced.reduce((s, r) => s + r.cost, 0);
@@ -46,9 +54,18 @@ function HoldingsTab({ positions, prices, setPrices, avKey, setAvKey, avMeta, se
       <div className="rounded-xl border border-[var(--border)] overflow-hidden">
         <table className="w-full text-sm">
           <thead className="bg-[var(--panel2)] text-[var(--muted)] text-xs uppercase tracking-wide">
-            <tr>{["Wrapper", "Ticker", "ISIN", "Quantity", "Avg cost", "Pool cost", "Price now", "Market value", "Unrealised", "%"].map((h, i) => (
-              <th key={i} className={"px-3 py-2 font-medium " + (i <= 2 ? "text-left" : "text-right")}>{h}</th>
-            ))}</tr>
+            <tr>
+              <SortTh id="wrapper" label="Wrapper" sort={sort} onSort={toggleSort} className="px-3 py-2 font-medium" />
+              <SortTh id="tk" label="Ticker" sort={sort} onSort={toggleSort} className="px-3 py-2 font-medium" />
+              <th className="px-3 py-2 font-medium text-left">ISIN</th>
+              <SortTh id="qty" label="Quantity" sort={sort} onSort={toggleSort} align="right" className="px-3 py-2 font-medium" />
+              <SortTh id="avg" label="Avg cost" sort={sort} onSort={toggleSort} align="right" className="px-3 py-2 font-medium" />
+              <SortTh id="cost" label="Pool cost" sort={sort} onSort={toggleSort} align="right" className="px-3 py-2 font-medium" />
+              <SortTh id="price" label="Price now" sort={sort} onSort={toggleSort} align="right" className="px-3 py-2 font-medium" />
+              <SortTh id="value" label="Market value" sort={sort} onSort={toggleSort} align="right" className="px-3 py-2 font-medium" />
+              <SortTh id="unreal" label="Unrealised" sort={sort} onSort={toggleSort} align="right" className="px-3 py-2 font-medium" />
+              <SortTh id="pct" label="%" sort={sort} onSort={toggleSort} align="right" className="px-3 py-2 font-medium" />
+            </tr>
           </thead>
           <tbody className="divide-y divide-[var(--border)] bg-[var(--panel)]">
             {rows.map((r) => (

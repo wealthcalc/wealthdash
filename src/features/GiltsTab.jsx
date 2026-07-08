@@ -1,10 +1,11 @@
 import React, { useState, useMemo, useCallback, useRef } from "react";
 import { Landmark } from "lucide-react";
-import { gbp, WrapperChip, dmoDateToIso, fetchDmoGiltPrices, num, NumberInput, uid, todayISO, Field, Stat, Empty } from "../ui/shared.jsx";
+import { gbp, WrapperChip, dmoDateToIso, fetchDmoGiltPrices, num, NumberInput, uid, todayISO, Field, Stat, Empty, useSort, sortRows, SortTh } from "../ui/shared.jsx";
 
 function GiltsTab({ data, secMeta, setSecMeta, prices, setPrices, dmoReportDate, setDmoReportDate }) {
   const [form, setForm] = React.useState({ ticker: "", name: "", coupon: "", maturity: "", isin: "" });
   const [dmoState, setDmoState] = React.useState({ status: "idle", message: "" }); // idle | loading | done | error
+  const [sort, toggleSort] = useSort("maturity", "asc");
   const registered = Object.entries(secMeta).filter(([, m]) => m && m.kind === "gilt");
   const registerGilt = () => {
     const tk = form.ticker.toUpperCase().trim();
@@ -46,7 +47,12 @@ function GiltsTab({ data, secMeta, setSecMeta, prices, setPrices, dmoReportDate,
   };
 
   if (!data) return <Empty msg="Couldn't compute gilt analytics — check the Transactions tab for ledger errors." />;
-  const live = data.holdings.filter((h) => h.nominal > 1e-9);
+  const liveBase = data.holdings.filter((h) => h.nominal > 1e-9).sort((a, b) => a.ticker.localeCompare(b.ticker));
+  const live = sortRows(liveBase, sort, {
+    ticker: (h) => h.ticker, wrapper: (h) => h.wrapper, maturity: (h) => h.maturity, nominal: (h) => h.nominal,
+    clean: (h) => prices[h.ticker] ?? null, accrued: (h) => h.accruedPer100, dirty: (h) => h.dirtyValue,
+    nextCoupon: (h) => h.nextCoupon?.date ?? null, gry: (h) => h.gry?.semiAnnual ?? null, coupons12m: (h) => h.couponIncomeNext12m,
+  });
   const aisYears = Object.keys(data.ais.byYear).sort();
   const upcoming = data.cashflows.slice(0, 12);
 
@@ -83,9 +89,18 @@ function GiltsTab({ data, secMeta, setSecMeta, prices, setPrices, dmoReportDate,
           <div className="rounded-xl border border-[var(--border)] overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="bg-[var(--panel2)] text-[var(--muted)] text-xs uppercase tracking-wide">
-                <tr>{["Gilt", "Wrapper", "Maturity", "Nominal", "Clean /£100", "Accrued /£100", "Dirty value", "Next coupon", "GRY (semi)", "12m coupons"].map((h, i) => (
-                  <th key={i} className={"px-3 py-2 font-medium " + (i <= 2 ? "text-left" : "text-right")}>{h}</th>
-                ))}</tr>
+                <tr>
+                  <SortTh id="ticker" label="Gilt" sort={sort} onSort={toggleSort} className="px-3 py-2 font-medium" />
+                  <SortTh id="wrapper" label="Wrapper" sort={sort} onSort={toggleSort} className="px-3 py-2 font-medium" />
+                  <SortTh id="maturity" label="Maturity" sort={sort} onSort={toggleSort} className="px-3 py-2 font-medium" />
+                  <SortTh id="nominal" label="Nominal" sort={sort} onSort={toggleSort} align="right" className="px-3 py-2 font-medium" />
+                  <SortTh id="clean" label="Clean /£100" sort={sort} onSort={toggleSort} align="right" className="px-3 py-2 font-medium" />
+                  <SortTh id="accrued" label="Accrued /£100" sort={sort} onSort={toggleSort} align="right" className="px-3 py-2 font-medium" />
+                  <SortTh id="dirty" label="Dirty value" sort={sort} onSort={toggleSort} align="right" className="px-3 py-2 font-medium" />
+                  <SortTh id="nextCoupon" label="Next coupon" sort={sort} onSort={toggleSort} align="right" className="px-3 py-2 font-medium" />
+                  <SortTh id="gry" label="GRY (semi)" sort={sort} onSort={toggleSort} align="right" className="px-3 py-2 font-medium" />
+                  <SortTh id="coupons12m" label="12m coupons" sort={sort} onSort={toggleSort} align="right" className="px-3 py-2 font-medium" />
+                </tr>
               </thead>
               <tbody className="divide-y divide-[var(--border)] bg-[var(--panel)]">
                 {live.map((h) => (

@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useCallback, useRef } from "react";
 import { Plus, Trash2, Wand2, RefreshCw } from "lucide-react";
 import { WRAPPERS, normWrapper } from "../core/portfolio.mjs";
-import { store, num, NumberInput, uid, todayISO, Field, fxToGBP, gbp } from "../ui/shared.jsx";
+import { store, num, NumberInput, uid, todayISO, Field, fxToGBP, gbp, useSort, sortRows, SortTh } from "../ui/shared.jsx";
 
 const BLANK = () => ({ id: uid(), date: todayISO(), ticker: "", side: "BUY", quantity: "", nativeCurrency: "GBP", nativeAmount: "", fxRate: 1, gbpAmount: "", wrapper: "GIA", note: "" });
 function LedgerTab({ txns, setTxns }) {
@@ -49,7 +49,12 @@ function LedgerTab({ txns, setTxns }) {
     if (patch.nativeCurrency === "GBP") { next.fxRate = 1; if (next.nativeAmount) next.gbpAmount = +next.nativeAmount; }
     return next;
   }));
-  const rows = [...txns].sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+  const [sort, toggleSort] = useSort("date", "desc");
+  const SORT_ACCESSORS = {
+    date: (t) => t.date, ticker: (t) => t.ticker, side: (t) => t.side,
+    quantity: (t) => +t.quantity || 0, nativeCurrency: (t) => t.nativeCurrency || "",
+    nativeAmount: (t) => +t.nativeAmount || 0, fxRate: (t) => +t.fxRate || 0, gbpAmount: (t) => +t.gbpAmount || 0,
+  };
   const [filterWrapper, setFilterWrapper] = useState(() => store.get("cgt.ledger.wrapper", "All"));
   React.useEffect(() => store.set("cgt.ledger.wrapper", filterWrapper), [filterWrapper]);
   const wrapperCounts = useMemo(() => {
@@ -57,7 +62,8 @@ function LedgerTab({ txns, setTxns }) {
     for (const t of txns) { const w = normWrapper(t.wrapper); m[w] = (m[w] || 0) + 1; }
     return m;
   }, [txns]);
-  const filteredRows = filterWrapper === "All" ? rows : rows.filter((t) => normWrapper(t.wrapper) === filterWrapper);
+  const scopedTxns = filterWrapper === "All" ? txns : txns.filter((t) => normWrapper(t.wrapper) === filterWrapper);
+  const filteredRows = useMemo(() => sortRows(scopedTxns, sort, SORT_ACCESSORS), [scopedTxns, sort]);
   // Adding a transaction while filtered to one wrapper should land in that
   // wrapper by default — switching the filter re-defaults the add-form too,
   // without fighting a manual override mid-edit.
@@ -109,7 +115,17 @@ function LedgerTab({ txns, setTxns }) {
       <div className="rounded-xl border border-[var(--border)] overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="bg-[var(--panel2)] text-[var(--muted)] text-xs uppercase tracking-wide">
-            <tr>{["Date", "Ticker", "Side", "Qty", "Ccy", "Native", "FX", "GBP", ""].map((h, i) => <th key={i} className={"px-2 py-1.5 font-medium " + (i >= 3 ? "text-right" : "text-left")}>{h}</th>)}</tr>
+            <tr>
+              <SortTh id="date" label="Date" sort={sort} onSort={toggleSort} className="px-2 py-1.5 font-medium" />
+              <SortTh id="ticker" label="Ticker" sort={sort} onSort={toggleSort} className="px-2 py-1.5 font-medium" />
+              <SortTh id="side" label="Side" sort={sort} onSort={toggleSort} className="px-2 py-1.5 font-medium" />
+              <SortTh id="quantity" label="Qty" sort={sort} onSort={toggleSort} align="right" className="px-2 py-1.5 font-medium" />
+              <SortTh id="nativeCurrency" label="Ccy" sort={sort} onSort={toggleSort} align="right" className="px-2 py-1.5 font-medium" />
+              <SortTh id="nativeAmount" label="Native" sort={sort} onSort={toggleSort} align="right" className="px-2 py-1.5 font-medium" />
+              <SortTh id="fxRate" label="FX" sort={sort} onSort={toggleSort} align="right" className="px-2 py-1.5 font-medium" />
+              <SortTh id="gbpAmount" label="GBP" sort={sort} onSort={toggleSort} align="right" className="px-2 py-1.5 font-medium" />
+              <th className="px-2 py-1.5"></th>
+            </tr>
           </thead>
           <tbody className="divide-y divide-[var(--border)] bg-[var(--panel)]">
             {filteredRows.map((t) => {

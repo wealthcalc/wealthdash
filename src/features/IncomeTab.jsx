@@ -4,7 +4,7 @@ import { ukTaxYear } from "../core/cgt-engine.mjs";
 import { WRAPPERS, isWrapperTaxable } from "../core/portfolio.mjs";
 import { investmentIncomeTax } from "../core/uk-tax.mjs";
 import { addMonthsISO } from "../core/ishares-eri.mjs";
-import { store, unitsHeldAt, gbp, SubTabs, num, uid, todayISO, fxToGBP, Field, Empty } from "../ui/shared.jsx";
+import { store, unitsHeldAt, gbp, SubTabs, num, uid, todayISO, fxToGBP, Field, Empty, useSort, sortRows, SortTh } from "../ui/shared.jsx";
 
 /* ----------------------------- Income tab --------------------------- */
 const DIV_BLANK = () => ({ id: uid(), date: todayISO(), ticker: "", kind: "dividend", amount: "" });
@@ -24,6 +24,8 @@ function IncomeTab({ incomeEntries, setIncomeEntries, eriEntries, setEriEntries,
   const [dv, setDv] = useState(DIV_BLANK());
   const [er, setEr] = useState(ERI_BLANK());
   const [fxBusy, setFxBusy] = useState(false);
+  const [divSort, toggleDivSort] = useSort("date", "desc");
+  const [eriSort, toggleEriSort] = useSort("distributionDate", "desc");
   const [sub, setSub] = useState(() => store.get("cgt.incomesubtab", "byyear"));
   React.useEffect(() => store.set("cgt.incomesubtab", sub), [sub]);
   const years = Object.keys(incomeByYear).sort().reverse();
@@ -149,8 +151,21 @@ function IncomeTab({ incomeEntries, setIncomeEntries, eriEntries, setEriEntries,
           {incomeEntries.length > 0 && (
             <div className="rounded-xl border border-[var(--border)] overflow-hidden">
               <table className="w-full text-sm">
+                <thead className="bg-[var(--panel2)] text-[var(--muted)] text-xs uppercase tracking-wide">
+                  <tr>
+                    <SortTh id="date" label="Date" sort={divSort} onSort={toggleDivSort} className="py-2 px-3 font-medium" />
+                    <SortTh id="ticker" label="Ticker" sort={divSort} onSort={toggleDivSort} className="py-2 px-3 font-medium" />
+                    <SortTh id="kind" label="Type" sort={divSort} onSort={toggleDivSort} className="py-2 px-3 font-medium" />
+                    <SortTh id="taxYear" label="Tax year" sort={divSort} onSort={toggleDivSort} className="py-2 px-3 font-medium" />
+                    <SortTh id="amount" label="Amount" sort={divSort} onSort={toggleDivSort} align="right" className="py-2 px-3 font-medium" />
+                    <th className="py-2 px-3"></th>
+                  </tr>
+                </thead>
                 <tbody className="divide-y divide-[var(--border)]">
-                  {incomeEntries.slice().sort((a, b) => (a.date < b.date ? 1 : -1)).map((e) => (
+                  {sortRows(incomeEntries, divSort, {
+                    date: (e) => e.date, ticker: (e) => e.ticker || "", kind: (e) => e.kind,
+                    taxYear: (e) => ukTaxYear(e.date), amount: (e) => +e.amount || 0,
+                  }).map((e) => (
                     <tr key={e.id}>
                       <td className="py-2 px-3 num text-[var(--muted)]">{e.date}</td>
                       <td className="py-2 px-3">{e.ticker || "—"}</td>
@@ -191,10 +206,24 @@ function IncomeTab({ incomeEntries, setIncomeEntries, eriEntries, setEriEntries,
             <div className="rounded-xl border border-[var(--border)] overflow-hidden">
               <table className="w-full text-sm">
                 <thead className="bg-[var(--panel2)] text-[var(--muted)]">
-                  <tr>{ERI_COLS.map((c, i) => <th key={i} className={"py-2 px-3 font-medium text-" + c.align}>{c.label}</th>)}</tr>
+                  <tr>
+                    <SortTh id="ticker" label="Fund" sort={eriSort} onSort={toggleEriSort} className="py-2 px-3 font-medium" />
+                    <SortTh id="periodEnd" label="Period end" sort={eriSort} onSort={toggleEriSort} className="py-2 px-3 font-medium" />
+                    <SortTh id="distributionDate" label="Dist. date" sort={eriSort} onSort={toggleEriSort} className="py-2 px-3 font-medium" />
+                    <SortTh id="units" label="Units" sort={eriSort} onSort={toggleEriSort} align="right" className="py-2 px-3 font-medium" />
+                    <SortTh id="gbp" label="ERI (GBP)" sort={eriSort} onSort={toggleEriSort} align="right" className="py-2 px-3 font-medium" />
+                    <SortTh id="treatment" label="Taxed as" sort={eriSort} onSort={toggleEriSort} className="py-2 px-3 font-medium" />
+                    <SortTh id="taxYear" label="Tax year" sort={eriSort} onSort={toggleEriSort} className="py-2 px-3 font-medium" />
+                    <th className="py-2 px-3"></th>
+                  </tr>
                 </thead>
                 <tbody className="divide-y divide-[var(--border)]">
-                  {eriEntries.slice().sort((a, b) => (a.distributionDate < b.distributionDate ? 1 : -1)).map((e) => {
+                  {sortRows(eriEntries, eriSort, {
+                    ticker: (e) => e.ticker, periodEnd: (e) => e.periodEnd, distributionDate: (e) => e.distributionDate,
+                    units: (e) => eriTxns.find((x) => x.id === "eri-" + e.id)?._units ?? null,
+                    gbp: (e) => eriTxns.find((x) => x.id === "eri-" + e.id)?._gbp ?? null,
+                    treatment: (e) => e.treatment, taxYear: (e) => ukTaxYear(e.distributionDate),
+                  }).map((e) => {
                     const t = eriTxns.find((x) => x.id === "eri-" + e.id);
                     return (
                       <tr key={e.id}>

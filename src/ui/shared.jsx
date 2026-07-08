@@ -315,6 +315,76 @@ function RateCell({ r }) {
   );
 }
 
+/* ----------------------------- import dedupe -------------------------- */
+// Broker/provider CSV exports commonly overlap a previous import (a wider
+// date-range re-export is the normal case, not an edge case) — without this,
+// re-pasting or re-uploading the same file silently doubled every affected
+// transaction, income entry, or pension cashflow. `keyFn` reduces a row to a
+// comparable string; anything matching a key already in `existing`, or a
+// repeat within the same batch, is dropped rather than appended twice.
+function dedupeAgainstExisting(newRows, existing, keyFn) {
+  const seen = new Set(existing.map(keyFn));
+  const rows = [];
+  let skipped = 0;
+  for (const row of newRows) {
+    const k = keyFn(row);
+    if (seen.has(k)) { skipped++; continue; }
+    seen.add(k);
+    rows.push(row);
+  }
+  return { rows, skipped };
+}
+
+/* ------------------------- sortable table headers -------------------- */
+// Generic click-to-sort support shared by every data table in the app
+// (Transactions, Holdings, Gilts, Returns, Income). `useSort` just tracks
+// {key, dir}; clicking the currently-active column flips direction, clicking
+// a new one resets to ascending. `sortRows` sorts with per-column accessor
+// functions rather than baking comparison logic into each tab, and always
+// pushes null/undefined/"" values (unpriced holdings, unresolved FX, etc.)
+// to the end regardless of direction, so a blank cell never jumps to the
+// top just because it's "smaller" than a number.
+function useSort(defaultKey, defaultDir = "asc") {
+  const [sort, setSort] = useState({ key: defaultKey, dir: defaultDir });
+  const toggleSort = useCallback((key) => {
+    setSort((s) => (s.key === key ? { key, dir: s.dir === "asc" ? "desc" : "asc" } : { key, dir: "asc" }));
+  }, []);
+  return [sort, toggleSort];
+}
+function sortRows(rows, sort, accessors) {
+  const get = sort && accessors[sort.key];
+  if (!get) return rows;
+  const withKey = rows.map((r) => ({ r, v: get(r) }));
+  withKey.sort((a, b) => {
+    const av = a.v, bv = b.v;
+    const aNull = av == null || av === "";
+    const bNull = bv == null || bv === "";
+    if (aNull && bNull) return 0;
+    if (aNull) return 1;  // nulls/blanks always last, in either direction
+    if (bNull) return -1;
+    const cmp = typeof av === "string" || typeof bv === "string"
+      ? String(av).localeCompare(String(bv))
+      : (av < bv ? -1 : av > bv ? 1 : 0);
+    return sort.dir === "asc" ? cmp : -cmp;
+  });
+  return withKey.map((x) => x.r);
+}
+// Drop-in <th> — pass the same padding/alignment classes the table already
+// used (this repo's tables aren't all padded identically), plus an `id` that
+// matches a key in the `accessors` object passed to sortRows.
+function SortTh({ id, label, sort, onSort, align = "left", className = "" }) {
+  const active = sort.key === id;
+  const arrow = active ? (sort.dir === "desc" ? "▼" : "▲") : "";
+  return (
+    <th onClick={() => onSort(id)} title={`Sort by ${label}`}
+      className={"cursor-pointer select-none whitespace-nowrap hover:text-[var(--fg)] " + (align === "right" ? "text-right" : "text-left") + " " + className}>
+      {align === "right"
+        ? <>{arrow && <span className="text-[8px] text-[var(--accent)] mr-1">{arrow}</span>}{label}</>
+        : <>{label}{arrow && <span className="text-[8px] text-[var(--accent)] ml-1">{arrow}</span>}</>}
+    </th>
+  );
+}
+
 /* ----------------------------- atoms -------------------------------- */
 function IconBtn({ children, as = "button", ...p }) {
   const C = as; return <C {...p} className="inline-flex items-center justify-center w-9 h-9 rounded-lg border border-[var(--border)] bg-[var(--panel)] hover:bg-[var(--panel2)] text-[var(--fg)] cursor-pointer">{children}</C>;
@@ -367,4 +437,5 @@ export {
   AV_URL, avQuote, fxViaFrankfurter, fxViaYahoo, fxViaAlphaVantage, fxHistorical, fxToGBP, toGBP, avBudget, avBump, sleep,
   KIND_LABEL, ALLOC_COLORS, AllocBar, pct, pctPlain, toneOf, SHORT_SPAN, RateCell, rateIsDisplayable,
   IconBtn, Field, Stat, Row, MethodChip, Empty,
+  useSort, sortRows, SortTh, dedupeAgainstExisting,
 };

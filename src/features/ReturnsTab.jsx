@@ -3,11 +3,12 @@ import { Percent } from "lucide-react";
 import { WRAPPERS, normWrapper } from "../core/portfolio.mjs";
 import { xirr } from "../core/returns.mjs";
 import { giltAnalytics } from "../core/gilts.mjs";
-import { gbp, WrapperChip, num, todayISO, pct, pctPlain, toneOf, SHORT_SPAN, RateCell, rateIsDisplayable, Stat, Empty } from "../ui/shared.jsx";
+import { gbp, WrapperChip, num, todayISO, pct, pctPlain, toneOf, SHORT_SPAN, RateCell, rateIsDisplayable, Stat, Empty, useSort, sortRows, SortTh } from "../ui/shared.jsx";
 
 
 function ReturnsTab({ returns, valuations, pensionCashflows = [], secMeta = {}, txns = [] }) {
   const [selectedWrapper, setSelectedWrapper] = useState(null); // click a per-wrapper row to filter the per-holding table below
+  const [sort, toggleSort] = useSort("ticker", "asc");
 
   // Pension funds (SIPP/LISA) only ever have ONE consolidated transaction
   // (a snapshot, not a purchase history), so the normal txn-based XIRR above
@@ -41,8 +42,18 @@ function ReturnsTab({ returns, valuations, pensionCashflows = [], secMeta = {}, 
   if (!perHolding.length) return <Empty msg="No transactions yet. Returns appear once you have holdings (any wrapper)." />;
 
   const wrapperOrder = [...WRAPPERS, ...Object.keys(byWrapper).filter((w) => !WRAPPERS.includes(w))].filter((w) => byWrapper[w]);
-  const openH = perHolding.filter((h) => h.open && (!selectedWrapper || h.wrapper === selectedWrapper));
-  const closedH = perHolding.filter((h) => !h.open && (!selectedWrapper || h.wrapper === selectedWrapper));
+  const PERHOLDING_ACCESSORS = {
+    ticker: (h) => h.ticker, firstDate: (h) => h.firstDate, moneyIn: (h) => h.moneyIn,
+    outIncome: (h) => h.moneyOut + h.incomeReceived, value: (h) => (h.open ? (h.priced ? h.marketValue : null) : 0),
+    profit: (h) => h.profit, xirr: (h) => h.xirr?.rate ?? null, twr: (h) => h.twr?.twr ?? null,
+    yield12m: (h) => (h.open ? h.income.actualYield : null), yieldFwd: (h) => (h.open ? h.income.forwardYield : null),
+  };
+  // Open-first grouping is the point (closed positions are shown de-emphasised
+  // below), so the chosen sort applies WITHIN each group rather than across
+  // both — otherwise sorting by, say, value would interleave closed
+  // positions (always £0) into the middle of the open list.
+  const openH = sortRows(perHolding.filter((h) => h.open && (!selectedWrapper || h.wrapper === selectedWrapper)).sort((a, b) => a.ticker.localeCompare(b.ticker)), sort, PERHOLDING_ACCESSORS);
+  const closedH = sortRows(perHolding.filter((h) => !h.open && (!selectedWrapper || h.wrapper === selectedWrapper)).sort((a, b) => a.ticker.localeCompare(b.ticker)), sort, PERHOLDING_ACCESSORS);
   const pensionTickers = new Set(Object.entries(secMeta).filter(([, m]) => m.provider).map(([tk]) => tk));
 
   return (
@@ -122,9 +133,19 @@ function ReturnsTab({ returns, valuations, pensionCashflows = [], secMeta = {}, 
         </div>
         <table className="w-full text-sm">
           <thead className="bg-[var(--panel2)] text-[var(--muted)] text-xs uppercase tracking-wide">
-            <tr>{["", "Ticker", "Since", "Money in", "Out + income", "Value", "Profit", "XIRR", "TWR (episode)", "Yield 12m", "Yield fwd"].map((h, i) => (
-              <th key={i} className={"px-3 py-2 font-medium " + (i <= 2 ? "text-left" : "text-right")}>{h}</th>
-            ))}</tr>
+            <tr>
+              <th className="px-3 py-2 font-medium text-left"></th>
+              <SortTh id="ticker" label="Ticker" sort={sort} onSort={toggleSort} className="px-3 py-2 font-medium" />
+              <SortTh id="firstDate" label="Since" sort={sort} onSort={toggleSort} className="px-3 py-2 font-medium" />
+              <SortTh id="moneyIn" label="Money in" sort={sort} onSort={toggleSort} align="right" className="px-3 py-2 font-medium" />
+              <SortTh id="outIncome" label="Out + income" sort={sort} onSort={toggleSort} align="right" className="px-3 py-2 font-medium" />
+              <SortTh id="value" label="Value" sort={sort} onSort={toggleSort} align="right" className="px-3 py-2 font-medium" />
+              <SortTh id="profit" label="Profit" sort={sort} onSort={toggleSort} align="right" className="px-3 py-2 font-medium" />
+              <SortTh id="xirr" label="XIRR" sort={sort} onSort={toggleSort} align="right" className="px-3 py-2 font-medium" />
+              <SortTh id="twr" label="TWR (episode)" sort={sort} onSort={toggleSort} align="right" className="px-3 py-2 font-medium" />
+              <SortTh id="yield12m" label="Yield 12m" sort={sort} onSort={toggleSort} align="right" className="px-3 py-2 font-medium" />
+              <SortTh id="yieldFwd" label="Yield fwd" sort={sort} onSort={toggleSort} align="right" className="px-3 py-2 font-medium" />
+            </tr>
           </thead>
           <tbody className="divide-y divide-[var(--border)] bg-[var(--panel)]">
             {[...openH, ...closedH].map((h) => (

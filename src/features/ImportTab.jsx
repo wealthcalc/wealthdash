@@ -1,15 +1,25 @@
 import React, { useState, useMemo, useCallback, useRef } from "react";
 import Papa from "papaparse";
 import { Upload, Wand2, RefreshCw, FileUp, AlertTriangle } from "lucide-react";
-import { WRAPPERS } from "../core/portfolio.mjs";
+import { WRAPPERS, normWrapper } from "../core/portfolio.mjs";
 import { guessPensionColumns, mapPensionRow } from "../core/pension-import.mjs";
 import { parseIBKR } from "../core/ibkr-import.mjs";
 import { parseISharesWorkbook } from "../core/ishares-eri.mjs";
-import { gbp, num, uid, todayISO, fxHistorical, Field, Empty, SubTabs } from "../ui/shared.jsx";
+import { gbp, num, uid, todayISO, fxHistorical, Field, Empty, SubTabs, round2, dedupeAgainstExisting } from "../ui/shared.jsx";
 
 const FIELDS = ["date", "ticker", "side", "quantity", "nativeCurrency", "nativeAmount", "fxRate", "gbpAmount"];
 const FIELDS_DIV = ["date", "ticker", "kind", "nativeCurrency", "nativeAmount", "fxRate", "gbpAmount"];
-function ImportTab({ setTxns, setTab, setIncomeEntries, setEriEntries, secMeta, setPensionCashflows, pensionCashflows = [], recomputeProviderCost }) {
+
+// Duplicate-detection keys, one per data shape this tab can import into.
+// Deliberately loose on precision (rounded to the penny) since a re-export
+// can format a number very slightly differently (trailing zeros, rounding at
+// the source) without being a genuinely different transaction.
+const txnKey = (t) => `${t.date}|${(t.ticker || "").toUpperCase()}|${t.side}|${normWrapper(t.wrapper)}|${round2(t.quantity)}|${round2(t.gbpAmount)}`;
+const incomeKey = (e) => `${e.date}|${(e.ticker || "").toUpperCase()}|${e.kind}|${normWrapper(e.wrapper)}|${round2(e.amount)}`;
+const pensionKey = (c) => `${c.provider}|${c.date}|${c.type}|${round2(c.nativeAmount)}`;
+const eriKey = (e) => `${(e.ticker || "").toUpperCase()}|${e.periodEnd}|${e.distributionDate}`;
+
+function ImportTab({ setTxns, setTab, setIncomeEntries, setEriEntries, secMeta, setPensionCashflows, pensionCashflows = [], recomputeProviderCost, txns = [], incomeEntries = [], eriEntries = [] }) {
   const [mode, setMode] = useState("ibkr");
   const [wrapper, setWrapper] = useState("GIA");
   const [raw, setRaw] = useState("");
@@ -44,12 +54,18 @@ function ImportTab({ setTxns, setTab, setIncomeEntries, setEriEntries, secMeta, 
     for (const t of income) await resolve(t, "amount");
     const newTxns = trades.filter((t) => t.gbpAmount != null).map((t) => ({ id: uid(), date: t.date, ticker: t.ticker, isin: t.isin, side: t.side, quantity: t.quantity, nativeCurrency: t.nativeCurrency, nativeAmount: t.nativeAmount, fxRate: t.fxRate || 1, gbpAmount: t.gbpAmount, wrapper: t.wrapper, note: "IBKR import" }));
     const newIncome = income.filter((t) => t.amount != null).map((t) => ({ id: uid(), date: t.date, ticker: t.ticker, kind: t.kind, amount: t.amount, wrapper: t.wrapper, note: "IBKR import" }));
-    const skipped = (trades.length - newTxns.length) + (income.length - newIncome.length);
-    setTxns((p) => [...p, ...newTxns]);
-    if (newIncome.length) setIncomeEntries((p) => [...p, ...newIncome]);
+    const fxSkipped = (trades.length - newTxns.length) + (income.length - newIncome.length);
+    const dedTxns = dedupeAgainstExisting(newTxns, txns, txnKey);
+    const dedIncome = dedupeAgainstExisting(newIncome, incomeEntries, incomeKey);
+    const dupSkipped = dedTxns.skipped + dedIncome.skipped;
+    setTxns((p) => [...p, ...dedTxns.rows]);
+    if (dedIncome.rows.length) setIncomeEntries((p) => [...p, ...dedIncome.rows]);
     setImporting(false);
-    if (skipped) { setNote(`Imported ${newTxns.length} trades and ${newIncome.length} income rows. ${skipped} row(s) skipped — FX could not be resolved; add them manually.`); }
-    else setTab(newTxns.length ? "ledger" : "income");
+    const parts = [`Imported ${dedTxns.rows.length} trades and ${dedIncome.rows.length} income rows.`];
+    if (dupSkipped) parts.push(`${dupSkipped} duplicate row(s) already in your ledger — skipped.`);
+    if (fxSkipped) parts.push(`${fxSkipped} row(s) skipped — FX could not be resolved; add them manually.`);
+    if (dupSkipped || fxSkipped) setNote(parts.join(" "));
+    else setTab(dedTxns.rows.length ? "ledger" : "income");
   };
 
   // ---- generic ----
@@ -67,9 +83,10 @@ function ImportTab({ setTxns, setTab, setIncomeEntries, setEriEntries, secMeta, 
   };
   const normSide = (v) => /sell|^s$|sld|disp/i.test(v || "") ? "SELL" : "BUY";
   const preview = useMemo(() => (!parsed ? [] : parsed.slice(0, 5).map((r) => mapRow(r, map, normSide, wrapper))), [parsed, map, wrapper]);
+  const genericRows = useMemo(() => (!parsed ? [] : parsed.map((r) => mapRow(r, map, normSide, wrapper)).filter((t) => t.date && t.ticker && +t.quantity > 0)), [parsed, map, wrapper]);
+  const genericDedup = useMemo(() => dedupeAgainstExisting(genericRows, txns, txnKey), [genericRows, txns]);
   const doImport = () => {
-    const rows = parsed.map((r) => mapRow(r, map, normSide, wrapper)).filter((t) => t.date && t.ticker && +t.quantity > 0);
-    setTxns((p) => [...p, ...rows]); setTab("ledger");
+    setTxns((p) => [...p, ...genericDedup.rows]); setTab("ledger");
   };
 
   // ---- generic dividend/interest CSV ----
@@ -93,9 +110,10 @@ function ImportTab({ setTxns, setTab, setIncomeEntries, setEriEntries, secMeta, 
   };
   const normKind = (v) => /interest|coupon/i.test(v || "") ? "interest" : "dividend";
   const previewDiv = useMemo(() => (!parsedDiv ? [] : parsedDiv.slice(0, 5).map((r) => mapDivRow(r, mapDiv, normKind, wrapper))), [parsedDiv, mapDiv, wrapper]);
+  const divRows = useMemo(() => (!parsedDiv ? [] : parsedDiv.map((r) => mapDivRow(r, mapDiv, normKind, wrapper)).filter((t) => t.date && t.ticker && t.amount > 0)), [parsedDiv, mapDiv, wrapper]);
+  const divDedup = useMemo(() => dedupeAgainstExisting(divRows, incomeEntries, incomeKey), [divRows, incomeEntries]);
   const doImportDiv = () => {
-    const rows = parsedDiv.map((r) => mapDivRow(r, mapDiv, normKind, wrapper)).filter((t) => t.date && t.ticker && t.amount > 0);
-    setIncomeEntries((p) => [...p, ...rows]); setTab("income");
+    setIncomeEntries((p) => [...p, ...divDedup.rows]); setTab("income");
   };
 
   // ---- pension contribution/switch CSV (Citi/L&G, Aviva, or any other provider) ----
@@ -113,15 +131,19 @@ function ImportTab({ setTxns, setTab, setIncomeEntries, setEriEntries, secMeta, 
     () => (!parsedPension || !pensionProvider ? [] : parsedPension.slice(0, 8).map((r) => mapPensionRow(r, mapPension, pensionProvider)).filter(Boolean)),
     [parsedPension, mapPension, pensionProvider]
   );
-  const pensionSkipped = useMemo(
-    () => (!parsedPension || !pensionProvider ? 0 : parsedPension.length - parsedPension.map((r) => mapPensionRow(r, mapPension, pensionProvider)).filter(Boolean).length),
+  const pensionParsedRows = useMemo(
+    () => (!parsedPension || !pensionProvider ? [] : parsedPension.map((r) => mapPensionRow(r, mapPension, pensionProvider.trim())).filter(Boolean)),
     [parsedPension, mapPension, pensionProvider]
   );
+  const pensionSkipped = useMemo(
+    () => (!parsedPension || !pensionProvider ? 0 : parsedPension.length - pensionParsedRows.length),
+    [parsedPension, pensionProvider, pensionParsedRows]
+  );
+  const pensionDedup = useMemo(() => dedupeAgainstExisting(pensionParsedRows, pensionCashflows, pensionKey), [pensionParsedRows, pensionCashflows]);
   const doImportPension = () => {
     if (!pensionProvider.trim()) return;
     const provider = pensionProvider.trim();
-    const rows = parsedPension.map((r) => mapPensionRow(r, mapPension, provider)).filter(Boolean)
-      .map((r) => ({ id: uid(), ...r, gbpAmount: r.ccy === "GBP" ? r.nativeAmount : null }));
+    const rows = pensionDedup.rows.map((r) => ({ id: uid(), ...r, gbpAmount: r.ccy === "GBP" ? r.nativeAmount : null }));
     setPensionCashflows((p) => [...p, ...rows]);
     if (recomputeProviderCost) recomputeProviderCost(provider, [...pensionCashflows, ...rows]);
     setTab("pension");
@@ -184,9 +206,13 @@ function ImportTab({ setTxns, setTab, setIncomeEntries, setEriEntries, secMeta, 
       if (e.ticker && e.periodEnd && e.distributionDate && e.perShare) toAdd.push(e);
     }
     if (!toAdd.length) return;
-    setEriEntries((p) => [...p, ...toAdd]);
+    const { rows: uniqueAdd, skipped: dupEri } = dedupeAgainstExisting(toAdd, eriEntries, eriKey);
+    if (uniqueAdd.length) setEriEntries((p) => [...p, ...uniqueAdd]);
     const unresolvedFx = toAdd.filter((e) => e.currency !== "GBP" && e.currency !== "GBp" && !e.fxRate).length;
-    if (unresolvedFx) setNote(`Imported ${toAdd.length} ERI entries. ${unresolvedFx} needed an FX rate that couldn't be fetched — set it manually on the Income tab.`);
+    const parts = [`Imported ${uniqueAdd.length} ERI entries.`];
+    if (dupEri) parts.push(`${dupEri} duplicate${dupEri === 1 ? "" : "s"} already recorded — skipped.`);
+    if (unresolvedFx) parts.push(`${unresolvedFx} needed an FX rate that couldn't be fetched — set it manually on the Income tab.`);
+    if (dupEri || unresolvedFx) setNote(parts.join(" "));
     else setTab("income");
   };
 
@@ -297,8 +323,8 @@ function ImportTab({ setTxns, setTab, setIncomeEntries, setEriEntries, secMeta, 
                 </table>
               </div>
               <div className="flex items-center justify-between">
-                <span className="text-xs text-[var(--muted)]">{parsed.length} rows ready. GBP fills from native × FX when GBP column is unmapped.</span>
-                <button onClick={doImport} className="btn-accent"><FileUp size={15} /> Import {parsed.length} rows</button>
+                <span className="text-xs text-[var(--muted)]">{genericDedup.rows.length} new row{genericDedup.rows.length === 1 ? "" : "s"} ready{genericDedup.skipped ? `, ${genericDedup.skipped} duplicate${genericDedup.skipped === 1 ? "" : "s"} already in your ledger (skipped)` : ""}. GBP fills from native × FX when GBP column is unmapped.</span>
+                <button onClick={doImport} disabled={!genericDedup.rows.length} className="btn-accent disabled:opacity-50"><FileUp size={15} /> Import {genericDedup.rows.length} row{genericDedup.rows.length === 1 ? "" : "s"}</button>
               </div>
             </div>
           )}
@@ -340,8 +366,8 @@ function ImportTab({ setTxns, setTab, setIncomeEntries, setEriEntries, secMeta, 
                 </table>
               </div>
               <div className="flex items-center justify-between">
-                <span className="text-xs text-[var(--muted)]">{parsedDiv.length} rows ready. GBP fills from native × FX when GBP column is unmapped; ticker can be left blank for interest.</span>
-                <button onClick={doImportDiv} className="btn-accent"><FileUp size={15} /> Import {parsedDiv.length} rows</button>
+                <span className="text-xs text-[var(--muted)]">{divDedup.rows.length} new row{divDedup.rows.length === 1 ? "" : "s"} ready{divDedup.skipped ? `, ${divDedup.skipped} duplicate${divDedup.skipped === 1 ? "" : "s"} already recorded (skipped)` : ""}. GBP fills from native × FX when GBP column is unmapped; ticker can be left blank for interest.</span>
+                <button onClick={doImportDiv} disabled={!divDedup.rows.length} className="btn-accent disabled:opacity-50"><FileUp size={15} /> Import {divDedup.rows.length} row{divDedup.rows.length === 1 ? "" : "s"}</button>
               </div>
             </div>
           )}
@@ -389,9 +415,9 @@ function ImportTab({ setTxns, setTab, setIncomeEntries, setEriEntries, secMeta, 
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-xs text-[var(--muted)]">
-                  {parsedPension.length} rows in file, {parsedPension.length - pensionSkipped} contributions detected{pensionSkipped ? ` (${pensionSkipped} switches/zero-amount rows excluded)` : ""}. Preview shows the first 8.
+                  {parsedPension.length} rows in file, {pensionParsedRows.length} contributions detected{pensionSkipped ? ` (${pensionSkipped} switches/zero-amount rows excluded)` : ""}{pensionDedup.skipped ? `, ${pensionDedup.skipped} duplicate${pensionDedup.skipped === 1 ? "" : "s"} already recorded (skipped)` : ""}. Preview shows the first 8.
                 </span>
-                <button onClick={doImportPension} disabled={!pensionProvider.trim()} className="btn-accent disabled:opacity-50"><FileUp size={15} /> Import {parsedPension.length - pensionSkipped} cashflows</button>
+                <button onClick={doImportPension} disabled={!pensionProvider.trim() || !pensionDedup.rows.length} className="btn-accent disabled:opacity-50"><FileUp size={15} /> Import {pensionDedup.rows.length} cashflows</button>
               </div>
             </div>
           )}
