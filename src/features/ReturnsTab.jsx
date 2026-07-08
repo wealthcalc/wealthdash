@@ -1,12 +1,22 @@
-import React, { useState, useMemo, useCallback, useRef } from "react";
-import { Percent } from "lucide-react";
+import React, { useState, useMemo, useCallback, useRef, useEffect } from "react";
+import { Percent, LineChart } from "lucide-react";
 import { WRAPPERS, normWrapper } from "../core/portfolio.mjs";
 import { xirr } from "../core/returns.mjs";
 import { giltAnalytics } from "../core/gilts.mjs";
-import { gbp, WrapperChip, num, todayISO, pct, pctPlain, toneOf, SHORT_SPAN, RateCell, rateIsDisplayable, Stat, Empty, useSort, sortRows, SortTh } from "../ui/shared.jsx";
+import { growthIndex, maxDrawdown, volatility, benchmarkCumulativeReturn, feeDrag } from "../core/benchmark.mjs";
+import { gbp, WrapperChip, num, todayISO, pct, pctPlain, toneOf, SHORT_SPAN, RateCell, rateIsDisplayable, Stat, Empty, useSort, sortRows, SortTh, store, SubTabs, Field } from "../ui/shared.jsx";
 
+const BENCHMARK_SUGGESTIONS = [
+  ["VWRL.L", "Vanguard FTSE All-World UCITS ETF"],
+  ["VUKE.L", "Vanguard FTSE 100 UCITS ETF"],
+  ["SWDA.L", "iShares Core MSCI World UCITS ETF"],
+  ["VUSA.L", "Vanguard S&P 500 UCITS ETF"],
+  ["^FTAS", "FTSE All-Share index"],
+];
 
-function ReturnsTab({ returns, valuations, pensionCashflows = [], secMeta = {}, txns = [] }) {
+function ReturnsTab({ returns, valuations, pensionCashflows = [], secMeta = {}, setSecMeta, txns = [] }) {
+  const [sub, setSub] = useState(() => store.get("cgt.returnssubtab", "performance"));
+  useEffect(() => store.set("cgt.returnssubtab", sub), [sub]);
   const [selectedWrapper, setSelectedWrapper] = useState(null); // click a per-wrapper row to filter the per-holding table below
   const [sort, toggleSort] = useSort("ticker", "asc");
 
@@ -58,6 +68,10 @@ function ReturnsTab({ returns, valuations, pensionCashflows = [], secMeta = {}, 
 
   return (
     <div className="space-y-4">
+      <SubTabs tabs={[["performance", "Performance"], ["benchmark", "Benchmark & risk"]]} active={sub} onChange={setSub} />
+
+      {sub === "performance" && (
+      <>
       {/* headline */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <Stat label="Money-weighted return (XIRR)"
@@ -178,6 +192,146 @@ function ReturnsTab({ returns, valuations, pensionCashflows = [], secMeta = {}, 
       <p className="text-xs text-[var(--muted)] leading-relaxed">
         Everything here is pre-tax and in GBP. <span className="font-medium">XIRR</span> is your money-weighted annual return — cashflow-timing included — computed from every trade, cash distribution, and the current value (365-day count; † marks histories under {SHORT_SPAN} days, where annualised rates are noise). A <span className="text-[var(--muted)]">◆</span> marks a wrapper's XIRR as computed from real pension contribution dates (Pension &amp; LISA tab) rather than the transaction ledger, which only holds one snapshot per fund — individual pension fund rows show "see {"{wrapper}"}" instead of their own XIRR/TWR for the same reason. <span className="font-medium">TWR (episode)</span> is the cumulative time-weighted return on the current holding episode, exact from your own trade prices, with distributions treated as reinvested — compare it to a benchmark; compare XIRR to your own expectations. ERI counts toward income yields (it's real accumulation) but is never an XIRR cashflow (no cash moves). Cash balances sit outside all return figures. Forward yield applies the last 12 months' per-unit distributions to your current unit count — an estimate, not a promise.
       </p>
+      </>
+      )}
+
+      {sub === "benchmark" && (
+        <BenchmarkRiskView portfolioTWR={portfolioTWR} perHolding={perHolding} secMeta={secMeta} setSecMeta={setSecMeta} />
+      )}
+    </div>
+  );
+}
+
+/* ------------------------- Benchmark & risk view ------------------------- */
+// Phase 2, step 5: benchmark comparison, volatility/drawdown, fee drag — all
+// built on core/benchmark.mjs (see that file's header for the modelling
+// choices, esp. why growth index/volatility/drawdown use TWR PERIOD FACTORS
+// rather than raw valuation snapshots).
+function BenchmarkRiskView({ portfolioTWR, perHolding, secMeta, setSecMeta }) {
+  const [symbol, setSymbol] = useState(() => store.get("cgt.benchmark.symbol", "VWRL.L"));
+  useEffect(() => store.set("cgt.benchmark.symbol", symbol), [symbol]);
+  const [benchmarkData, setBenchmarkData] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  const fetchBenchmark = async () => {
+    if (!symbol.trim() || !portfolioTWR?.from) return;
+    setBusy(true); setErr(""); setBenchmarkData(null);
+    try {
+      const r = await fetch(`/api/benchmark?symbol=${encodeURIComponent(symbol.trim())}&from=${encodeURIComponent(portfolioTWR.from)}&to=${encodeURIComponent(portfolioTWR.to)}`);
+      const body = await r.json();
+      if (!r.ok) throw new Error(body.error || `HTTP ${r.status}`);
+      setBenchmarkData(body);
+    } catch (e) { setErr(e.message || "Fetch failed"); }
+    setBusy(false);
+  };
+
+  const growthIdx = useMemo(
+    () => (portfolioTWR?.twr != null ? growthIndex(portfolioTWR.periods, portfolioTWR.from) : []),
+    [portfolioTWR]
+  );
+  const dd = useMemo(() => maxDrawdown(growthIdx), [growthIdx]);
+  const vol = useMemo(() => (portfolioTWR?.twr != null ? volatility(portfolioTWR.periods) : { annualisedVol: null }), [portfolioTWR]);
+  const benchCmp = useMemo(
+    () => (benchmarkData && portfolioTWR?.from ? benchmarkCumulativeReturn(benchmarkData.prices, portfolioTWR.from, portfolioTWR.to) : null),
+    [benchmarkData, portfolioTWR]
+  );
+
+  const ocfByTicker = useMemo(() => {
+    const m = {};
+    for (const [tk, meta] of Object.entries(secMeta)) if (Number.isFinite(+meta?.ocf)) m[tk] = +meta.ocf;
+    return m;
+  }, [secMeta]);
+  const fees = useMemo(() => feeDrag({ holdings: perHolding, ocfByTicker }), [perHolding, ocfByTicker]);
+  const setOcf = (ticker, v) => setSecMeta((m) => ({ ...m, [ticker]: { ...m[ticker], ocf: v === "" ? undefined : +v } }));
+
+  return (
+    <div className="space-y-5">
+      {/* volatility & drawdown */}
+      <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 space-y-3">
+        <div className="text-sm font-medium flex items-center gap-2"><LineChart size={15} className="text-[var(--accent)]" /> Volatility &amp; drawdown
+          <span className="text-xs font-normal text-[var(--muted)]">— from valuation-snapshot periods, cashflows netted out</span>
+        </div>
+        {portfolioTWR?.twr == null ? (
+          <p className="text-xs text-[var(--muted)]">Needs portfolio TWR first (see the Performance tab — requires &gt;= 2 valuation snapshots).</p>
+        ) : (
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+            <Stat label="Annualised volatility" value={vol.annualisedVol != null ? pct(vol.annualisedVol) : "n/a"}
+              sub={vol.annualisedVol != null ? `${vol.sampleSize} periods, ~${Math.round(vol.periodsPerYear)}/yr` : vol.reason} />
+            <Stat label="Max drawdown" value={dd.maxDrawdown != null ? pct(dd.maxDrawdown) : "n/a"}
+              sub={dd.maxDrawdown != null ? `${dd.peakDate} → ${dd.troughDate}${dd.recovered ? ` · recovered ${dd.recoveryDate}` : " · not yet recovered"}` : dd.reason}
+              tone={dd.maxDrawdown != null ? (dd.maxDrawdown < 0 ? "loss" : undefined) : undefined} />
+            <Stat label="Cumulative TWR" value={pct(portfolioTWR.twr)} sub={`${portfolioTWR.from} → ${portfolioTWR.to}`} tone={toneOf(portfolioTWR.twr)} />
+          </div>
+        )}
+      </div>
+
+      {/* benchmark comparison */}
+      <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 space-y-3">
+        <div className="text-sm font-medium">Benchmark comparison</div>
+        <div className="flex items-end gap-2 flex-wrap">
+          <Field label="Benchmark ticker (Yahoo symbol)">
+            <input value={symbol} onChange={(e) => setSymbol(e.target.value.toUpperCase())} list="benchmark-suggestions" className="input w-40" placeholder="VWRL.L" />
+            <datalist id="benchmark-suggestions">{BENCHMARK_SUGGESTIONS.map(([s]) => <option key={s} value={s} />)}</datalist>
+          </Field>
+          <button onClick={fetchBenchmark} disabled={busy || !portfolioTWR?.from} className="btn-accent">{busy ? "Fetching…" : "Fetch"}</button>
+          {!portfolioTWR?.from && <span className="text-xs text-[var(--muted)]">Needs portfolio TWR (&gt;= 2 valuation snapshots) to know the comparison window.</span>}
+        </div>
+        <p className="text-xs text-[var(--muted)]">Suggestions: {BENCHMARK_SUGGESTIONS.map(([s, n]) => `${s} (${n})`).join(" · ")} — or type any other Yahoo Finance symbol.</p>
+        {err && <p className="text-xs text-[var(--loss)]">{err}</p>}
+        {benchmarkData && (
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+            <Stat label={`Portfolio TWR`} value={portfolioTWR.twr != null ? pct(portfolioTWR.twr) : "n/a"} sub={`${portfolioTWR.from} → ${portfolioTWR.to}`} tone={toneOf(portfolioTWR.twr)} />
+            <Stat label={`${benchmarkData.symbol} buy-and-hold`} value={benchCmp?.cumulativeReturn != null ? pct(benchCmp.cumulativeReturn) : "n/a"}
+              sub={benchCmp?.cumulativeReturn != null ? `${benchCmp.fromDate} → ${benchCmp.toDate}` : benchCmp?.reason}
+              tone={benchCmp?.cumulativeReturn != null ? toneOf(benchCmp.cumulativeReturn) : undefined} />
+            <Stat label="Difference" value={(portfolioTWR.twr != null && benchCmp?.cumulativeReturn != null) ? pct(portfolioTWR.twr - benchCmp.cumulativeReturn) : "n/a"}
+              sub="portfolio minus benchmark, same window" tone={(portfolioTWR.twr != null && benchCmp?.cumulativeReturn != null) ? toneOf(portfolioTWR.twr - benchCmp.cumulativeReturn) : undefined} />
+          </div>
+        )}
+        <p className="text-xs text-[var(--muted)] leading-relaxed">
+          This is a buy-and-hold comparison over your portfolio's own measurement window (the span your valuation snapshots cover), not a risk-adjusted alpha — it answers "how did a simple tracker do over the same period I actually held my portfolio," not "how much of my return came from skill vs. the market."
+        </p>
+      </div>
+
+      {/* fee drag */}
+      <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 space-y-3">
+        <div className="text-sm font-medium">Fee drag <span className="font-normal text-xs text-[var(--muted)]">— ongoing charges figure (OCF), entered per holding</span></div>
+        {!perHolding.some((h) => h.open) ? (
+          <Empty msg="No open holdings to show fees for." />
+        ) : (
+          <>
+            <div className="rounded-xl border border-[var(--border)] overflow-hidden">
+              <table className="w-full text-sm">
+                <thead className="bg-[var(--panel2)] text-[var(--muted)] text-xs uppercase tracking-wide">
+                  <tr>{["Ticker", "Wrapper", "Value", "OCF %/yr", "Annual cost"].map((h, i) => (
+                    <th key={i} className={"px-3 py-2 font-medium " + (i === 0 || i === 1 ? "text-left" : "text-right")}>{h}</th>
+                  ))}</tr>
+                </thead>
+                <tbody className="divide-y divide-[var(--border)]">
+                  {fees.rows.sort((a, b) => b.marketValue - a.marketValue).map((r) => (
+                    <tr key={r.wrapper + r.ticker}>
+                      <td className="px-3 py-2 font-medium">{r.ticker}</td>
+                      <td className="px-3 py-2"><WrapperChip wrapper={r.wrapper} /></td>
+                      <td className="px-3 py-2 num text-right">{gbp(r.marketValue)}</td>
+                      <td className="px-3 py-2 text-right">
+                        <input type="number" step="0.01" min="0" value={r.ocf ?? ""} onChange={(e) => setOcf(r.ticker, e.target.value)}
+                          className="input num w-20 text-right" placeholder="—" />
+                      </td>
+                      <td className="px-3 py-2 num text-right">{r.annualCost != null ? gbp(r.annualCost) : "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+              <Stat label="Asset-weighted OCF" value={fees.weightedOcf != null ? `${fees.weightedOcf.toFixed(2)}%` : "n/a"} sub={fees.unknownValue > 0 ? `${gbp(fees.unknownValue)} in holdings with no OCF entered` : "all open holdings have an OCF"} />
+              <Stat label="Total annual cost" value={fees.totalAnnualCost != null ? gbp(fees.totalAnnualCost) : "n/a"} sub="at current values, before any further growth/contributions" tone={fees.totalAnnualCost != null ? "loss" : undefined} />
+            </div>
+            <p className="text-xs text-[var(--muted)]">OCF isn't available from a free, verified live source the way prices/FX/gilts/HPI are (issuer KIIDs/factsheets are the real source) — enter each fund's ongoing charge figure by hand. This shows today's actual cost given today's holdings and values; the Plan tab's "Platform + fund fees" is a separate, forward-looking single-rate assumption for the retirement projection, not reconciled with this per-holding figure.</p>
+          </>
+        )}
+      </div>
     </div>
   );
 }

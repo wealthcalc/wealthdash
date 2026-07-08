@@ -362,7 +362,7 @@ export default function App() {
                 liveOtherNetWorth: netWorth ? netWorth.propertyEquity - netWorth.otherLiabilities : null,
               }} />}
               {tab === "wealth" && <WealthTab {...{ model: wealthModel, cash, setCash, cashAccounts, setCashAccounts, prices, setPrices, avKey, setAvKey, avMeta, setAvMeta, priceMeta, setPriceMeta, txns, secMeta, setSecMeta, dmoReportDate, setDmoReportDate }} />}
-              {tab === "returns" && <ReturnsTab {...{ returns, valuations, pensionCashflows, secMeta, txns }} />}
+              {tab === "returns" && <ReturnsTab {...{ returns, valuations, pensionCashflows, secMeta, setSecMeta, txns }} />}
               {tab === "gilts" && <GiltsTab {...{ data: giltData, secMeta, setSecMeta, prices, setPrices, dmoReportDate, setDmoReportDate }} />}
               {tab === "pension" && <PensionTab {...{ txns, setTxns, cash, setCash, secMeta, setSecMeta, prices, setPrices, pensionCashflows, setPensionCashflows, recomputeProviderCost }} />}
               {tab === "cgt" && <CgtSection {...{

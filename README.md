@@ -164,6 +164,65 @@ step 4, below.)
 - SA108 export pack; tax-year-end mode
 - Accessibility pass + first-run experience
 
+## Phase 2, step 5: benchmark comparison, volatility/drawdown, fee drag
+
+- **`core/benchmark.mjs`** (new, pure, 15 node tests): `growthIndex` chains
+  `twrFromValuations()`'s already-computed period factors (Phase 1's
+  `returns.mjs`) into a cumulative index from 100; `maxDrawdown` finds the
+  true peak-to-trough decline on that index (not just first-vs-last), with
+  recovery detection; `volatility` computes annualised volatility from the
+  sample stdev of period log-returns, scaled by the portfolio's own actual
+  average snapshot frequency (snapshots are recorded whenever all holdings
+  are priced, not on a fixed calendar, so this is a stated approximation
+  rather than a silently-assumed daily/monthly one); `benchmarkCumulativeReturn`
+  compares a fetched index/ETF price series against the portfolio's own TWR
+  measurement window; `feeDrag` computes today's asset-weighted ongoing
+  charges figure (OCF) cost from user-entered per-holding OCFs.
+- **Why period factors, not raw £ values**: a portfolio that just received a
+  deposit isn't "up" in the performance sense, and one that just paid out a
+  withdrawal isn't "down" — `twrFromValuations` already nets cashflows out of
+  each period's factor, so drawdown/volatility computed from those factors
+  measure investment performance only, not cash movements in and out.
+- **`api/benchmark.mjs`** (new serverless proxy) — Yahoo Finance historical
+  daily closes for any symbol (same "accept any Yahoo ticker" policy as the
+  existing `api/quotes.mjs`, not a hardcoded allowlist — a personal choice of
+  benchmark shouldn't be gatekept), used to fetch a comparison series for
+  whatever ETF/index the user picks (a few common trackers are suggested in
+  the UI: a global tracker, a FTSE 100 tracker, a FTSE All-Share index, an
+  S&P 500 tracker).
+- **New "Benchmark & risk" sub-tab on Returns** (`SubTabs`, alongside the
+  existing performance view): volatility + max drawdown stats; a benchmark
+  ticker picker with a "Fetch" button showing portfolio TWR vs. the
+  benchmark's buy-and-hold return over the identical window, plus the
+  difference; and a fee-drag table (one row per open holding, an editable
+  OCF %/yr input, computed annual £ cost, an asset-weighted portfolio OCF,
+  and total annual cost).
+- **OCF is manual input, stored in `secMeta[ticker].ocf`** — unlike
+  prices/FX/gilts/HPI, there's no free, reliable, machine-readable source of
+  fund OCFs this app has verified, so this is deliberately a per-holding
+  number the user enters from the fund's KIID/factsheet rather than a
+  scraped or guessed figure. `secMeta` was already a persisted, generic
+  per-ticker store (ISIN, ERI flag, gilt coupon/maturity, pension provider),
+  so this needed no new store key or backup-version bump.
+- **Deliberately NOT reconciled with the Plan tab's "Platform + fund fees"**
+  — that's a single flat-rate, forward-looking assumption feeding the
+  retirement projection's Monte Carlo/deterministic drawdown math (built in
+  step 3); this is a measured, per-holding, present-day figure. Mixing the
+  two would mean either overriding the user's own planning assumption with
+  today's actual holdings (which change) or vice versa — both UI sections
+  say so explicitly rather than silently picking one.
+- Benchmark comparison is a **buy-and-hold comparison over the portfolio's
+  own measurement window**, not a risk-adjusted alpha — the UI says this
+  explicitly, since daily benchmark prices against irregular valuation-
+  snapshot dates can't honestly support a proper factor-attribution
+  calculation.
+
+### Still open from the Phase 2 plan
+
+- Tax-aware rebalancing suggestions
+- SA108 export pack; tax-year-end mode
+- Accessibility pass + first-run experience
+
 ## Phase 1: engines out of the monolith, UI split, Home tab
 
 Three structural changes, all behaviour-preserving (142 node tests green,
