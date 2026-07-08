@@ -4,7 +4,95 @@ Client-side React (Vite) CGT tracker + wealth dashboard, with a Yahoo Finance
 price proxy running as a Vercel serverless function. All personal data stays in
 the browser's localStorage; the deployment ships only code.
 
-## Phase 1 (this change set): engines out of the monolith, UI split, Home tab
+## Phase 2, step 1: property, mortgages & liabilities — completing the balance sheet
+
+Theme for Phase 2: stop describing only the investment portfolio and start
+describing true household net worth (assets − liabilities), toward a
+defensible "am I on track?" answer and, eventually, a January where the app
+produces the actual numbers for the tax return. This step is the foundation
+everything else in that plan sits on.
+
+- **`core/property.mjs`** (new, node-tested, 12 tests) — pure engine for
+  property valuation, mortgage/liability netting, and household net worth.
+  A property's estimated value is either a manual figure (you looked at
+  Rightmove/an agent) or HPI-indexed from the purchase price: `estimated =
+  purchase price × (latest regional index ÷ index at purchase month)`,
+  falling back to the raw purchase price ("cost", clearly flagged) until an
+  index fetch has happened. No amortisation schedule is modelled for
+  mortgages — real payoff paths depend on overpayments/rate changes only
+  you know, so the app stores the last-entered balance with a staleness
+  date, same "don't fabricate precision" principle as gilts/XIRR elsewhere.
+  Mortgages orphaned by a deleted property still count in total debt
+  (surfaced separately, never silently dropped).
+- **Land Registry UK HPI proxy** (`api/hpi.mjs`) — the same "official source
+  proxy" pattern as the DMO gilt-price and Yahoo FX functions. Endpoint
+  verified by hand, 2026-07 (not assumed): the interactive UK HPI browse
+  tool at landregistry.data.gov.uk downloads its own results from a plain
+  CSV endpoint, which this calls directly rather than going through the
+  SPARQL/linked-data layer. Region slugs (the 9 official English regions +
+  the four home nations + UK) spot-checked against the live API individually
+  before being hardcoded (london, scotland, wales, yorkshire-and-the-humber,
+  east-of-england all returned real data). Local-authority-level indexing
+  (441+ areas) exists on the same service but isn't exposed — picking the
+  closest region is a reasonable net-worth estimate, not a RICS survey.
+- **New Property tab** (Portfolio section of the sidebar) — add properties
+  (label, region, purchase price/date, manual-or-HPI valuation toggle,
+  one-click "Fetch Land Registry index"), mortgages (lender, balance, rate,
+  fixed/tracker/variable, fixed-rate end date, linked to a property),
+  and other liabilities (loans, credit cards — anything non-mortgage).
+  Sortable tables reuse the same `useSort`/`SortTh` primitive as every other
+  data table in the app. Two-step delete (click again to confirm) rather
+  than a browser `confirm()` dialog, consistent with the Pension tab.
+- **True net worth wired into Home** — the headline figure is now
+  `householdNetWorth()`: investments + cash (unchanged) + property equity
+  − other liabilities. For existing users with no property/liability data
+  entered, this is mathematically identical to the old "total wealth"
+  figure (zero property equity, zero other liabilities), so nothing changes
+  visually until the feature is used — the breakdown line (investments+cash
+  / property equity / liabilities) only appears once there's something to
+  break down. Home's needs-attention rail also flags fixed-rate mortgage
+  deals expired or ending within 180 days (an expired fix usually reverts
+  to a much higher SVR).
+- **Backup version 5** — adds `properties`, `mortgages`, `otherLiabilities`;
+  older backups (v4 and earlier) restore exactly as before, just without
+  this data. New persisted keys registered in `durable.js`'s `PERSIST_KEYS`
+  (IndexedDB mirror + daily snapshots), with the existing exhaustiveness
+  test (`durable.test.mjs`) updated so a future missed key fails loudly
+  again rather than silently skipping the mirror.
+
+## Phase 2, step 2: named cash accounts (rates + maturity dates)
+
+- **`core/cash.mjs`** (new, node-tested, 8 tests) — named cash accounts
+  (institution, rate, rate type, maturity date) layered ON TOP of the
+  existing per-wrapper manual cash figure rather than replacing it: a
+  wrapper's true cash total fed into the wealth model is the manual/
+  unallocated amount PLUS the sum of its named accounts
+  (`effectiveCashByWrapper`), so anyone who never touches this feature sees
+  byte-identical behaviour to before. Same "own array, own setter, derive
+  the total" shape as pension contribution cost-basis reconciliation.
+  Balance-weighted blended rate excludes unrated accounts from both the
+  numerator and the weighting denominator (an unknown rate isn't a 0% rate).
+- **Wealth tab: new "Cash accounts" panel** — add named accounts per
+  wrapper (label, institution, balance, rate, variable/fixed, maturity
+  date), a blended-rate headline, and a maturing-soon callout (fixed-term
+  accounts maturing or matured within 90 days — the cash-accounts analogue
+  of the Property tab's fixed-rate-mortgage warning). The existing per-
+  wrapper "Cash" input now shows "+ £X in named accounts" underneath when
+  applicable, so the manual figure and the accounts total are both visible
+  rather than one silently absorbing the other.
+- **Two-step delete promoted to `shared.jsx`** (`TwoStepDelete`) — was
+  duplicated as soon as a second tab (Property, then Wealth) needed the
+  same "click again to confirm" pattern already used for pension-provider
+  removal; now one component.
+- **Backup version 6** — adds `cashAccounts`; v5 and earlier restore
+  exactly as before.
+
+Still open from the Phase 2 plan (not yet built): threading property/
+liabilities into the Plan tab's retirement projection, an income calendar,
+benchmark/volatility analytics, tax-aware rebalancing, an SA108 export
+pack, and an accessibility pass.
+
+## Phase 1: engines out of the monolith, UI split, Home tab
 
 Three structural changes, all behaviour-preserving (142 node tests green,
 verified by SSR smoke renders, not just compilation):

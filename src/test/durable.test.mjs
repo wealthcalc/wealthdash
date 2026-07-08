@@ -7,6 +7,7 @@ test("PERSIST_KEYS covers every localStorage key the app has ever used", () => {
     "cgt.dark", "cgt.txns", "cgt.tab", "cgt.income", "cgt.carried", "cgt.cash",
     "cgt.pensioncf", "cgt.dmoreportdate", "cgt.valuations", "cgt.incomeEntries",
     "cgt.eriEntries", "cgt.prices", "cgt.avkey", "cgt.avmeta", "cgt.pricemeta", "cgt.secmeta",
+    "cgt.properties", "cgt.mortgages", "cgt.otherliabilities", "cgt.cashaccounts",
   ];
   assert.deepEqual(Object.values(PERSIST_KEYS).sort(), expected.sort());
 });

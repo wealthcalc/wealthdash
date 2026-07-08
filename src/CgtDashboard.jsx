@@ -6,6 +6,8 @@ import { computeReturns } from "./core/returns.mjs";
 import { giltAnalytics } from "./core/gilts.mjs";
 import { allocateCostByValueWeight } from "./core/pension-import.mjs";
 import { liabilityForYear, liabilityAllYears } from "./core/uk-tax.mjs";
+import { householdNetWorth } from "./core/property.mjs";
+import { effectiveCashByWrapper } from "./core/cash.mjs";
 import { unitsHeldAt, uid, todayISO, IconBtn } from "./ui/shared.jsx";
 import { DesktopSidebar, MobileDrawer } from "./ui/Sidebar.jsx";
 import useAppStore from "./state/appStore.js";
@@ -24,6 +26,7 @@ const IncomeTab = lazy(() => import("./features/IncomeTab.jsx"));
 const HoldingsTab = lazy(() => import("./features/HoldingsTab.jsx"));
 const LedgerTab = lazy(() => import("./features/LedgerTab.jsx"));
 const ImportTab = lazy(() => import("./features/ImportTab.jsx"));
+const PropertyTab = lazy(() => import("./features/PropertyTab.jsx"));
 
 /* ============================== app =================================== */
 export default function App() {
@@ -36,6 +39,8 @@ export default function App() {
     incomeEntries, setIncomeEntries, eriEntries, setEriEntries,
     prices, setPrices, avKey, setAvKey, avMeta, setAvMeta,
     priceMeta, setPriceMeta, secMeta, setSecMeta,
+    properties, setProperties, mortgages, setMortgages, otherLiabilities, setOtherLiabilities,
+    cashAccounts, setCashAccounts,
   } = useAppStore();
   // Shared by the Pension tab (one-off add) and the Import tab (bulk CSV) —
   // one allocation function, not two copies that could drift. Accepts an
@@ -88,12 +93,18 @@ export default function App() {
     catch (e) { setError(e.message); return { disposals: [], pools: {} }; }
   }, [giaTxns, eriTxns]);
 
+  // Per-wrapper cash fed into the wealth model is the manual/unallocated
+  // figure PLUS the sum of any named cash accounts under that wrapper
+  // (core/cash.mjs) — additive, so a user who's never touched the Cash
+  // accounts panel sees exactly the old behaviour (effectiveCash === cash).
+  const effectiveCash = useMemo(() => effectiveCashByWrapper(cash, cashAccounts), [cash, cashAccounts]);
+
   // The wealth model reads ALL wrappers — the whole point of the wealth core.
   // (eriTxns stay GIA-scoped: ERI only arises on unsheltered holdings.)
   const wealthModel = useMemo(() => {
-    try { return buildWealthModel({ txns, eriTxns, incomeEntries, secMeta, prices, cash }); }
+    try { return buildWealthModel({ txns, eriTxns, incomeEntries, secMeta, prices, cash: effectiveCash }); }
     catch { return null; } // a malformed ledger shows its error via `matched` above
-  }, [txns, eriTxns, incomeEntries, secMeta, prices, cash]);
+  }, [txns, eriTxns, incomeEntries, secMeta, prices, effectiveCash]);
 
   // Record a securities-only valuation snapshot (one per day, last write wins)
   // whenever every open position is priced. This series is what makes an
@@ -117,6 +128,14 @@ export default function App() {
     try { return computeReturns({ txns, incomeEntries, eriTxns, prices, valuations }); }
     catch { return null; }
   }, [txns, incomeEntries, eriTxns, prices, valuations]);
+
+  // Phase 2: true household net worth = investments + cash (the existing
+  // wealth model) + property equity − other (non-mortgage) liabilities.
+  // Mortgages are netted off inside property equity, not subtracted again.
+  const netWorth = useMemo(() => householdNetWorth({
+    investedTotal: wealthModel ? wealthModel.total.total : 0,
+    properties, mortgages, otherLiabilities,
+  }), [wealthModel, properties, mortgages, otherLiabilities]);
 
   // Gilt ladder analytics (build step 4) — driven by secMeta kind: "gilt".
   const giltData = useMemo(() => {
@@ -193,9 +212,10 @@ export default function App() {
 
   const exportJSON = async () => {
     const backup = {
-      __cgtBackup: true, version: 4, exportedAt: new Date().toISOString(),
+      __cgtBackup: true, version: 6, exportedAt: new Date().toISOString(),
       txns, incomeEntries, eriEntries, income, carried, cash, valuations,
       prices, priceMeta, avKey, avMeta, secMeta, pensionCashflows,
+      properties, mortgages, otherLiabilities, cashAccounts,
     };
     const text = JSON.stringify(backup, null, 2);
     let downloaded = false;
@@ -237,7 +257,11 @@ export default function App() {
           if (d.avMeta && typeof d.avMeta === "object") setAvMeta(d.avMeta);
           if (d.secMeta && typeof d.secMeta === "object") setSecMeta((m) => ({ ...m, ...d.secMeta }));
           if (Array.isArray(d.pensionCashflows)) setPensionCashflows(d.pensionCashflows.map((x) => ({ ...x, id: x.id || uid() })));
-          flash(`Restored: ${n(d.txns)} transactions, ${n(d.incomeEntries)} dividend/interest entries, ${n(d.eriEntries)} ERI entries, ${n(d.pensionCashflows)} pension cashflows, plus prices and settings.`);
+          if (Array.isArray(d.properties)) setProperties(d.properties.map((x) => ({ ...x, id: x.id || uid() })));
+          if (Array.isArray(d.mortgages)) setMortgages(d.mortgages.map((x) => ({ ...x, id: x.id || uid() })));
+          if (Array.isArray(d.otherLiabilities)) setOtherLiabilities(d.otherLiabilities.map((x) => ({ ...x, id: x.id || uid() })));
+          if (Array.isArray(d.cashAccounts)) setCashAccounts(d.cashAccounts.map((x) => ({ ...x, id: x.id || uid() })));
+          flash(`Restored: ${n(d.txns)} transactions, ${n(d.incomeEntries)} dividend/interest entries, ${n(d.eriEntries)} ERI entries, ${n(d.pensionCashflows)} pension cashflows, ${n(d.properties)} properties, ${n(d.mortgages)} mortgages, ${n(d.cashAccounts)} cash accounts, plus prices and settings.`);
         } else {
           setError("That file isn't a recognised backup — expected a transaction array or a full backup file exported from this app.");
         }
@@ -309,7 +333,7 @@ export default function App() {
             <div className="mt-5">
             <Suspense fallback={<div className="text-sm text-[var(--muted)] py-6">Loading…</div>}>
               {tab === "home" && <HomeTab {...{
-                model: wealthModel, valuations, returns, priceMeta, setTab,
+                model: wealthModel, valuations, returns, priceMeta, setTab, netWorth, mortgages,
                 txns, secMeta, avKey, avMeta, setPrices, setPriceMeta, dmoReportDate, setDmoReportDate,
               }} />}
               {tab === "plan" && <PlanTab {...{
@@ -318,7 +342,7 @@ export default function App() {
                 livePots: wealthModel ? Object.fromEntries(["SIPP", "ISA", "GIA", "LISA"].map((w) => [w, wealthModel.byWrapper[w]?.total ?? null])) : null,
                 liveSalary: income,
               }} />}
-              {tab === "wealth" && <WealthTab {...{ model: wealthModel, cash, setCash, prices, setPrices, avKey, setAvKey, avMeta, setAvMeta, priceMeta, setPriceMeta, txns, secMeta, setSecMeta, dmoReportDate, setDmoReportDate }} />}
+              {tab === "wealth" && <WealthTab {...{ model: wealthModel, cash, setCash, cashAccounts, setCashAccounts, prices, setPrices, avKey, setAvKey, avMeta, setAvMeta, priceMeta, setPriceMeta, txns, secMeta, setSecMeta, dmoReportDate, setDmoReportDate }} />}
               {tab === "returns" && <ReturnsTab {...{ returns, valuations, pensionCashflows, secMeta, txns }} />}
               {tab === "gilts" && <GiltsTab {...{ data: giltData, secMeta, setSecMeta, prices, setPrices, dmoReportDate, setDmoReportDate }} />}
               {tab === "pension" && <PensionTab {...{ txns, setTxns, cash, setCash, secMeta, setSecMeta, prices, setPrices, pensionCashflows, setPensionCashflows, recomputeProviderCost }} />}
@@ -331,6 +355,7 @@ export default function App() {
               {tab === "allowances" && <AllowancesTab {...{ txns, pensionCashflows, incomeEntries, eriTxns, income, taxableDisposals }} />}
               {tab === "income" && <IncomeTab {...{ incomeEntries, setIncomeEntries, eriEntries, setEriEntries, eriTxns, incomeByYear, incomeAllWrappers, income, setIncome, txns: giaTxns, secMeta, setSecMeta }} />}
               {tab === "holdings" && <HoldingsTab {...{ positions: wealthModel ? wealthModel.positions : [], prices, setPrices, avKey, setAvKey, avMeta, setAvMeta, priceMeta, setPriceMeta, txns, secMeta, setSecMeta, dmoReportDate, setDmoReportDate }} />}
+              {tab === "property" && <PropertyTab {...{ properties, setProperties, mortgages, setMortgages, otherLiabilities, setOtherLiabilities }} />}
               {tab === "ledger" && <LedgerTab {...{ txns, setTxns }} />}
               {tab === "import" && <ImportTab {...{ setTxns, setTab, setIncomeEntries, setEriEntries, secMeta, setPensionCashflows, pensionCashflows, recomputeProviderCost, txns, incomeEntries, eriEntries }} />}
             </Suspense>

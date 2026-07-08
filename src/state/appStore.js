@@ -41,6 +41,14 @@ const useAppStore = create((set) => {
     priceMeta: ls.get("cgt.pricemeta", {}), setPriceMeta: upd("priceMeta"), // { ticker: {asOf, raw, ccy} }
     // { ticker: {isin, name, domicile, eri, ...} } — seed merged under saved edits
     secMeta: { ...SECURITY_SEED, ...ls.get("cgt.secmeta", {}) }, setSecMeta: upd("secMeta"),
+    // Phase 2: balance-sheet completion (property/liabilities). Each a flat
+    // array of records, same "own array, own setter" shape as pensionCashflows.
+    properties: ls.get("cgt.properties", []), setProperties: upd("properties"),
+    mortgages: ls.get("cgt.mortgages", []), setMortgages: upd("mortgages"),
+    otherLiabilities: ls.get("cgt.otherliabilities", []), setOtherLiabilities: upd("otherLiabilities"),
+    // [{id, wrapper, label, institution, balance, rate, rateType, maturityDate, notes}]
+    // — additive on top of `cash` (the manual/unallocated figure), see core/cash.mjs.
+    cashAccounts: ls.get("cgt.cashaccounts", []), setCashAccounts: upd("cashAccounts"),
   };
 });
 

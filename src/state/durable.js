@@ -34,6 +34,10 @@ export const PERSIST_KEYS = {
   avMeta: "cgt.avmeta",
   priceMeta: "cgt.pricemeta",
   secMeta: "cgt.secmeta",
+  properties: "cgt.properties",
+  mortgages: "cgt.mortgages",
+  otherLiabilities: "cgt.otherliabilities",
+  cashAccounts: "cgt.cashaccounts",
 };
 // Present in any real dataset — used to detect "localStorage was emptied".
 const SENTINEL_LS_KEYS = ["cgt.txns", "cgt.valuations", "cgt.pensioncf"];

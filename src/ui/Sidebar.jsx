@@ -10,7 +10,7 @@
 import React from "react";
 import {
   Wallet, PoundSterling, PieChart, Percent, Landmark, PiggyBank, TrendingUp, Gauge, Target,
-  TableProperties, Receipt, FileUp, X,
+  TableProperties, Receipt, FileUp, X, Home,
 } from "lucide-react";
 
 export const NAV_SECTIONS = [
@@ -22,6 +22,7 @@ export const NAV_SECTIONS = [
     ["wealth", "Wealth", PieChart],
     ["holdings", "Holdings", Wallet],
     ["returns", "Returns", Percent],
+    ["property", "Property", Home],
   ] },
   { title: "Instruments", items: [
     ["gilts", "Gilts", Landmark],

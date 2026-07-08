@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from "react";
 import { TrendingUp, TrendingDown, AlertTriangle, PieChart, RefreshCw } from "lucide-react";
 import { WRAPPERS } from "../core/portfolio.mjs";
+import { mortgagesEndingSoon } from "../core/property.mjs";
 import {
   store, gbp, gbp0, num, pct, WrapperChip, AllocBar, KIND_LABEL, RateCell, Empty, todayISO,
 } from "../ui/shared.jsx";
@@ -109,6 +110,7 @@ function DeltaChip({ label, from, to }) {
 /* ------------------------------- home ---------------------------------- */
 export default function HomeTab({
   model, valuations = [], returns, priceMeta = {}, setTab,
+  netWorth, mortgages = [],
   // price-refresh plumbing (same engine as the Wealth/Holdings panels)
   txns = [], secMeta = {}, avKey = "", avMeta = {},
   setPrices, setPriceMeta, dmoReportDate, setDmoReportDate,
@@ -129,6 +131,10 @@ export default function HomeTab({
       return asOf && asOf.slice(0, 10) < limit;
     }).sort();
   }, [model, priceMeta]);
+  // Doesn't depend on `model` at all, but every hook still has to run before
+  // the early-return guard below (rules of hooks) — this file has already
+  // been bitten once by a memo placed after an early return (see README).
+  const mortgagesSoon = useMemo(() => mortgagesEndingSoon(mortgages, todayISO(), 180), [mortgages]);
 
   if (!model) return <Empty msg="Couldn't build the portfolio model — check the Transactions tab for ledger errors." />;
   const { byWrapper, total } = model;
@@ -152,18 +158,31 @@ export default function HomeTab({
   const investedNow = total.unpriced > 0 ? null : total.marketValue;
 
   const wrappersPresent = WRAPPERS.filter((w) => byWrapper[w] && (byWrapper[w].positions > 0 || byWrapper[w].cash > 0));
+  // Property/liabilities haven't been entered for most existing users, in
+  // which case netWorth.netWorth === total.total exactly (zero property
+  // equity, zero other liabilities) — the breakdown line only earns its
+  // place once there's something to break down.
+  const hasBalanceSheetExtras = !!netWorth && (netWorth.propertyValue > 0 || netWorth.otherLiabilities > 0);
+  const headlineValue = netWorth ? netWorth.netWorth : total.total;
 
   return (
     <div className="grid gap-4">
       {/* headline + trend */}
       <div className="grid lg:grid-cols-3 gap-4">
         <div className="lg:col-span-2 rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4">
-          <div className="text-sm text-[var(--muted)]">Total wealth (holdings + cash, all wrappers)</div>
+          <div className="text-sm text-[var(--muted)]">{hasBalanceSheetExtras ? "Net worth (assets − liabilities)" : "Total wealth (holdings + cash, all wrappers)"}</div>
           <div className="flex items-baseline gap-3 flex-wrap mt-1">
-            <div className="text-3xl font-semibold num">{gbp0(total.total)}</div>
+            <div className="text-3xl font-semibold num">{gbp0(headlineValue)}</div>
             {investedNow != null && <DeltaChip label="1d" from={prev} to={investedNow} />}
             {investedNow != null && <DeltaChip label="30d" from={d30} to={investedNow} />}
           </div>
+          {hasBalanceSheetExtras && (
+            <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-[var(--muted)] mt-1.5 num">
+              <span>Investments + cash <span className="font-medium text-[var(--fg)]">{gbp0(total.total)}</span></span>
+              <span>Property equity <span className="font-medium text-[var(--fg)]">{gbp0(netWorth.propertyEquity)}</span></span>
+              {netWorth.otherLiabilities > 0 && <span>Other liabilities <span className="font-medium text-[var(--loss)]">−{gbp0(netWorth.otherLiabilities)}</span></span>}
+            </div>
+          )}
           {total.unpriced > 0 && (
             <div className="text-xs text-[var(--m-bb)] mt-1 flex items-center gap-1">
               <AlertTriangle size={12} />
@@ -200,12 +219,18 @@ export default function HomeTab({
               <span className="text-[var(--muted)]"> — try Refresh prices; anything without a live source (pension funds) needs manual entry on the Wealth tab.</span>
             </button>
           )}
+          {mortgagesSoon.length > 0 && (
+            <button onClick={() => setTab && setTab("property")} className="text-left text-xs rounded-lg border border-[var(--border)] bg-[var(--panel2)] px-3 py-2 hover:border-[var(--accent)]">
+              <span className="font-semibold text-[var(--m-bb)]">{mortgagesSoon.length} fixed-rate mortgage{mortgagesSoon.length > 1 ? "s" : ""} {mortgagesSoon.some((m) => m.expired) ? "expired or " : ""}ending within 180 days</span>
+              <span className="text-[var(--muted)]"> — check the Property tab; an expired fixed deal usually reverts to a much higher SVR.</span>
+            </button>
+          )}
           {valuations.length < 2 && (
             <div className="text-xs text-[var(--muted)] rounded-lg border border-[var(--border)] bg-[var(--panel2)] px-3 py-2">
               No trend yet — snapshots record automatically each day every holding is priced.
             </div>
           )}
-          {staleTickers.length === 0 && total.unpriced === 0 && valuations.length >= 2 && (
+          {staleTickers.length === 0 && total.unpriced === 0 && mortgagesSoon.length === 0 && valuations.length >= 2 && (
             <div className="text-xs text-[var(--muted)] rounded-lg border border-[var(--border)] bg-[var(--panel2)] px-3 py-2">
               All prices fresh, all holdings priced, snapshot recorded {last ? `(${last.date})` : ""}. Nothing needs you today.
             </div>

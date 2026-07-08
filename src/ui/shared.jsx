@@ -413,6 +413,21 @@ function MethodChip({ m }) {
 function Empty({ msg }) {
   return <div className="rounded-xl border border-dashed border-[var(--border)] py-12 text-center text-sm text-[var(--muted)]">{msg}</div>;
 }
+// Two-step delete (click again within 4s to confirm) instead of a browser
+// confirm() dialog, which doesn't behave consistently across embedding
+// contexts — same pattern used for pension-provider removal, promoted here
+// once a second tab (Property) needed the identical thing.
+function TwoStepDelete({ onConfirm, label = "Delete" }) {
+  const [confirming, setConfirming] = useState(false);
+  React.useEffect(() => { if (confirming) { const t = setTimeout(() => setConfirming(false), 4000); return () => clearTimeout(t); } }, [confirming]);
+  return confirming ? (
+    <button onClick={onConfirm} className="text-xs text-[var(--loss)] font-semibold underline decoration-dotted" title="Click again to confirm">Click to confirm</button>
+  ) : (
+    <button onClick={() => setConfirming(true)} className="text-[var(--muted)] hover:text-[var(--loss)]" title={label}>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18" /><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /></svg>
+    </button>
+  );
+}
 
 /* inline utility classes used above */
 // Guarded end-to-end so this module can load outside a browser (tests / SSR
@@ -436,6 +451,6 @@ export {
   uid, todayISO, SAMPLE, METHOD,
   AV_URL, avQuote, fxViaFrankfurter, fxViaYahoo, fxViaAlphaVantage, fxHistorical, fxToGBP, toGBP, avBudget, avBump, sleep,
   KIND_LABEL, ALLOC_COLORS, AllocBar, pct, pctPlain, toneOf, SHORT_SPAN, RateCell, rateIsDisplayable,
-  IconBtn, Field, Stat, Row, MethodChip, Empty,
+  IconBtn, Field, Stat, Row, MethodChip, Empty, TwoStepDelete,
   useSort, sortRows, SortTh, dedupeAgainstExisting,
 };
