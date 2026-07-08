@@ -223,6 +223,51 @@ step 4, below.)
 - SA108 export pack; tax-year-end mode
 - Accessibility pass + first-run experience
 
+## Phase 2, step 6: tax-aware rebalancing suggestions
+
+- **`core/rebalancing.mjs`** (new, pure, 14 node tests) — `allocationDrift`
+  compares today's full, all-wrapper allocation by instrument kind (equity/
+  fund/investment_trust/gilt/bond_fund/cash) against a user-set target %,
+  and works out an over/underweight £ drift per kind; `sellSuggestions`
+  turns an overweight into specific holdings to trim; `buySuggestions`
+  surfaces existing holdings of an underweight kind that new money could
+  go into (never a new fund — this app has no basis to recommend a
+  specific product, so an underweight kind with nothing already held just
+  says so); `rebalancePlan` is the one-call orchestrator.
+- **Sell ranking is the actual tax-aware part**: sheltered-wrapper (ISA/
+  SIPP/LISA/VCT) and CGT-exempt-gilt holdings first (zero tax cost to
+  sell, ever), then GIA holdings sitting at a loss or breakeven (banks a
+  loss, costs nothing), then GIA gains ranked by SMALLEST gain fraction
+  first — because Section 104 pooling means a partial disposal realises
+  gain strictly pro-rata to the fraction of the pool sold, so the
+  smallest-gain-fraction holdings raise the most cash per pound of CGT
+  annual exempt amount (AEA) consumed. The AEA budget is shared across
+  every kind's sells together (a single portfolio-wide allowance, not one
+  per asset class) — same modelling choice as the existing Bed & ISA
+  planner (`bedAndIsaPlan`, `core/allowances.mjs`).
+- **New "Rebalance" sub-tab** on the CGT section (alongside Summary /
+  Planning / Bed & ISA / Report / What-if): an editable target-%-by-kind
+  table showing current vs. target and the £ drift, an AEA budget control
+  (defaults to this year's computed headroom, overridable), a ranked sell
+  candidates table with each row's tax impact spelled out in words, and an
+  "underweight — where new money could go" table.
+- Unlike every other sub-tab here, this one is explicitly **whole-portfolio**
+  (every wrapper), not GIA-only — rebalancing is a whole-portfolio question,
+  and the entire point of the sell ranking is that a sheltered-wrapper sale
+  costs nothing, which only means something if sheltered wrappers are in
+  view at all. A banner in the UI says so, since every sibling tab in this
+  section is deliberately GIA-scoped.
+- Targets are stored in `localStorage` only (`cgt.rebalance.targets`), not
+  in the ledger or the JSON backup — they're a live planning input the user
+  might change every session, not portfolio data, so they deliberately
+  don't bump the backup version.
+- Explicitly **mechanical, not advisory**: the UI states plainly that this
+  computes from targets the user set, not a recommendation on what the
+  targets should be — consistent with how the rest of the app (Bed & ISA,
+  the multi-year disposal optimiser, the Plan tab's projections) presents
+  "here's the math for your own assumptions" rather than an opinion on the
+  assumptions themselves.
+
 ## Phase 1: engines out of the monolith, UI split, Home tab
 
 Three structural changes, all behaviour-preserving (142 node tests green,

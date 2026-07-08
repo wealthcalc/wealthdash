@@ -370,6 +370,7 @@ export default function App() {
                 carryForward: allYears.carriedForward, exemptGiltDisposalCount,
                 pools: taxablePools, disposals: taxableDisposals, prices, setPrices, txns: giaTxns,
                 allTxns: txns, secMeta, setTxns,
+                positions: wealthModel ? wealthModel.positions : [],
               }} />}
               {tab === "allowances" && <AllowancesTab {...{ txns, pensionCashflows, incomeEntries, eriTxns, income, taxableDisposals }} />}
               {tab === "income" && <IncomeTab {...{ incomeEntries, setIncomeEntries, eriEntries, setEriEntries, eriTxns, incomeByYear, incomeAllWrappers, income, setIncome, txns: giaTxns, secMeta, setSecMeta, incomeCalendar }} />}

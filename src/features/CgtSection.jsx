@@ -1,27 +1,181 @@
 import React, { useState, useMemo, useCallback, useRef } from "react";
-import { AlertCircle, Download, Wand2, FlaskConical, Check, Printer, Info } from "lucide-react";
+import { AlertCircle, Download, Wand2, FlaskConical, Check, Printer, Info, Scale } from "lucide-react";
 import { ukTaxYear } from "../core/cgt-engine.mjs";
 import { cfgFor, aeaForYear, paFor, liabilityForYear, sharesForTargetGain, nextTaxYear, optimiseDisposals } from "../core/uk-tax.mjs";
 import { ISA_LIMIT, isaSubscriptionsByYear, realisedForYear, bedAndIsaPlan } from "../core/allowances.mjs";
-import { store, fmtRate, gbp, gbp0, SubTabs, num, uid, todayISO, METHOD, CurrencyInput, NumberInput, Field, Stat, Row, MethodChip, Empty } from "../ui/shared.jsx";
+import { rebalancePlan } from "../core/rebalancing.mjs";
+import { KIND_LABEL, store, fmtRate, gbp, gbp0, WrapperChip, SubTabs, num, uid, todayISO, METHOD, CurrencyInput, NumberInput, Field, Stat, Row, MethodChip, Empty } from "../ui/shared.jsx";
 
 function CgtSection(props) {
   const { taxYears, activeYear, setYear, yearDisposals, liab, income, setIncome, carried, setCarried,
     carryForward, exemptGiltDisposalCount, pools, disposals, prices, setPrices, txns,
-    allTxns, secMeta, setTxns } = props;
+    allTxns, secMeta, setTxns, positions } = props;
   const [sub, setSub] = useState(() => store.get("cgt.cgtsubtab", "summary"));
   React.useEffect(() => store.set("cgt.cgtsubtab", sub), [sub]);
   return (
     <div>
       <SubTabs
-        tabs={[["summary", "Summary"], ["planning", "Planning"], ["bedisa", "Bed & ISA"], ["report", "Report"], ["whatif", "What-if"]]}
+        tabs={[["summary", "Summary"], ["planning", "Planning"], ["bedisa", "Bed & ISA"], ["rebalance", "Rebalance"], ["report", "Report"], ["whatif", "What-if"]]}
         active={sub} onChange={setSub}
       />
       {sub === "summary" && <CgtTab {...{ taxYears, activeYear, setYear, yearDisposals, liab, income, setIncome, carried, setCarried, carryForward, exemptGiltDisposalCount }} />}
       {sub === "planning" && <PlanningTab {...{ pools, prices, setPrices, disposals, txns, income }} />}
       {sub === "bedisa" && <BedIsaTab {...{ pools, prices, disposals, income, allTxns, secMeta, setTxns }} />}
+      {sub === "rebalance" && <RebalanceTab {...{ positions: positions || [], disposals, income }} />}
       {sub === "report" && <ReportTab {...{ taxYears, disposals, income, carried }} />}
       {sub === "whatif" && <WhatIfTab {...{ pools, disposals, income, carried, prices }} />}
+    </div>
+  );
+}
+
+/* --------------------------- Rebalance tool --------------------------- */
+// Phase 2, step 6. Target allocation by instrument kind, drift vs. today's
+// full (all-wrapper) portfolio, and specific sell candidates ranked by tax
+// cost — see core/rebalancing.mjs for the ranking rationale. Targets are
+// persisted per-browser (not part of the ledger/backup — they're a live
+// planning input, not portfolio data).
+const TARGETS_KEY = "cgt.rebalance.targets";
+
+function RebalanceTab({ positions = [], disposals = [], income = 0 }) {
+  const year = ukTaxYear(todayISO());
+  const aea = aeaForYear(year);
+  const realised = useMemo(() => realisedForYear(disposals, year, aea), [disposals, year, aea]);
+  const [aeaOverride, setAeaOverride] = useState(null);
+  const effAea = aeaOverride ?? realised.aeaLeft;
+
+  const [targets, setTargets] = useState(() => store.get(TARGETS_KEY, {}));
+  React.useEffect(() => store.set(TARGETS_KEY, targets), [targets]);
+
+  // Every kind currently held, plus any kind the user has already given a
+  // target for (so removing the last holding of a kind doesn't silently
+  // drop its target row).
+  const kinds = useMemo(() => {
+    const s = new Set(Object.keys(targets));
+    for (const p of positions) if (p.priced && p.marketValue > 0) s.add(p.kind || "unknown");
+    return [...s].sort();
+  }, [positions, targets]);
+  const setTarget = (kind, v) => setTargets((t) => ({ ...t, [kind]: v === "" ? undefined : +v }));
+
+  const plan = useMemo(() => rebalancePlan({ positions, targets, aeaLeft: effAea }), [positions, targets, effAea]);
+
+  const cfg = cfgFor(year);
+  const rate = cfg.rates[cfg.rates.length - 1];
+  const marginal = Math.max(0, income - paFor(cfg.pa, income)) > cfg.basicLimit ? rate.higher : rate.basic;
+
+  if (!positions.some((p) => p.priced && p.marketValue > 0)) {
+    return <Empty msg="No priced holdings yet — rebalancing needs the Wealth tab's live prices for at least one position." />;
+  }
+
+  return (
+    <div className="space-y-5">
+      <div className="flex items-start gap-2 text-xs rounded-lg px-3 py-2 border border-[var(--border)] bg-[var(--panel2)] text-[var(--muted)]">
+        <Info size={14} className="mt-0.5 shrink-0 text-[var(--m-bb)]" />
+        <span>Spans every wrapper (ISA/SIPP/LISA/VCT/GIA), unlike the rest of this tab — rebalancing is a whole-portfolio question, and selling in a sheltered wrapper costs nothing in tax, which is exactly the point of ranking sells the way this does.</span>
+      </div>
+
+      <div>
+        <h3 className="text-sm font-semibold mb-2">Target allocation, by instrument kind</h3>
+        <div className="rounded-xl border border-[var(--border)] overflow-hidden">
+          <table className="w-full text-sm">
+            <thead className="bg-[var(--panel2)] text-[var(--muted)] text-xs uppercase tracking-wide">
+              <tr>{["Kind", "Current", "Target %", "Drift"].map((h, i) => (
+                <th key={i} className={"px-3 py-2 font-medium " + (i === 0 ? "text-left" : "text-right")}>{h}</th>
+              ))}</tr>
+            </thead>
+            <tbody className="divide-y divide-[var(--border)] bg-[var(--panel)]">
+              {kinds.map((kind) => {
+                const row = plan.rows.find((r) => r.kind === kind) || { currentPct: 0, currentValue: 0, driftValue: 0 };
+                return (
+                  <tr key={kind}>
+                    <td className="px-3 py-2 font-medium">{KIND_LABEL?.[kind] || kind}</td>
+                    <td className="px-3 py-2 num text-right text-[var(--muted)]">{gbp0(row.currentValue)} ({row.currentPct.toFixed(1)}%)</td>
+                    <td className="px-3 py-2 text-right">
+                      <input type="number" min="0" max="100" step="1" value={targets[kind] ?? ""} onChange={(e) => setTarget(kind, e.target.value)}
+                        className="input num w-20 text-right" placeholder="0" />
+                    </td>
+                    <td className={"px-3 py-2 num text-right font-medium " + (row.driftValue > 0.5 ? "text-[var(--loss)]" : row.driftValue < -0.5 ? "text-[var(--gain)]" : "text-[var(--muted)]")}>
+                      {row.driftValue > 0.5 ? `sell ${gbp0(row.driftValue)}` : row.driftValue < -0.5 ? `buy ${gbp0(-row.driftValue)}` : "on target"}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        <p className={"text-xs mt-2 " + (plan.targetsSumTo100 ? "text-[var(--muted)]" : "text-[var(--m-bb)] font-medium")}>
+          Targets sum to {plan.targetTotalPct.toFixed(1)}%{!plan.targetsSumTo100 && " — should be 100% for the drift figures above to mean what they say"}.
+        </p>
+      </div>
+
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <Stat label={`AEA remaining ${year}`} value={gbp0(realised.aeaLeft)} sub={`net realised so far ${gbp0(Math.max(0, realised.net))} of ${gbp0(aea)}`} />
+        <Field label="AEA to use for this plan"><CurrencyInput value={effAea} onChange={setAeaOverride} /></Field>
+        <Stat label="Gain realised by sell plan" value={gbp(plan.sells.rows.reduce((s, r) => s + r.estGain, 0))} tone={plan.sells.rows.length ? "loss" : undefined} />
+        <Stat label="AEA left after plan" value={gbp0(plan.sells.aeaLeftAfter)} sub={plan.sells.aeaUsed ? `${gbp0(plan.sells.aeaUsed)} used by this plan` : undefined} />
+      </div>
+
+      {plan.sells.rows.length > 0 && (
+        <div>
+          <h3 className="text-sm font-semibold mb-2">Sell candidates — cheapest tax cost first</h3>
+          <div className="rounded-xl border border-[var(--border)] overflow-hidden">
+            <table className="w-full text-sm">
+              <thead className="bg-[var(--panel2)] text-[var(--muted)] text-xs uppercase tracking-wide">
+                <tr>{["Ticker", "Wrapper", "Kind", "Sell", "Est. gain", "Tax impact"].map((h, i) => (
+                  <th key={i} className={"px-3 py-2 font-medium " + (i <= 2 ? "text-left" : i === 5 ? "text-left" : "text-right")}>{h}</th>
+                ))}</tr>
+              </thead>
+              <tbody className="divide-y divide-[var(--border)] bg-[var(--panel)]">
+                {plan.sells.rows.map((r) => (
+                  <tr key={r.wrapper + r.ticker}>
+                    <td className="px-3 py-2 font-medium">{r.ticker}{r.wholePosition && <span className="text-[var(--muted)]"> (all)</span>}</td>
+                    <td className="px-3 py-2"><WrapperChip wrapper={r.wrapper} /></td>
+                    <td className="px-3 py-2 text-[var(--muted)]">{KIND_LABEL?.[r.kind] || r.kind}</td>
+                    <td className="px-3 py-2 num text-right">{gbp(r.sellValue)}</td>
+                    <td className={"px-3 py-2 num text-right " + (r.estGain > 0 ? "text-[var(--gain)]" : "text-[var(--muted)]")}>{gbp(r.estGain)}</td>
+                    <td className="px-3 py-2 text-xs text-[var(--muted)]">{r.taxImpact}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="text-xs text-[var(--muted)] mt-2">
+            Est. gain assumes a Section 104 pool disposal — a partial sale realises gain strictly pro-rata to the fraction of the holding sold. Sells beyond your remaining AEA would cost up to {fmtRate(marginal)} at your marginal CGT rate; consider spreading them across tax years (see Planning ▸ multi-year optimiser) or a Bed &amp; ISA move instead of a straight sale.
+          </p>
+        </div>
+      )}
+
+      {plan.buys.length > 0 && (
+        <div>
+          <h3 className="text-sm font-semibold mb-2">Underweight — where new money could go</h3>
+          <div className="rounded-xl border border-[var(--border)] overflow-hidden">
+            <table className="w-full text-sm">
+              <thead className="bg-[var(--panel2)] text-[var(--muted)] text-xs uppercase tracking-wide">
+                <tr>{["Kind", "Amount needed", "Existing holdings you could add to"].map((h, i) => (
+                  <th key={i} className={"px-3 py-2 font-medium " + (i === 1 ? "text-right" : "text-left")}>{h}</th>
+                ))}</tr>
+              </thead>
+              <tbody className="divide-y divide-[var(--border)] bg-[var(--panel)]">
+                {plan.buys.map((b) => (
+                  <tr key={b.kind}>
+                    <td className="px-3 py-2 font-medium">{KIND_LABEL?.[b.kind] || b.kind}</td>
+                    <td className="px-3 py-2 num text-right text-[var(--gain)]">{gbp(b.amountNeeded)}</td>
+                    <td className="px-3 py-2 text-xs text-[var(--muted)]">
+                      {b.existingHoldings.length
+                        ? b.existingHoldings.map((h) => `${h.ticker} (${h.wrapper}, ${gbp0(h.marketValue)})`).join(", ")
+                        : "no existing holding of this kind — this app won't recommend a specific new fund; pick one that fits your own criteria"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      <p className="text-[11px] text-[var(--muted)] leading-relaxed flex items-start gap-1">
+        <Scale size={12} className="mt-0.5 shrink-0" />
+        This is a mechanical calculation from targets you set — not a recommendation on what your allocation should be. Sell ranking: sheltered-wrapper and CGT-exempt-gilt holdings first (no tax cost), then GIA holdings at a loss (banks the loss), then GIA gains smallest-gain-fraction first (raises the most cash per pound of AEA used). The 30-day rule still applies to any repurchase of the same line in the GIA — see Planning for that warning.
+      </p>
     </div>
   );
 }
