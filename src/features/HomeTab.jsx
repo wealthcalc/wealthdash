@@ -1,11 +1,43 @@
 import React, { useState, useMemo } from "react";
-import { TrendingUp, TrendingDown, AlertTriangle, PieChart, RefreshCw } from "lucide-react";
+import { TrendingUp, TrendingDown, AlertTriangle, PieChart, RefreshCw, CalendarClock } from "lucide-react";
 import { WRAPPERS } from "../core/portfolio.mjs";
 import { mortgagesEndingSoon } from "../core/property.mjs";
 import {
   store, gbp, gbp0, num, pct, WrapperChip, AllocBar, KIND_LABEL, RateCell, Empty, todayISO,
 } from "../ui/shared.jsx";
 import { refreshAllPrices } from "../ui/priceRefresh.js";
+
+// Labels for core/tax-year-end.mjs's checklist item ids — kept in the UI
+// layer (not the pure core module) so the core module stays plain data.
+const TAX_YEAR_END_LABELS = {
+  isa: () => "ISA/LISA allowance unused this year",
+  aea: () => "CGT annual exempt amount unused — harvest gains tax-free",
+  "dividend-allowance": () => "Dividend allowance unused",
+  psa: () => "Personal Savings Allowance unused",
+  "pension-carry-forward": (item) => `Pension carry-forward from ${item.expiringYear} expires at this year-end`,
+};
+
+function TaxYearEndBanner({ taxYearEnd, setTab }) {
+  if (!taxYearEnd || !taxYearEnd.active || !taxYearEnd.items.length) return null;
+  return (
+    <div className="rounded-xl border p-4 space-y-2"
+      style={{ background: "color-mix(in srgb, var(--accent) 8%, transparent)", borderColor: "color-mix(in srgb, var(--accent) 35%, transparent)" }}>
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <div className="text-sm font-semibold flex items-center gap-1.5"><CalendarClock size={15} className="text-[var(--accent)]" /> Tax year-end mode — {taxYearEnd.daysLeft} day{taxYearEnd.daysLeft === 1 ? "" : "s"} left in {taxYearEnd.year}</div>
+      </div>
+      <div className="grid sm:grid-cols-2 gap-2">
+        {taxYearEnd.items.map((item) => (
+          <button key={item.id} onClick={() => setTab && setTab(item.tab)}
+            className="text-left text-xs rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 hover:border-[var(--accent)]">
+            <span className="font-semibold num text-[var(--accent)]">{gbp0(item.amount)}</span>
+            <span className="text-[var(--muted)]"> — {(TAX_YEAR_END_LABELS[item.id] || (() => item.id))(item)}</span>
+          </button>
+        ))}
+      </div>
+      <p className="text-[11px] text-[var(--muted)]">Use-it-or-lose-it allowances only — none of these carry forward past 5 April (except pension annual allowance, whose oldest carried year is what's shown expiring here).</p>
+    </div>
+  );
+}
 
 /* ======================================================================
    HOME — the daily check-in view. Read-only by design: one headline
@@ -110,7 +142,7 @@ function DeltaChip({ label, from, to }) {
 /* ------------------------------- home ---------------------------------- */
 export default function HomeTab({
   model, valuations = [], returns, priceMeta = {}, setTab,
-  netWorth, mortgages = [],
+  netWorth, mortgages = [], taxYearEnd = null,
   // price-refresh plumbing (same engine as the Wealth/Holdings panels)
   txns = [], secMeta = {}, avKey = "", avMeta = {},
   setPrices, setPriceMeta, dmoReportDate, setDmoReportDate,
@@ -167,6 +199,8 @@ export default function HomeTab({
 
   return (
     <div className="grid gap-4">
+      <TaxYearEndBanner taxYearEnd={taxYearEnd} setTab={setTab} />
+
       {/* headline + trend */}
       <div className="grid lg:grid-cols-3 gap-4">
         <div className="lg:col-span-2 rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4">

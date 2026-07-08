@@ -9,7 +9,7 @@ import { KIND_LABEL, store, fmtRate, gbp, gbp0, WrapperChip, SubTabs, num, uid, 
 function CgtSection(props) {
   const { taxYears, activeYear, setYear, yearDisposals, liab, income, setIncome, carried, setCarried,
     carryForward, exemptGiltDisposalCount, pools, disposals, prices, setPrices, txns,
-    allTxns, secMeta, setTxns, positions } = props;
+    allTxns, secMeta, setTxns, positions, yearlyLiab } = props;
   const [sub, setSub] = useState(() => store.get("cgt.cgtsubtab", "summary"));
   React.useEffect(() => store.set("cgt.cgtsubtab", sub), [sub]);
   return (
@@ -22,7 +22,7 @@ function CgtSection(props) {
       {sub === "planning" && <PlanningTab {...{ pools, prices, setPrices, disposals, txns, income }} />}
       {sub === "bedisa" && <BedIsaTab {...{ pools, prices, disposals, income, allTxns, secMeta, setTxns }} />}
       {sub === "rebalance" && <RebalanceTab {...{ positions: positions || [], disposals, income }} />}
-      {sub === "report" && <ReportTab {...{ taxYears, disposals, income, carried }} />}
+      {sub === "report" && <ReportTab {...{ taxYears, disposals, income, carried, yearlyLiab }} />}
       {sub === "whatif" && <WhatIfTab {...{ pools, disposals, income, carried, prices }} />}
     </div>
   );
@@ -581,12 +581,16 @@ function MultiYearOptimiser({ pools, prices, income }) {
 }
 
 /* ---------------------------- Report tab ---------------------------- */
-function ReportTab({ taxYears, disposals, income, carried }) {
+function ReportTab({ taxYears, disposals, income, carried, yearlyLiab = {} }) {
   const [ry, setRy] = useState(taxYears[0] || "2025/26");
   const [msg, setMsg] = useState("");
   const yr = taxYears.includes(ry) ? ry : (taxYears[0] || "2025/26");
   const yd = disposals.filter((d) => d.taxYear === yr);
-  const liab = liabilityForYear(yd, { income, carriedLosses: carried });
+  // Prefer the cross-year chained result (has carriedInto/carriedOut for box
+  // 45/47 — losses brought forward can come from any earlier tracked year,
+  // not just the single `carried` b/f figure) — same fallback pattern as the
+  // Summary sub-tab.
+  const liab = yearlyLiab[yr] || liabilityForYear(yd, { income, carriedLosses: carried });
   const totalCost = yd.reduce((s, d) => s + d.cost, 0);
   const flash = (m) => { setMsg(m); setTimeout(() => setMsg(""), 3500); };
 
@@ -594,20 +598,33 @@ function ReportTab({ taxYears, disposals, income, carried }) {
     const s = String(v);
     return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   };
+  // SA108 box numbers verified against the official 2025-26 form (HMRC
+  // 12/25 edition, "Listed shares and securities" section, page CG3) —
+  // https://assets.publishing.service.gov.uk/media/69bd8990cfa346b9d47049e4/SA108-2026.pdf
+  // Boxes 36 (claim/election code) and 34.1 (foreign income & gains regime
+  // claim) aren't populated — this app doesn't model either scenario, and a
+  // real accountant would leave them blank too rather than guess at a code.
+  const sa108Rows = (y, d, l) => {
+    const rows = [["Summary (SA108 — Listed shares & securities, page CG3)", `Tax year ${y}`]];
+    rows.push(["Number of disposals — box 31", num(d.length, 0)]);
+    rows.push(["Disposal proceeds — box 32", l.proceeds.toFixed(2)]);
+    rows.push(["Allowable costs (incl. purchase price) — box 33", d.reduce((s, x) => s + x.cost, 0).toFixed(2)]);
+    rows.push(["Gains in the year, before losses — box 34", l.gains.toFixed(2)]);
+    rows.push(["Losses in the year — box 35", l.losses.toFixed(2)]);
+    if (l.usedCarried) rows.push(["Losses brought forward and used in-year — box 45", l.usedCarried.toFixed(2)]);
+    rows.push(["Losses available to be carried forward — box 47", (l.carriedOut ?? 0).toFixed(2)]);
+    rows.push(["Annual exempt amount (applied automatically by HMRC — not a form box)", l.aea.toFixed(2)]);
+    rows.push(["Net taxable gain", l.taxable.toFixed(2)]);
+    l.breakdown.forEach((b) => rows.push([`  taxed at ${fmtRate(b.rate)}`, b.amount.toFixed(2), `tax ${b.tax.toFixed(2)}`]));
+    rows.push(["CGT due", l.tax.toFixed(2)]);
+    rows.push(["Reporting required (SA108 must be filed)", l.reporting ? "Yes" : "No"]);
+    return rows;
+  };
+
   const exportCSV = async () => {
     const rows = [["Tax year", "Disposal date", "Security", "Matching method", "Quantity", "Proceeds GBP", "Allowable cost GBP", "Gain/loss GBP"]];
     for (const d of yd) for (const l of d.legs) rows.push([yr, d.date, d.ticker, METHOD[l.method].label, l.quantity, l.proceeds.toFixed(2), l.cost.toFixed(2), l.gain.toFixed(2)]);
-    rows.push([], ["Summary (SA108 Capital Gains — listed shares & securities)"]);
-    rows.push(["Number of disposals", yd.length]);
-    rows.push(["Disposal proceeds (box 24)", liab.proceeds.toFixed(2)]);
-    rows.push(["Allowable costs (box 25)", totalCost.toFixed(2)]);
-    rows.push(["Gains before losses (box 26)", liab.gains.toFixed(2)]);
-    rows.push(["Losses in the year (box 27)", liab.losses.toFixed(2)]);
-    rows.push(["Annual exempt amount", liab.aea.toFixed(2)]);
-    rows.push(["Taxable gain", liab.taxable.toFixed(2)]);
-    liab.breakdown.forEach((b) => rows.push([`Taxed at ${fmtRate(b.rate)}`, b.amount.toFixed(2), `tax ${b.tax.toFixed(2)}`]));
-    rows.push(["CGT due", liab.tax.toFixed(2)]);
-    rows.push(["Reporting required", liab.reporting ? "Yes" : "No"]);
+    rows.push([], ...sa108Rows(yr, yd, liab));
     const text = rows.map((r) => r.map(csvCell).join(",")).join("\n");
     let dl = false;
     try {
@@ -617,6 +634,30 @@ function ReportTab({ taxYears, disposals, income, carried }) {
     } catch { /* sandbox */ }
     try { await navigator.clipboard.writeText(text); flash(dl ? "CSV downloaded (also copied)." : "Download blocked here — CSV copied to clipboard."); }
     catch { flash(dl ? "CSV downloaded." : "Couldn't export in this frame — use the deployed app."); }
+  };
+
+  // The "pack": every tracked tax year's SA108 figures + full disposal
+  // schedule in one file, so a January doesn't mean re-selecting each year
+  // one at a time — the whole filing history is in a single download.
+  const exportPack = async () => {
+    const rows = [["SA108 export pack — all tracked tax years"], ["Generated", todayISO()], []];
+    for (const y of taxYears) {
+      const yDisp = disposals.filter((d) => d.taxYear === y);
+      const yLiab = yearlyLiab[y] || liabilityForYear(yDisp, { income, carriedLosses: carried });
+      rows.push([`=== Tax year ${y} ===`]);
+      rows.push(["Date", "Security", "Method", "Quantity", "Proceeds GBP", "Allowable cost GBP", "Gain/loss GBP"]);
+      for (const d of yDisp) for (const l of d.legs) rows.push([d.date, d.ticker, METHOD[l.method].label, l.quantity, l.proceeds.toFixed(2), l.cost.toFixed(2), l.gain.toFixed(2)]);
+      rows.push([], ...sa108Rows(y, yDisp, yLiab), []);
+    }
+    const text = rows.map((r) => r.map(csvCell).join(",")).join("\n");
+    let dl = false;
+    try {
+      const url = URL.createObjectURL(new Blob([text], { type: "text/csv" }));
+      const a = document.createElement("a"); a.href = url; a.download = `sa108-pack-${todayISO()}.csv`;
+      document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000); dl = true;
+    } catch { /* sandbox */ }
+    try { await navigator.clipboard.writeText(text); flash(dl ? `Pack downloaded (${taxYears.length} years, also copied).` : "Download blocked here — pack copied to clipboard."); }
+    catch { flash(dl ? "Pack downloaded." : "Couldn't export in this frame — use the deployed app."); }
   };
 
   if (!taxYears.length) return <Empty msg="No disposals to report. Add or import transactions first." />;
@@ -630,7 +671,11 @@ function ReportTab({ taxYears, disposals, income, carried }) {
           </select>
         </Field>
         <button onClick={() => window.print()} className="btn-accent"><Printer size={15} /> Print / Save as PDF</button>
-        <button onClick={exportCSV} className="inline-flex items-center gap-1.5 text-sm font-medium px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--panel)] hover:bg-[var(--panel2)]"><Download size={15} /> Download CSV</button>
+        <button onClick={exportCSV} className="inline-flex items-center gap-1.5 text-sm font-medium px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--panel)] hover:bg-[var(--panel2)]"><Download size={15} /> Download CSV ({yr})</button>
+        <button onClick={exportPack} className="inline-flex items-center gap-1.5 text-sm font-medium px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--panel)] hover:bg-[var(--panel2)]"
+          title={`Every tracked tax year (${taxYears.length}) in one file`}>
+          <Download size={15} /> Download SA108 pack (all {taxYears.length} years)
+        </button>
         {msg && <span className="text-xs text-[var(--muted)]">{msg}</span>}
       </div>
 
@@ -653,13 +698,14 @@ function ReportTab({ taxYears, disposals, income, carried }) {
           <table className="w-full text-sm">
             <tbody className="num">
               {[
-                ["Number of disposals", num(yd.length, 0)],
-                ["Disposal proceeds — box 24", gbp(liab.proceeds)],
-                ["Allowable costs — box 25", gbp(totalCost)],
-                ["Gains in the year before losses — box 26", gbp(liab.gains)],
-                ["Losses in the year — box 27", gbp(liab.losses)],
-                ["Annual exempt amount", gbp(liab.aea)],
-                ...(liab.usedCarried ? [["Losses brought forward used", gbp(liab.usedCarried)]] : []),
+                ["Number of disposals — box 31", num(yd.length, 0)],
+                ["Disposal proceeds — box 32", gbp(liab.proceeds)],
+                ["Allowable costs (incl. purchase price) — box 33", gbp(totalCost)],
+                ["Gains in the year, before losses — box 34", gbp(liab.gains)],
+                ["Losses in the year — box 35", gbp(liab.losses)],
+                ...(liab.usedCarried ? [["Losses brought forward and used in-year — box 45", gbp(liab.usedCarried)]] : []),
+                ["Losses available to be carried forward — box 47", gbp(liab.carriedOut ?? 0)],
+                ["Annual exempt amount (applied automatically — not a form box)", gbp(liab.aea)],
                 ["Net taxable gain", gbp(liab.taxable)],
                 ...liab.breakdown.map((b) => [`  taxed at ${fmtRate(b.rate)}`, `${gbp(b.amount)}  →  ${gbp(b.tax)}`]),
               ].map(([k, v], i) => (

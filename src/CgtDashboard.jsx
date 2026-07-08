@@ -9,6 +9,7 @@ import { liabilityForYear, liabilityAllYears } from "./core/uk-tax.mjs";
 import { householdNetWorth } from "./core/property.mjs";
 import { effectiveCashByWrapper } from "./core/cash.mjs";
 import { buildIncomeCalendar } from "./core/income-calendar.mjs";
+import { taxYearEndChecklist } from "./core/tax-year-end.mjs";
 import { unitsHeldAt, uid, todayISO, IconBtn } from "./ui/shared.jsx";
 import { DesktopSidebar, MobileDrawer } from "./ui/Sidebar.jsx";
 import useAppStore from "./state/appStore.js";
@@ -181,6 +182,16 @@ export default function App() {
   }, [matched, isCgtExempt]);
   const exemptGiltDisposalCount = matched.disposals.length - taxableDisposals.length;
 
+  // Phase 2, step 7: tax-year-end mode — a prioritised "use it or lose it"
+  // checklist (ISA/AEA/dividend allowance/PSA/pension carry-forward), only
+  // surfaced as an active banner once 5 April is close enough to matter
+  // (see core/tax-year-end.mjs). Cheap to compute unconditionally; the
+  // `active` flag (not a conditional hook) gates whether the Home tab shows it.
+  const taxYearEnd = useMemo(() => taxYearEndChecklist({
+    txns, pensionCashflows, incomeEntries, eriTxns, taxableDisposals, income,
+    today: todayISO(),
+  }), [txns, pensionCashflows, incomeEntries, eriTxns, taxableDisposals, income]);
+
   const taxYears = useMemo(() => {
     const s = new Set(taxableDisposals.map((d) => d.taxYear));
     return [...s].sort().reverse();
@@ -349,6 +360,7 @@ export default function App() {
               {tab === "home" && <HomeTab {...{
                 model: wealthModel, valuations, returns, priceMeta, setTab, netWorth, mortgages,
                 txns, secMeta, avKey, avMeta, setPrices, setPriceMeta, dmoReportDate, setDmoReportDate,
+                taxYearEnd,
               }} />}
               {tab === "plan" && <PlanTab {...{
                 dark,
@@ -371,6 +383,7 @@ export default function App() {
                 pools: taxablePools, disposals: taxableDisposals, prices, setPrices, txns: giaTxns,
                 allTxns: txns, secMeta, setTxns,
                 positions: wealthModel ? wealthModel.positions : [],
+                yearlyLiab: allYears.results,
               }} />}
               {tab === "allowances" && <AllowancesTab {...{ txns, pensionCashflows, incomeEntries, eriTxns, income, taxableDisposals }} />}
               {tab === "income" && <IncomeTab {...{ incomeEntries, setIncomeEntries, eriEntries, setEriEntries, eriTxns, incomeByYear, incomeAllWrappers, income, setIncome, txns: giaTxns, secMeta, setSecMeta, incomeCalendar }} />}

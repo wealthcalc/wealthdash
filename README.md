@@ -268,6 +268,53 @@ step 4, below.)
   "here's the math for your own assumptions" rather than an opinion on the
   assumptions themselves.
 
+## Phase 2, step 7: SA108 export pack + tax-year-end mode
+
+- **SA108 box numbers were wrong and are now fixed.** The CGT ▸ Report
+  tab's CSV/print output previously labelled disposal proceeds/costs/
+  gains/losses as "box 24/25/26/27" — verified against the current SA108
+  (HMRC 12/25 edition, tax year 2025–26, page CG3) and the still-current
+  12/24 edition (2024–25): those numbers belong to the **"Other property,
+  assets and gains"** section. "Listed shares and securities" — what this
+  app actually reports — is **boxes 31–35**, plus **box 45** (losses
+  brought forward and used in-year) and **box 47** (losses available to
+  carry forward). Source: [SA108 2026, HMRC 12/25](https://assets.publishing.service.gov.uk/media/69bd8990cfa346b9d47049e4/SA108-2026.pdf),
+  cross-checked against the [SA108 2025, HMRC 12/24](https://assets.publishing.service.gov.uk/media/67e160d5d8e313b503358cc8/sa108-2025.pdf)
+  edition — the listed-shares box numbers are identical across both, so
+  this isn't a one-year fluke. There's no SA108 box for the CGT annual
+  exempt amount itself (HMRC's software applies it automatically), so
+  that figure is now labelled as a computation aid, not a form box.
+- **Box 45/47 now use the actual cross-year loss chain** (`liabilityAllYears`,
+  already computed once in `CgtDashboard.jsx` as `allYears`), not a fresh,
+  unchained `liabilityForYear` call — losses brought forward can originate
+  from any earlier tracked year, not just the single "losses b/f" figure
+  the Report tab used to see in isolation. This threads a new `yearlyLiab`
+  prop into `CgtSection`/`ReportTab` rather than recomputing the chain
+  twice.
+- **New "SA108 pack" export** — every tracked tax year's box figures and
+  full disposal schedule in a single CSV download (`sa108-pack-<date>.csv`),
+  instead of re-selecting one year at a time. This is the literal "a
+  January where the app produces the numbers that go on the tax return"
+  exit test — the whole filing history in one file.
+- **`core/tax-year-end.mjs`** (new, pure, 10 node tests) — a single
+  orchestrating function over already-existing allowance engines
+  (`core/allowances.mjs`, `core/uk-tax.mjs`): how much of each "use it or
+  lose it" allowance is still unused this tax year (ISA/LISA subscription
+  headroom, CGT annual exempt amount, dividend allowance, Personal Savings
+  Allowance), plus the pension annual allowance carry-forward check that's
+  easy to miss — specifically the OLDEST of the three carried-forward
+  years, since that year's unused amount permanently drops out of reach
+  once the current tax year closes. Returns plain data (id, £ amount,
+  which tab to jump to); wording lives in the UI layer, same convention as
+  every other core module here.
+- **"Tax year-end mode" is a banner on the Home tab**, not a separate mode
+  to remember to switch on — it appears automatically once 5 April is
+  within 60 days (same threshold the Allowances tab already uses for its
+  own "days until 5 April" indicator), listing whatever's still unused
+  with a one-click jump to the right tab. Outside that window it computes
+  silently and shows nothing, so it doesn't clutter the daily check-in
+  view for 10 months of the year.
+
 ## Phase 1: engines out of the monolith, UI split, Home tab
 
 Three structural changes, all behaviour-preserving (142 node tests green,
