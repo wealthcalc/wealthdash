@@ -87,10 +87,32 @@ everything else in that plan sits on.
 - **Backup version 6** — adds `cashAccounts`; v5 and earlier restore
   exactly as before.
 
-Still open from the Phase 2 plan (not yet built): threading property/
-liabilities into the Plan tab's retirement projection, an income calendar,
+Still open from the Phase 2 plan (not yet built): an income calendar,
 benchmark/volatility analytics, tax-aware rebalancing, an SA108 export
 pack, and an accessibility pass.
+
+## Phase 2, step 3: property/liabilities in the retirement projection
+
+- **New "Other net worth" input on the Plan tab** — property equity minus
+  other (non-mortgage) liabilities, one click from "Sync from portfolio"
+  (pulls `netWorth.propertyEquity − netWorth.otherLiabilities` from the
+  Property tab). Deliberately kept OUT of `startWealth`/the pension/ISA/GIA/
+  LISA pots that the accumulation and Monte Carlo engines actually grow and
+  draw down — it's a static addendum to the estate at death only, never
+  treated as liquid, drawdown-eligible, or market-growing wealth. That's a
+  real modelling simplification (no downsizing/equity-release scenario),
+  chosen deliberately over silently mixing an illiquid asset into a
+  liquid-drawdown simulation, which would be the wrong kind of wrong.
+- Since Plan already has its own detailed buy-to-let model (separate income-
+  generating investment property with its own growth/rent/CGT-on-sale
+  projection, pre-dating this Phase 2 work), the sync button and the new
+  field's hint text both flag the double-counting risk explicitly rather
+  than trying to auto-detect or merge the two — a rental property already
+  set up under Buy-to-let shouldn't also be pulled in as "other net worth."
+- No changes to the projection engine's core drawdown/tax/Monte Carlo math;
+  `otherNetWorthStart` only ever appears additively in the final
+  `estateReal` figure, so this carries none of the risk of touching the
+  already-complex, untested-by-node (UI-embedded) financial model.
 
 ## Phase 1: engines out of the monolith, UI split, Home tab
 

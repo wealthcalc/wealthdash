@@ -341,6 +341,11 @@ export default function App() {
                 // wrapper totals (holdings + cash) for one-click plan prefill
                 livePots: wealthModel ? Object.fromEntries(["SIPP", "ISA", "GIA", "LISA"].map((w) => [w, wealthModel.byWrapper[w]?.total ?? null])) : null,
                 liveSalary: income,
+                // Property equity net of non-mortgage liabilities — a static
+                // "other net worth" figure, kept OUT of the investable pots
+                // above so it's never treated as liquid, growing, drawdown-
+                // eligible wealth by the projection engine.
+                liveOtherNetWorth: netWorth ? netWorth.propertyEquity - netWorth.otherLiabilities : null,
               }} />}
               {tab === "wealth" && <WealthTab {...{ model: wealthModel, cash, setCash, cashAccounts, setCashAccounts, prices, setPrices, avKey, setAvKey, avMeta, setAvMeta, priceMeta, setPriceMeta, txns, secMeta, setSecMeta, dmoReportDate, setDmoReportDate }} />}
               {tab === "returns" && <ReturnsTab {...{ returns, valuations, pensionCashflows, secMeta, txns }} />}

@@ -684,7 +684,13 @@ function buildProjection(p) {
   const firstYearNetToday = firstYearNet / Math.pow(1 + infl, accumYears);
   const replacementNet = preNetToday > 0 ? firstYearNetToday / preNetToday : 0;
   const lastReal = timeline[timeline.length - 1] || {};
-  const estateReal = (lastReal.potReal || 0) + (p.btlEnabled && !btlSold ? btlYearly(p, years).equity / Math.pow(1 + infl, years) : 0);
+  // Property/other net worth (Property tab) is a static addendum to the
+  // estate, NOT investable/drawdown-eligible wealth — it never enters
+  // `pension`/`isa`/`gia`/`lisa` above, so it can't be drawn on for income
+  // and doesn't grow or inflate here (already in today's money; no
+  // assumption about whether it'd ever be sold or downsized).
+  const otherNetWorthReal = +p.otherNetWorthStart || 0;
+  const estateReal = (lastReal.potReal || 0) + (p.btlEnabled && !btlSold ? btlYearly(p, years).equity / Math.pow(1 + infl, years) : 0) + otherNetWorthReal;
 
   return {
     timeline,
@@ -717,6 +723,7 @@ function buildProjection(p) {
     grossSchedule,
     withdrawSchedule,
     startWealth: p.startPot + p.isaStart + p.giaStart + p.lisaStart,
+    otherNetWorthReal,
     infl,
     btlEnabled: p.btlEnabled,
     btlSeries,
@@ -1069,6 +1076,11 @@ const DEFAULTS = {
   isaStart: 90000,
   isaContrib: 8000,
   giaStart: 40000,
+  // Property equity (or any other net worth) not otherwise modelled here —
+  // static, added to the estate at death only, never treated as investable/
+  // drawdown-eligible wealth. See Property tab; exclude anything already
+  // captured by the Buy-to-let section below to avoid double-counting.
+  otherNetWorthStart: 0,
   giaContrib: 0,
   lisaStart: 12000,
   lisaContrib: 4000,
@@ -1113,7 +1125,7 @@ const DEFAULTS = {
   healthy: true,
 };
 
-export default function PlanTab({ dark = true, livePots = null, liveSalary = null }) {
+export default function PlanTab({ dark = true, livePots = null, liveSalary = null, liveOtherNetWorth = null }) {
   const [p, setP] = useState(() => {
     const saved = store.get(INPUT_KEY);
     if (saved) {
@@ -1140,8 +1152,11 @@ export default function PlanTab({ dark = true, livePots = null, liveSalary = nul
       ...(livePots.GIA != null ? { giaStart: Math.round(livePots.GIA) } : {}),
       ...(livePots.LISA != null ? { lisaStart: Math.round(livePots.LISA) } : {}),
       ...(liveSalary != null && liveSalary > 0 ? { salary: Math.round(liveSalary) } : {}),
+      // Property equity net of other (non-mortgage) liabilities, from the
+      // Property tab — static addendum to the estate, see otherNetWorthStart.
+      ...(liveOtherNetWorth != null ? { otherNetWorthStart: Math.round(liveOtherNetWorth) } : {}),
     }));
-  }, [livePots, liveSalary]);
+  }, [livePots, liveSalary, liveOtherNetWorth]);
 
   // persist inputs locally so a refresh keeps them
   useEffect(() => {
@@ -1311,7 +1326,7 @@ export default function PlanTab({ dark = true, livePots = null, liveSalary = nul
           <input ref={fileRef} type="file" accept="application/json,.json" style={{ display: "none" }} onChange={loadInputs} />
           {livePots && (
             <button onClick={syncFromPortfolio} style={hdrBtn}
-              title="Copy current pot values from your live portfolio (SIPP / ISA / GIA / LISA wrapper totals incl. cash) and salary into the plan inputs">
+              title="Copy current pot values from your live portfolio (SIPP / ISA / GIA / LISA wrapper totals incl. cash), salary, and property equity net of other liabilities (Property tab) into the plan inputs. If you've modelled a rental property below via Buy-to-let, check 'Other net worth' doesn't double-count it.">
               <RefreshCw size={14} /> Sync from portfolio
             </button>
           )}
@@ -1376,6 +1391,11 @@ export default function PlanTab({ dark = true, livePots = null, liveSalary = nul
               <Field label="Annual GIA top-up" value={p.giaContrib} min={0} max={50000} step={500} prefix="£" onChange={(v) => set("giaContrib", v)} />
               <Field label="LISA balance" value={p.lisaStart} min={0} max={200000} step={1000} prefix="£" onChange={(v) => set("lisaStart", v)} hint="Tax-free, but locked until age 60" />
               <Field label="Annual LISA top-up" value={p.lisaContrib} min={0} max={4000} step={100} prefix="£" onChange={(v) => set("lisaContrib", v)} hint="+25% bonus, to age 50 (max £4k)" />
+            </PanelSection>
+
+            <PanelSection title="Other net worth (not drawn down)">
+              <Field label="Property equity, minus other debts" value={p.otherNetWorthStart} min={0} max={5000000} step={10000} prefix="£" onChange={(v) => set("otherNetWorthStart", v)}
+                hint="Static — added to your estate at death only, never drawn on for retirement income or grown/inflated. Sync from portfolio pulls this from the Property tab (all registered properties minus mortgages and other liabilities). If a rental property is already modelled via Buy-to-let below, don't count it twice here." />
             </PanelSection>
 
             <PanelSection title="Growth & inflation">
