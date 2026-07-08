@@ -315,6 +315,70 @@ step 4, below.)
   silently and shows nothing, so it doesn't clutter the daily check-in
   view for 10 months of the year.
 
+## Phase 2, step 8: accessibility pass + first-run experience
+
+- **Sortable table headers were keyboard/screen-reader inaccessible** — the
+  `SortTh` primitive (used by nearly every table in the app: Income, Wealth,
+  Returns, Holdings, CGT, Property) put the click handler directly on a
+  `<th>`, which isn't natively focusable or operable. Fixed by moving the
+  click target to a real `<button>` inside the cell (keyboard support for
+  free — Tab, Enter, Space) and exposing sort state via `aria-sort` on the
+  `<th>` itself, the attribute assistive tech actually reads for "this
+  column is sorted".
+- **Icon-only buttons had no reliable accessible name.** `title` alone isn't
+  consistently exposed as an accessible name across browser/AT
+  combinations. Fixed at the source: `IconBtn` (the header's backup/restore/
+  theme buttons and others) now derives `aria-label` from `title`
+  automatically; `TwoStepDelete` (Property/Wealth tabs' delete controls)
+  got an explicit `aria-label`; five raw, unlabelled delete buttons
+  (Pension fund/contribution rows, the Transactions ledger, Dividends &
+  ERI rows) got one each, by hand, since they predate the shared component.
+- **`SubTabs` now has real tab semantics** (`role="tablist"`/`"tab"`,
+  `aria-selected`) — used by the Income, CGT and Returns sub-tab bars.
+- **Sidebar navigation**: the active tab gets `aria-current="page"`; both
+  the desktop rail and mobile drawer sit inside a labelled `<nav>` landmark;
+  the mobile drawer is now a proper `role="dialog"` with `aria-modal`,
+  moves focus to its close button on open, and closes on Escape — previously
+  only a backdrop click could dismiss it.
+- **Skip-to-content link** + a `<main>` landmark around the tab content, so
+  keyboard users don't have to tab through the entire sidebar on every page
+  to reach the thing they came for. The header's error banner is now
+  `role="alert"` and the status message `role="status"`, so both are
+  announced without the user needing to find and re-read them.
+- This is a real but **bounded** pass, not an exhaustive audit — it targets
+  the shared primitives and structural gaps that affect every tab (highest
+  leverage for the effort), not a screen-reader-tested, WCAG-certified
+  review of every individual feature file.
+- **First-run experience** — a brand-new user with nothing entered
+  (no transactions, no cash, no property/liabilities) used to land on the
+  Home tab's normal view: a wall of "£0" and "nothing needs you today,"
+  with no indication of what to do next. `HomeTab.jsx` now detects that
+  exact all-zero state and shows a welcome panel instead — a one-paragraph
+  explanation of what the app does, and four direct starting points
+  (import a CSV, add a transaction by hand, add property/cash, or try the
+  retirement projection, which works from assumptions alone). It steps
+  aside permanently the moment any real data exists, computed from props
+  `HomeTab` already receives — no new state or backup keys.
+
+### Phase 2 complete
+
+All eight build steps are done. The three-part exit test from the original
+plan:
+- **True household net worth** (assets − liabilities): step 1 (property/
+  mortgages/liabilities) + step 2 (named cash accounts) feed directly into
+  the Home tab headline (`householdNetWorth`, `core/property.mjs`).
+- **A defensible "on/off track" answer**: the Plan tab's deterministic +
+  Monte Carlo retirement projection (step 3) now includes property equity
+  and state pension; step 5 adds volatility/drawdown/benchmark context for
+  judging the investment side of that answer.
+- **A January where the app produces the numbers that go on the tax
+  return**: step 7's corrected SA108 box numbers (31–35, 45, 47 — the
+  previous 24–27 labelling was wrong) and the multi-year SA108 pack export.
+
+Steps 4 (income calendar) and 6 (tax-aware rebalancing) round out the
+"what's coming in" and "what should I do about it" questions that a pure
+balance-sheet/tax view doesn't answer on its own.
+
 ## Phase 1: engines out of the monolith, UI split, Home tab
 
 Three structural changes, all behaviour-preserving (142 node tests green,

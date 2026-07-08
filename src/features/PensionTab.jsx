@@ -258,7 +258,7 @@ function PensionTab({ txns, setTxns, cash, setCash, secMeta, setSecMeta, prices,
                           </td>
                           <td className="px-3 py-2 text-right num font-medium">{gbp(value)}</td>
                           <td className={"px-3 py-2 text-right num " + (gain >= 0 ? "text-[var(--gain)]" : "text-[var(--loss)]")}>{gbp(gain)}</td>
-                          <td className="px-3 py-2 text-right"><button onClick={() => removeRow(r.wrapper, r.ticker)} className="text-[var(--muted)] hover:text-[var(--loss)]"><Trash2 size={15} /></button></td>
+                          <td className="px-3 py-2 text-right"><button onClick={() => removeRow(r.wrapper, r.ticker)} aria-label={`Remove ${r.ticker} (${r.wrapper})`} title="Remove" className="text-[var(--muted)] hover:text-[var(--loss)]"><Trash2 size={15} aria-hidden="true" /></button></td>
                         </tr>
                       );
                     })}
@@ -274,7 +274,7 @@ function PensionTab({ txns, setTxns, cash, setCash, secMeta, setSecMeta, prices,
                             <td className="px-3 py-1 num">{c.date}</td>
                             <td className="px-3 py-1">{c.type}</td>
                             <td className="px-3 py-1 text-right num">{c.gbpAmount != null ? gbp(c.gbpAmount) : <span className="text-[var(--m-bb)]" title="Non-GBP, no FX resolved — excluded from XIRR">{c.nativeAmount} {c.ccy} (needs FX)</span>}</td>
-                            <td className="px-3 py-1 text-right"><button onClick={() => setPensionCashflows((p) => p.filter((x) => x.id !== c.id))} className="text-[var(--muted)] hover:text-[var(--loss)]"><Trash2 size={12} /></button></td>
+                            <td className="px-3 py-1 text-right"><button onClick={() => setPensionCashflows((p) => p.filter((x) => x.id !== c.id))} aria-label={`Remove ${c.date} contribution`} title="Remove" className="text-[var(--muted)] hover:text-[var(--loss)]"><Trash2 size={12} aria-hidden="true" /></button></td>
                           </tr>
                         ))}
                       </tbody>

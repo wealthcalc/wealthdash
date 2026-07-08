@@ -173,7 +173,7 @@ function IncomeTab({ incomeEntries, setIncomeEntries, eriEntries, setEriEntries,
                       <td className="py-2 px-3 capitalize">{e.kind}</td>
                       <td className="py-2 px-3 num">{ukTaxYear(e.date)}</td>
                       <td className="py-2 px-3 text-right num">{gbp(+e.amount)}</td>
-                      <td className="py-2 px-3 text-right"><button onClick={() => setIncomeEntries((p) => p.filter((x) => x.id !== e.id))} className="text-[var(--muted)] hover:text-[var(--loss)]"><Trash2 size={15} /></button></td>
+                      <td className="py-2 px-3 text-right"><button onClick={() => setIncomeEntries((p) => p.filter((x) => x.id !== e.id))} aria-label={`Delete ${e.kind} entry: ${e.date}${e.ticker ? ` ${e.ticker}` : ""}`} title="Delete" className="text-[var(--muted)] hover:text-[var(--loss)]"><Trash2 size={15} aria-hidden="true" /></button></td>
                     </tr>
                   ))}
                 </tbody>
@@ -235,7 +235,7 @@ function IncomeTab({ incomeEntries, setIncomeEntries, eriEntries, setEriEntries,
                         <td className={"py-2 px-3 num text-" + ERI_COLS[4].align}>{gbp(t ? t._gbp : 0)}</td>
                         <td className={"py-2 px-3 capitalize text-" + ERI_COLS[5].align}>{e.treatment}</td>
                         <td className={"py-2 px-3 num text-" + ERI_COLS[6].align}>{ukTaxYear(e.distributionDate)}</td>
-                        <td className={"py-2 px-3 text-" + ERI_COLS[7].align}><button onClick={() => setEriEntries((p) => p.filter((x) => x.id !== e.id))} className="text-[var(--muted)] hover:text-[var(--loss)]"><Trash2 size={15} /></button></td>
+                        <td className={"py-2 px-3 text-" + ERI_COLS[7].align}><button onClick={() => setEriEntries((p) => p.filter((x) => x.id !== e.id))} aria-label={`Delete ERI entry: ${e.ticker} ${e.periodEnd}`} title="Delete" className="text-[var(--muted)] hover:text-[var(--loss)]"><Trash2 size={15} aria-hidden="true" /></button></td>
                       </tr>
                     );
                   })}

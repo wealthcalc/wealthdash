@@ -77,9 +77,9 @@ const WrapperChip = ({ wrapper }) => <span className={"text-[10px] font-semibold
 // tools live under one top-level tab instead of cluttering the main nav.
 function SubTabs({ tabs, active, onChange }) {
   return (
-    <div className="flex flex-wrap gap-1 border-b border-[var(--border)] mb-4">
+    <div role="tablist" className="flex flex-wrap gap-1 border-b border-[var(--border)] mb-4">
       {tabs.map(([k, label]) => (
-        <button key={k} onClick={() => onChange(k)}
+        <button key={k} role="tab" aria-selected={active === k} onClick={() => onChange(k)}
           className={"px-3 py-1.5 text-sm font-medium border-b-2 -mb-px transition " +
             (active === k ? "border-[var(--accent)] text-[var(--fg)]" : "border-transparent text-[var(--muted)] hover:text-[var(--fg)]")}>
           {label}
@@ -372,22 +372,36 @@ function sortRows(rows, sort, accessors) {
 // Drop-in <th> — pass the same padding/alignment classes the table already
 // used (this repo's tables aren't all padded identically), plus an `id` that
 // matches a key in the `accessors` object passed to sortRows.
+// A plain onClick on a `<th>` (the original implementation) is invisible to
+// keyboard and screen-reader users — a `<th>` isn't natively focusable or
+// operable, so there was no way to sort a table without a mouse. Fixed by
+// putting a real `<button>` inside (native keyboard support for free: Tab,
+// Enter, Space) and exposing sort state via `aria-sort` on the `<th>` itself,
+// the attribute assistive tech actually looks at for "this column is sorted".
 function SortTh({ id, label, sort, onSort, align = "left", className = "" }) {
   const active = sort.key === id;
-  const arrow = active ? (sort.dir === "desc" ? "▼" : "▲") : "";
+  const dir = active ? sort.dir : null;
+  const arrow = active ? (dir === "desc" ? "▼" : "▲") : "";
+  const ariaSort = active ? (dir === "desc" ? "descending" : "ascending") : "none";
   return (
-    <th onClick={() => onSort(id)} title={`Sort by ${label}`}
-      className={"cursor-pointer select-none whitespace-nowrap hover:text-[var(--fg)] " + (align === "right" ? "text-right" : "text-left") + " " + className}>
-      {align === "right"
-        ? <>{arrow && <span className="text-[8px] text-[var(--accent)] mr-1">{arrow}</span>}{label}</>
-        : <>{label}{arrow && <span className="text-[8px] text-[var(--accent)] ml-1">{arrow}</span>}</>}
+    <th scope="col" aria-sort={ariaSort} className={"whitespace-nowrap " + (align === "right" ? "text-right" : "text-left") + " " + className}>
+      <button type="button" onClick={() => onSort(id)}
+        aria-label={`Sort by ${label}${active ? `, currently ${dir === "desc" ? "descending" : "ascending"}` : ""}`}
+        className={"inline-flex items-center gap-1 bg-transparent border-0 p-0 m-0 font-inherit cursor-pointer select-none hover:text-[var(--fg)] " + (align === "right" ? "flex-row-reverse" : "")}>
+        {label}{arrow && <span aria-hidden="true" className="text-[8px] text-[var(--accent)]">{arrow}</span>}
+      </button>
     </th>
   );
 }
 
 /* ----------------------------- atoms -------------------------------- */
-function IconBtn({ children, as = "button", ...p }) {
-  const C = as; return <C {...p} className="inline-flex items-center justify-center w-9 h-9 rounded-lg border border-[var(--border)] bg-[var(--panel)] hover:bg-[var(--panel2)] text-[var(--fg)] cursor-pointer">{children}</C>;
+// `title` alone is an unreliable accessible name (some browser/AT
+// combinations don't expose it as one at all) — every IconBtn caller passes
+// `title` for the visible tooltip, so this derives `aria-label` from it
+// automatically rather than requiring every call site to pass both.
+function IconBtn({ children, as = "button", title, "aria-label": ariaLabel, ...p }) {
+  const C = as;
+  return <C {...p} title={title} aria-label={ariaLabel || title} className="inline-flex items-center justify-center w-9 h-9 rounded-lg border border-[var(--border)] bg-[var(--panel)] hover:bg-[var(--panel2)] text-[var(--fg)] cursor-pointer">{children}</C>;
 }
 function Field({ label, children }) {
   return <label className="flex flex-col gap-1"><span className="text-xs text-[var(--muted)]">{label}</span>{children}</label>;
@@ -421,10 +435,10 @@ function TwoStepDelete({ onConfirm, label = "Delete" }) {
   const [confirming, setConfirming] = useState(false);
   React.useEffect(() => { if (confirming) { const t = setTimeout(() => setConfirming(false), 4000); return () => clearTimeout(t); } }, [confirming]);
   return confirming ? (
-    <button onClick={onConfirm} className="text-xs text-[var(--loss)] font-semibold underline decoration-dotted" title="Click again to confirm">Click to confirm</button>
+    <button onClick={onConfirm} className="text-xs text-[var(--loss)] font-semibold underline decoration-dotted" aria-label={`Confirm: ${label}`}>Click to confirm</button>
   ) : (
-    <button onClick={() => setConfirming(true)} className="text-[var(--muted)] hover:text-[var(--loss)]" title={label}>
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 6h18" /><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /></svg>
+    <button onClick={() => setConfirming(true)} className="text-[var(--muted)] hover:text-[var(--loss)]" title={label} aria-label={label}>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 6h18" /><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /></svg>
     </button>
   );
 }

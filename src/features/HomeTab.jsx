@@ -17,6 +17,44 @@ const TAX_YEAR_END_LABELS = {
   "pension-carry-forward": (item) => `Pension carry-forward from ${item.expiringYear} expires at this year-end`,
 };
 
+/* --------------------------- first-run experience ----------------------- */
+// Shown instead of the normal (all-zero) dashboard the very first time
+// someone opens the app with nothing entered anywhere — investments, cash,
+// property. A brand-new user landing on a wall of "£0" and "nothing needs
+// you today" has no idea what to do next; this replaces that with a short
+// explanation and direct links to the three real starting points. It steps
+// aside permanently the moment ANY data exists (even one manually-added
+// transaction), so it's a one-time first impression, not a recurring nag.
+const FIRST_RUN_ACTIONS = [
+  { tab: "import", title: "Import a CSV", body: "Have an IBKR/broker export, or a spreadsheet of trades? Bring it in as a batch, with duplicate detection." },
+  { tab: "ledger", title: "Add a transaction by hand", body: "Enter buys, sells and transfers one at a time — good for a handful of holdings or getting started before an import." },
+  { tab: "property", title: "Add property, a mortgage, or cash", body: "Net worth isn't just investments — property equity, mortgages and named cash accounts all count." },
+  { tab: "plan", title: "Explore the retirement projection", body: "Works from assumptions alone, so you can try it before any real data is entered." },
+];
+
+function FirstRunPanel({ setTab }) {
+  return (
+    <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-6 space-y-4">
+      <div>
+        <h2 className="text-lg font-semibold">Welcome — let's get your numbers in</h2>
+        <p className="text-sm text-[var(--muted)] mt-1 max-w-2xl">
+          This dashboard tracks true net worth across every wrapper (GIA · ISA · SIPP · LISA · VCT) plus property, works out UK Capital Gains Tax to HMRC's exact share-identification rules, and projects retirement outcomes. Nothing's been entered yet — pick a starting point below; you can mix and match all four later.
+        </p>
+      </div>
+      <div className="grid sm:grid-cols-2 gap-3">
+        {FIRST_RUN_ACTIONS.map((a) => (
+          <button key={a.tab} onClick={() => setTab && setTab(a.tab)}
+            className="text-left rounded-xl border border-[var(--border)] bg-[var(--panel2)] p-4 hover:border-[var(--accent)] transition">
+            <div className="text-sm font-semibold text-[var(--accent)]">{a.title}</div>
+            <div className="text-xs text-[var(--muted)] mt-1 leading-relaxed">{a.body}</div>
+          </button>
+        ))}
+      </div>
+      <p className="text-[11px] text-[var(--muted)]">Everything is stored locally in this browser (plus an IndexedDB mirror) — nothing is sent anywhere except live price/FX/gilt/HPI lookups you trigger. Use the download icon above to back up any time.</p>
+    </div>
+  );
+}
+
 function TaxYearEndBanner({ taxYearEnd, setTab }) {
   if (!taxYearEnd || !taxYearEnd.active || !taxYearEnd.items.length) return null;
   return (
@@ -196,6 +234,12 @@ export default function HomeTab({
   // place once there's something to break down.
   const hasBalanceSheetExtras = !!netWorth && (netWorth.propertyValue > 0 || netWorth.otherLiabilities > 0);
   const headlineValue = netWorth ? netWorth.netWorth : total.total;
+
+  // Truly nothing entered anywhere (investments, cash, property/liabilities)
+  // -> first-run welcome instead of a wall of zeroes. Falls away permanently
+  // the moment any of these becomes non-zero.
+  const isFirstRun = positions.length === 0 && total.cash === 0 && !hasBalanceSheetExtras;
+  if (isFirstRun) return <FirstRunPanel setTab={setTab} />;
 
   return (
     <div className="grid gap-4">

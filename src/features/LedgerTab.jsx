@@ -153,7 +153,7 @@ function LedgerTab({ txns, setTxns }) {
                     <input type="number" value={t.fxRate ?? 1} disabled={isGBP} onChange={(e) => updateTxn(t.id, { fxRate: +e.target.value || 0 })} className="input num w-20 py-1 text-sm text-right disabled:opacity-50" />
                   </td>
                   <td className="px-2 py-1 text-right"><NumberInput value={t.gbpAmount} onChange={(v) => updateTxn(t.id, { gbpAmount: v })} className="w-28 py-1 text-sm font-medium" /></td>
-                  <td className="px-2 py-1 text-right"><button onClick={() => setTxns((p) => p.filter((x) => x.id !== t.id))} className="text-[var(--muted)] hover:text-[var(--loss)]"><Trash2 size={14} /></button></td>
+                  <td className="px-2 py-1 text-right"><button onClick={() => setTxns((p) => p.filter((x) => x.id !== t.id))} aria-label={`Delete transaction: ${t.date} ${t.ticker}`} title="Delete" className="text-[var(--muted)] hover:text-[var(--loss)]"><Trash2 size={14} aria-hidden="true" /></button></td>
                 </tr>
               );
             })}

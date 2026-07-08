@@ -320,38 +320,41 @@ export default function App() {
           table { page-break-inside: auto; } tr { page-break-inside: avoid; }
         }
       `}</style>
+      <a href="#main-content" className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[100] focus:px-3 focus:py-2 focus:rounded-lg focus:bg-[var(--accent)] focus:text-[var(--accent-fg)] focus:text-sm focus:font-medium">
+        Skip to main content
+      </a>
       <div className="root min-h-screen bg-[var(--bg)] text-[var(--fg)] flex" style={{ fontFamily: "ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif" }}>
         <DesktopSidebar tab={tab} setTab={setTab} />
         <MobileDrawer tab={tab} setTab={setTab} open={mobileNavOpen} onClose={() => setMobileNavOpen(false)} />
-        <div className="flex-1 min-w-0">
+        <main id="main-content" tabIndex={-1} className="flex-1 min-w-0">
           <div className="max-w-5xl mx-auto px-4 sm:px-6 py-6">
             {/* header */}
             <div className="flex items-center justify-between gap-3 flex-wrap">
               <div className="flex items-center gap-2">
-                <button onClick={() => setMobileNavOpen(true)} title="Menu"
+                <button onClick={() => setMobileNavOpen(true)} title="Menu" aria-label="Open menu" aria-expanded={mobileNavOpen}
                   className="sm:hidden inline-flex items-center justify-center w-9 h-9 rounded-lg border border-[var(--border)] bg-[var(--panel)] text-[var(--fg)] shrink-0">
-                  <Menu size={16} />
+                  <Menu size={16} aria-hidden="true" />
                 </button>
                 <div>
                   <h1 className="text-xl font-semibold tracking-tight flex items-center gap-2">
-                    <Receipt size={20} className="text-[var(--accent)] sm:hidden" /> Wealth Dashboard
+                    <Receipt size={20} className="text-[var(--accent)] sm:hidden" aria-hidden="true" /> Wealth Dashboard
                   </h1>
                   <p className="text-sm text-[var(--muted)] mt-0.5">Total wealth across GIA · ISA · SIPP · LISA · VCT, with HMRC-precise CGT (same-day · 30-day · S104). All figures GBP.</p>
                 </div>
               </div>
               <div className="flex items-center gap-2">
-                {status && <span className="text-xs text-[var(--muted)] mr-1 max-w-[220px] text-right leading-tight">{status}</span>}
-                <IconBtn onClick={exportJSON} title="Full backup: transactions, dividends/interest, ERI, prices and settings (downloads a file; if you've set an Alpha Vantage key it's included in plain text). Also copies to clipboard as a fallback."><Download size={16} /></IconBtn>
-                <IconBtn onClick={() => fileRef.current && fileRef.current.click()} title="Restore from a full backup file (or import a legacy transactions-only JSON)"><Upload size={16} /></IconBtn>
-                <input ref={fileRef} type="file" accept="application/json,.json" className="hidden" onChange={importJSON} />
-                <IconBtn onClick={() => setDark((d) => !d)} title="Theme">{dark ? <Sun size={16} /> : <Moon size={16} />}</IconBtn>
+                {status && <span role="status" className="text-xs text-[var(--muted)] mr-1 max-w-[220px] text-right leading-tight">{status}</span>}
+                <IconBtn onClick={exportJSON} title="Full backup: transactions, dividends/interest, ERI, prices and settings (downloads a file; if you've set an Alpha Vantage key it's included in plain text). Also copies to clipboard as a fallback."><Download size={16} aria-hidden="true" /></IconBtn>
+                <IconBtn onClick={() => fileRef.current && fileRef.current.click()} title="Restore from a full backup file (or import a legacy transactions-only JSON)"><Upload size={16} aria-hidden="true" /></IconBtn>
+                <input ref={fileRef} type="file" accept="application/json,.json" className="hidden" onChange={importJSON} aria-label="Choose backup file to restore" />
+                <IconBtn onClick={() => setDark((d) => !d)} title={dark ? "Switch to light theme" : "Switch to dark theme"}>{dark ? <Sun size={16} aria-hidden="true" /> : <Moon size={16} aria-hidden="true" />}</IconBtn>
               </div>
             </div>
 
             {error && (
-              <div className="mt-4 flex items-start gap-2 text-sm rounded-lg px-3 py-2 text-[var(--loss)] border"
+              <div role="alert" className="mt-4 flex items-start gap-2 text-sm rounded-lg px-3 py-2 text-[var(--loss)] border"
                 style={{ background: "color-mix(in srgb, var(--loss) 12%, transparent)", borderColor: "color-mix(in srgb, var(--loss) 35%, transparent)" }}>
-                <AlertTriangle size={16} className="mt-0.5 shrink-0" /> <span>{error}</span>
+                <AlertTriangle size={16} className="mt-0.5 shrink-0" aria-hidden="true" /> <span>{error}</span>
               </div>
             )}
 
@@ -398,7 +401,7 @@ export default function App() {
               Figures are an estimate to support your own filing, not tax advice. Verify before submitting to HMRC.
             </p>
           </div>
-        </div>
+        </main>
       </div>
     </div>
   );

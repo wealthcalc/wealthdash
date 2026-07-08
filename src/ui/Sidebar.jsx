@@ -7,7 +7,7 @@
    coupons/AIS, pensions have provider snapshots), tax tools, then raw data
    in/out. Desktop gets a static, sticky column; mobile gets an overlay
    drawer so narrow screens don't lose vertical space to a permanent rail. */
-import React from "react";
+import React, { useEffect, useRef } from "react";
 import {
   Wallet, PoundSterling, PieChart, Percent, Landmark, PiggyBank, TrendingUp, Gauge, Target,
   TableProperties, Receipt, FileUp, X, Home,
@@ -41,10 +41,10 @@ export const NAV_SECTIONS = [
 
 function NavButton({ label, Icon, active, onClick }) {
   return (
-    <button onClick={onClick}
+    <button onClick={onClick} aria-current={active ? "page" : undefined}
       className={"w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-sm font-medium transition text-left " +
         (active ? "bg-[var(--accent)] text-[var(--accent-fg)]" : "text-[var(--muted)] hover:bg-[var(--panel2)] hover:text-[var(--fg)]")}>
-      <Icon size={15} className="shrink-0" /> <span className="truncate">{label}</span>
+      <Icon size={15} className="shrink-0" aria-hidden="true" /> <span className="truncate">{label}</span>
     </button>
   );
 }
@@ -72,10 +72,10 @@ export function DesktopSidebar({ tab, setTab }) {
   return (
     <aside className="hidden sm:flex sm:flex-col w-56 shrink-0 border-r border-[var(--border)] bg-[var(--panel)] sticky top-0 h-screen overflow-y-auto">
       <div className="px-4 py-4 flex items-center gap-2 border-b border-[var(--border)]">
-        <Receipt size={18} className="text-[var(--accent)]" />
+        <Receipt size={18} className="text-[var(--accent)]" aria-hidden="true" />
         <span className="font-semibold text-sm truncate">Wealth Dashboard</span>
       </div>
-      <NavSections tab={tab} onSelect={setTab} />
+      <nav aria-label="Main navigation"><NavSections tab={tab} onSelect={setTab} /></nav>
     </aside>
   );
 }
@@ -83,20 +83,32 @@ export function DesktopSidebar({ tab, setTab }) {
 // Mobile (<sm): an overlay drawer, only mounted while open. A plain
 // conditional render is simpler and more robust than a permanently-mounted,
 // CSS-transform toggle, and a drawer this size doesn't need enter/exit
-// animation to feel responsive.
+// animation to feel responsive. Escape closes it and focus moves to the
+// close button on open (and back to the menu-opening button on close, via
+// the caller keeping a ref) — a minimal, real focus/keyboard story rather
+// than relying on the backdrop click alone.
 export function MobileDrawer({ tab, setTab, open, onClose }) {
+  const closeRef = useRef(null);
+  useEffect(() => {
+    if (!open) return;
+    closeRef.current?.focus();
+    const onKey = (e) => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-50 sm:hidden">
-      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
-      <nav className="absolute inset-y-0 left-0 w-64 bg-[var(--panel)] border-r border-[var(--border)] overflow-y-auto shadow-xl">
+      <div className="absolute inset-0 bg-black/40" onClick={onClose} aria-hidden="true" />
+      <div role="dialog" aria-modal="true" aria-label="Navigation menu"
+        className="absolute inset-y-0 left-0 w-64 bg-[var(--panel)] border-r border-[var(--border)] overflow-y-auto shadow-xl">
         <div className="px-4 py-4 flex items-center gap-2 border-b border-[var(--border)]">
-          <Receipt size={18} className="text-[var(--accent)]" />
+          <Receipt size={18} className="text-[var(--accent)]" aria-hidden="true" />
           <span className="font-semibold text-sm truncate">Wealth Dashboard</span>
-          <button className="ml-auto text-[var(--muted)]" onClick={onClose}><X size={18} /></button>
+          <button ref={closeRef} className="ml-auto text-[var(--muted)]" onClick={onClose} aria-label="Close menu"><X size={18} aria-hidden="true" /></button>
         </div>
-        <NavSections tab={tab} onSelect={(k) => { setTab(k); onClose(); }} />
-      </nav>
+        <nav aria-label="Main navigation"><NavSections tab={tab} onSelect={(k) => { setTab(k); onClose(); }} /></nav>
+      </div>
     </div>
   );
 }
