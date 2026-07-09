@@ -1000,6 +1000,35 @@ vercel --prod
 - Alpha Vantage is the silent fallback — paste the key in-app, or set
   `VITE_ALPHAVANTAGE_KEY` in Vercel's env vars to keep it out of the repo.
 - Manual entry is the floor.
+- **Fixed: bulk "Refresh prices" sometimes left a few tickers unpriced that
+  then succeeded when refreshed individually.** Root cause was `/api/quotes`
+  firing every symbol's `yf.quote()` concurrently via `Promise.all` —
+  `yahoo-finance2` shares one crumb/cookie session per server process, and
+  hammering it with N simultaneous requests intermittently tripped Yahoo's
+  own per-session throttling for a handful of the concurrent calls, while a
+  single isolated request (exactly what the per-ticker refresh button sends)
+  never hit that contention. Fixed server-side by fetching symbols
+  sequentially with a small stagger, and client-side (`ui/priceRefresh.js`)
+  by retrying any stragglers left after the first batched call one at a
+  time — the same thing a manual per-ticker refresh does — before falling
+  through to the far more rate-limited Alpha Vantage.
+- **Fixed: pension/LISA fund tickers (secMeta kind `"fund"`) permanently
+  showing in Home's ">3 days old" stale-price warning.** There is no live
+  source for these at all (insurer-administered, not exchange-traded — see
+  the exclusion in `LivePricesPanel`/`refreshAllPrices`), so "Refresh
+  prices" could never bring their `asOf` current; the warning was nagging
+  forever over data that isn't wrong, just never live-quoted. `HomeTab.jsx`'s
+  `staleTickers` now excludes kind-`"fund"` tickers from the check entirely,
+  matching the exclusion already applied everywhere prices are actually
+  fetched.
+- **Fixed: Pension tab's manual unit/price inputs silently truncated to 2
+  decimal places.** They used a raw `<input defaultValue={round2(...)}>` +
+  `onBlur` pattern — `round2` rounds to 2dp, which re-truncated a 4dp fund
+  price (e.g. `1.2345`) back down to `1.23` on every remount, a real
+  precision loss, not just a display issue. Replaced with the app's
+  existing `NumberInput` component (`dp={4}`, controlled, no rounding on the
+  underlying value) — same fix incidentally widens the input, which was the
+  originally-reported symptom.
 
 ## Verified
 `npm install` and `npm run build` succeed; Tailwind emits the utility CSS

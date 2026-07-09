@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useCallback, useRef } from "react";
-import { Plus, Trash2, Wand2, RefreshCw } from "lucide-react";
+import { Plus, Wand2, RefreshCw } from "lucide-react";
 import { WRAPPERS, normWrapper } from "../core/portfolio.mjs";
-import { store, num, NumberInput, uid, todayISO, Field, fxToGBP, gbp, useSort, sortRows, SortTh } from "../ui/shared.jsx";
+import { store, num, NumberInput, uid, todayISO, Field, fxToGBP, gbp, useSort, sortRows, SortTh, TwoStepDelete } from "../ui/shared.jsx";
 
 const BLANK = () => ({ id: uid(), date: todayISO(), ticker: "", side: "BUY", quantity: "", nativeCurrency: "GBP", nativeAmount: "", fxRate: 1, gbpAmount: "", wrapper: "GIA", note: "" });
 function LedgerTab({ txns, setTxns }) {
@@ -124,7 +124,7 @@ function LedgerTab({ txns, setTxns }) {
               <SortTh id="nativeAmount" label="Native" sort={sort} onSort={toggleSort} align="right" className="px-2 py-1.5 font-medium" />
               <SortTh id="fxRate" label="FX" sort={sort} onSort={toggleSort} align="right" className="px-2 py-1.5 font-medium" />
               <SortTh id="gbpAmount" label="GBP" sort={sort} onSort={toggleSort} align="right" className="px-2 py-1.5 font-medium" />
-              <th className="px-2 py-1.5"></th>
+              <th className="px-2 py-1.5 text-left font-medium">Delete</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-[var(--border)] bg-[var(--panel)]">
@@ -153,7 +153,9 @@ function LedgerTab({ txns, setTxns }) {
                     <input type="number" value={t.fxRate ?? 1} disabled={isGBP} onChange={(e) => updateTxn(t.id, { fxRate: +e.target.value || 0 })} className="input num w-20 py-1 text-sm text-right disabled:opacity-50" />
                   </td>
                   <td className="px-2 py-1 text-right"><NumberInput value={t.gbpAmount} onChange={(v) => updateTxn(t.id, { gbpAmount: v })} className="w-28 py-1 text-sm font-medium" /></td>
-                  <td className="px-2 py-1 text-right"><button onClick={() => setTxns((p) => p.filter((x) => x.id !== t.id))} aria-label={`Delete transaction: ${t.date} ${t.ticker}`} title="Delete" className="text-[var(--muted)] hover:text-[var(--loss)]"><Trash2 size={14} aria-hidden="true" /></button></td>
+                  <td className="px-2 py-1">
+                    <TwoStepDelete onConfirm={() => setTxns((p) => p.filter((x) => x.id !== t.id))} label={`Delete transaction: ${t.date} ${t.ticker}`} />
+                  </td>
                 </tr>
               );
             })}

@@ -244,10 +244,12 @@ function PensionTab({ txns, setTxns, cash, setCash, secMeta, setSecMeta, prices,
                             <div className="text-xs text-[var(--muted)]">{name}</div>
                           </td>
                           <td className="px-3 py-2 text-right">
-                            <input type="number" defaultValue={round2(r.units)} onBlur={(e) => setUnits(r.wrapper, r.ticker, +e.target.value || 0, price)} className="input num w-24 text-right py-1" />
+                            <NumberInput value={r.units} onChange={(v) => setUnits(r.wrapper, r.ticker, v, price)} className="w-28 py-1" dp={4} />
                           </td>
                           <td className="px-3 py-2 text-right">
-                            <input type="number" defaultValue={round2(price)} onBlur={(e) => setPrice(r.ticker, +e.target.value || 0)} className="input num w-20 text-right py-1" title="Market price — for valuation only, doesn't affect cost" />
+                            <span title="Market price — for valuation only, doesn't affect cost">
+                              <NumberInput value={price} onChange={(v) => setPrice(r.ticker, v)} className="w-28 py-1" dp={4} />
+                            </span>
                           </td>
                           <td className="px-3 py-2 text-right">
                             {hasContributions ? (

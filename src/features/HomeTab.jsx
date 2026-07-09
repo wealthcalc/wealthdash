@@ -193,14 +193,20 @@ export default function HomeTab({
   const positions = model?.positions || [];
 
   // Stale prices: open priced positions whose price is >3 days old.
+  // Pension/LISA fund units (secMeta kind "fund") are excluded — there is no
+  // live source for them at all (insurer-administered, not exchange-traded;
+  // see LivePricesPanel/refreshAllPrices, which skip them for the same
+  // reason), so "Refresh prices" can never bring their `asOf` current and
+  // this warning would otherwise nag permanently for entirely manual data
+  // that isn't actually wrong, just not date-stamped by a live quote.
   const staleTickers = useMemo(() => {
-    const open = new Set(positions.filter((p) => p.priced).map((p) => p.ticker));
+    const open = new Set(positions.filter((p) => p.priced && secMeta[p.ticker]?.kind !== "fund").map((p) => p.ticker));
     const limit = isoDaysAgo(3);
     return [...open].filter((tk) => {
       const asOf = priceMeta[tk]?.asOf;
       return asOf && asOf.slice(0, 10) < limit;
     }).sort();
-  }, [model, priceMeta]);
+  }, [model, priceMeta, secMeta]);
   // Doesn't depend on `model` at all, but every hook still has to run before
   // the early-return guard below (rules of hooks) — this file has already
   // been bitten once by a memo placed after an early return (see README).
