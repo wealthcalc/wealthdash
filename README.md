@@ -60,6 +60,26 @@ everything else in that plan sits on.
   test (`durable.test.mjs`) updated so a future missed key fails loudly
   again rather than silently skipping the mirror.
 
+**Foreign property + foreign mortgage support (added later, 21 node tests
+now)**: a property (and, independently, each mortgage on it) can be
+denominated in a currency other than GBP (currently EUR — see
+`FOREIGN_CURRENCIES` in `core/property.mjs`, a one-line list to extend).
+HPI indexing has no coverage outside the UK, so a foreign property is
+always manually valued — `estimatedPropertyValue()` forces this regardless
+of `valuationMode`, rather than trusting the UI to enforce it. Conversion
+to GBP uses a rate CACHED on the record (`fxRate`/`fxAsOf`), fetched
+client-side via the same `/api/fx` Frankfurter→Yahoo→Alpha Vantage chain
+the rest of the app uses (`fxToGBP` in `ui/shared.jsx`) and stored back on
+the property/mortgage — this keeps `core/property.mjs` pure/network-free,
+the same pattern as the HPI `{purchaseIndex, latestIndex}` cache. Critically,
+a record with no rate fetched yet is neither treated as 1:1 with GBP (would
+misstate net worth) nor silently dropped from the total (would lose real
+value/debt) — it contributes £0 to every GBP aggregate and its id is
+collected in `needsFx` (mirroring the existing `orphanMortgages` pattern),
+surfaced as an explicit warning banner in the Property tab until fetched. A
+mortgage's currency and rate are independent of its property's — a EUR
+mortgage on a EUR property still needs its own FX fetch.
+
 ## Phase 2, step 2: named cash accounts (rates + maturity dates)
 
 - **`core/cash.mjs`** (new, node-tested, 8 tests) — named cash accounts
@@ -236,32 +256,49 @@ step 4, below.)
 
 ## Phase 2, step 6: tax-aware rebalancing suggestions
 
-- **`core/rebalancing.mjs`** (new, pure, 14 node tests) — `allocationDrift`
-  compares today's full, all-wrapper allocation by instrument kind (equity/
-  fund/investment_trust/gilt/bond_fund/cash) against a user-set target %,
-  and works out an over/underweight £ drift per kind; `sellSuggestions`
-  turns an overweight into specific holdings to trim; `buySuggestions`
-  surfaces existing holdings of an underweight kind that new money could
-  go into (never a new fund — this app has no basis to recommend a
-  specific product, so an underweight kind with nothing already held just
-  says so); `rebalancePlan` is the one-call orchestrator.
+- **`core/rebalancing.mjs`** (new, pure — now 20 node tests after the
+  two-bucket redesign below) — `allocationDrift` compares today's full,
+  all-wrapper allocation against a user-set target %, and works out an
+  over/underweight £ drift; `sellSuggestions` turns an overweight into
+  specific holdings to trim; `buySuggestions` surfaces existing holdings
+  of an underweight bucket that new money could go into (never a new fund
+  — this app has no basis to recommend a specific product, so an
+  underweight bucket with nothing already held just says so);
+  `rebalancePlan` is the one-call orchestrator.
+- **Redesigned to exactly two buckets — Bonds/gilts vs Equities — with VCT
+  holdings excluded entirely.** The original version targeted the fine-
+  grained instrument-kind split (equity/fund/investment_trust/gilt/
+  bond_fund/cash) used elsewhere in the app; in practice a rebalance is a
+  bonds-vs-equities risk decision, not a "how many different fund
+  wrappers" question, so `targets` is now just `{ bonds, equities }` and
+  every total/drift is computed over that pool only. VCT shares must be
+  held 5 years to keep their income-tax relief and trade on a much
+  thinner secondary market than an ISA/GIA fund, so a tool that casually
+  suggested trimming one would be actively bad advice — `bucketOf(kind)`
+  and an `eligiblePositions()` filter (both in `core/rebalancing.mjs`)
+  strip VCT-wrapper positions and anything outside the two buckets (cash-
+  classified instruments, unrecognised kinds) out of every function's
+  input and denominator, not just out of the target split, so the
+  percentages describe "of the money this tool can actually act on."
 - **Sell ranking is the actual tax-aware part**: sheltered-wrapper (ISA/
-  SIPP/LISA/VCT) and CGT-exempt-gilt holdings first (zero tax cost to
+  SIPP/LISA) and CGT-exempt-gilt holdings first (zero tax cost to
   sell, ever), then GIA holdings sitting at a loss or breakeven (banks a
   loss, costs nothing), then GIA gains ranked by SMALLEST gain fraction
   first — because Section 104 pooling means a partial disposal realises
   gain strictly pro-rata to the fraction of the pool sold, so the
   smallest-gain-fraction holdings raise the most cash per pound of CGT
   annual exempt amount (AEA) consumed. The AEA budget is shared across
-  every kind's sells together (a single portfolio-wide allowance, not one
+  both buckets' sells together (a single portfolio-wide allowance, not one
   per asset class) — same modelling choice as the existing Bed & ISA
   planner (`bedAndIsaPlan`, `core/allowances.mjs`).
-- **New "Rebalance" sub-tab** on the CGT section (alongside Summary /
-  Planning / Bed & ISA / Report / What-if): an editable target-%-by-kind
-  table showing current vs. target and the £ drift, an AEA budget control
-  (defaults to this year's computed headroom, overridable), a ranked sell
-  candidates table with each row's tax impact spelled out in words, and an
-  "underweight — where new money could go" table.
+- **"Rebalance" sub-tab** on the CGT section (alongside Summary /
+  Planning / Bed & ISA / Report / What-if): a two-row (Bonds/gilts,
+  Equities) editable target-% table showing current vs. target and the £
+  drift, an AEA budget control (defaults to this year's computed
+  headroom, overridable), a ranked sell candidates table with each row's
+  tax impact spelled out in words, and an "underweight — where new money
+  could go" table. The info banner states the VCT exclusion (and the £
+  amount excluded, if any) explicitly, so it's never a silent gap.
 - Unlike every other sub-tab here, this one is explicitly **whole-portfolio**
   (every wrapper), not GIA-only — rebalancing is a whole-portfolio question,
   and the entire point of the sell ranking is that a sheltered-wrapper sale
@@ -464,6 +501,32 @@ Closes out the three items left from Phase 1's original scope:
   follows the app's dark toggle; a "Sync from portfolio" button prefills the
   SIPP/ISA/GIA/LISA pots and salary from the live wealth model. recharts
   ships only in the Plan chunk — the main bundle is unchanged.
+
+  **Redesigned later to plug into the dashboard chrome, not sit inside it as
+  a separate app.** Originally the tab kept its own page title ("UK
+  Retirement Planner" + a byline), and its own Save/Load buttons exporting a
+  standalone `retirement-plan.json` — because its inputs (`p`, ~50 sliders/
+  toggles) lived in component-local state backed by a direct
+  `localStorage.setItem("uk-retirement-planner:inputs", ...)` call, entirely
+  outside the app's Zustand store. That meant plan inputs were invisible to
+  the IndexedDB durable mirror, the daily snapshot, and the app-wide JSON
+  backup/restore — the same data-loss class fixed for the Allowances tab's
+  overrides (see "ISA/LISA overrides" above) — and it's *why* the tab needed
+  its own Save/Load in the first place: it had no other way to round-trip.
+  Fixed the same way: inputs moved into the store as `planInputs`/
+  `setPlanInputs` (`state/appStore.js`, registered in `durable.js`'s
+  `PERSIST_KEYS`, folded into `exportJSON`/`importJSON`, backup version
+  7→8), with a one-time migration from the old localStorage key (which
+  happened to already be JSON-encoded the same way the store expects, so it
+  reads straight through). With inputs in the shared store, the tab no
+  longer needs its own Save/Load — the app-wide one already covers it — so
+  both buttons and the page title/byline were removed; the sidebar's "Plan"
+  label already identifies the tab, and repeating it inside was noise.
+  The assumptions panel also moved from a 330px-wide left sidebar (competing
+  with the app's own sidebar nav for the same edge of the screen) to a
+  collapsible strip above the main content, laid out as a wrapping card grid
+  rather than one long vertical column — same ~50 controls, same eleven
+  grouped sections, just horizontal instead of a second sidebar.
 - **Allowances tab** — one screen for the annual limits: ISA £20k (derived
   from ISA/LISA purchases, stated as an upper bound, manual override wins),
   LISA £4k, pension annual allowance with taper + 3-year carry-forward

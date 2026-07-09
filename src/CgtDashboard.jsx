@@ -42,7 +42,8 @@ export default function App() {
     prices, setPrices, avKey, setAvKey, avMeta, setAvMeta,
     priceMeta, setPriceMeta, secMeta, setSecMeta,
     properties, setProperties, mortgages, setMortgages, otherLiabilities, setOtherLiabilities,
-    cashAccounts, setCashAccounts,
+    cashAccounts, setCashAccounts, allowanceOverrides, setAllowanceOverrides,
+    planInputs, setPlanInputs,
   } = useAppStore();
   // Shared by the Pension tab (one-off add) and the Import tab (bulk CSV) —
   // one allocation function, not two copies that could drift. Accepts an
@@ -240,10 +241,11 @@ export default function App() {
 
   const exportJSON = async () => {
     const backup = {
-      __cgtBackup: true, version: 6, exportedAt: new Date().toISOString(),
+      __cgtBackup: true, version: 8, exportedAt: new Date().toISOString(),
       txns, incomeEntries, eriEntries, income, carried, cash, valuations,
       prices, priceMeta, avKey, avMeta, secMeta, pensionCashflows,
-      properties, mortgages, otherLiabilities, cashAccounts,
+      properties, mortgages, otherLiabilities, cashAccounts, allowanceOverrides,
+      planInputs,
     };
     const text = JSON.stringify(backup, null, 2);
     let downloaded = false;
@@ -289,7 +291,9 @@ export default function App() {
           if (Array.isArray(d.mortgages)) setMortgages(d.mortgages.map((x) => ({ ...x, id: x.id || uid() })));
           if (Array.isArray(d.otherLiabilities)) setOtherLiabilities(d.otherLiabilities.map((x) => ({ ...x, id: x.id || uid() })));
           if (Array.isArray(d.cashAccounts)) setCashAccounts(d.cashAccounts.map((x) => ({ ...x, id: x.id || uid() })));
-          flash(`Restored: ${n(d.txns)} transactions, ${n(d.incomeEntries)} dividend/interest entries, ${n(d.eriEntries)} ERI entries, ${n(d.pensionCashflows)} pension cashflows, ${n(d.properties)} properties, ${n(d.mortgages)} mortgages, ${n(d.cashAccounts)} cash accounts, plus prices and settings.`);
+          if (d.allowanceOverrides && typeof d.allowanceOverrides === "object") setAllowanceOverrides(d.allowanceOverrides);
+          if (d.planInputs && typeof d.planInputs === "object") setPlanInputs(d.planInputs);
+          flash(`Restored: ${n(d.txns)} transactions, ${n(d.incomeEntries)} dividend/interest entries, ${n(d.eriEntries)} ERI entries, ${n(d.pensionCashflows)} pension cashflows, ${n(d.properties)} properties, ${n(d.mortgages)} mortgages, ${n(d.cashAccounts)} cash accounts, plus prices, allowance overrides, retirement plan inputs and settings.`);
         } else {
           setError("That file isn't a recognised backup — expected a transaction array or a full backup file exported from this app.");
         }
@@ -347,8 +351,14 @@ export default function App() {
               </div>
               <div className="flex items-center gap-2">
                 {status && <span role="status" className="text-xs text-[var(--muted)] mr-1 max-w-[220px] text-right leading-tight">{status}</span>}
-                <IconBtn onClick={exportJSON} title="Full backup: transactions, dividends/interest, ERI, prices and settings (downloads a file; if you've set an Alpha Vantage key it's included in plain text). Also copies to clipboard as a fallback."><Download size={16} aria-hidden="true" /></IconBtn>
-                <IconBtn onClick={() => fileRef.current && fileRef.current.click()} title="Restore from a full backup file (or import a legacy transactions-only JSON)"><Upload size={16} aria-hidden="true" /></IconBtn>
+                <button onClick={exportJSON} title="Full backup: transactions, dividends/interest, ERI, prices and settings (downloads a file; if you've set an Alpha Vantage key it's included in plain text). Also copies to clipboard as a fallback."
+                  className="inline-flex items-center gap-1.5 text-sm font-medium px-3 h-9 rounded-lg border border-[var(--border)] bg-[var(--panel)] hover:bg-[var(--panel2)] text-[var(--fg)]">
+                  <Download size={16} aria-hidden="true" /> Save
+                </button>
+                <button onClick={() => fileRef.current && fileRef.current.click()} title="Restore from a full backup file (or import a legacy transactions-only JSON)"
+                  className="inline-flex items-center gap-1.5 text-sm font-medium px-3 h-9 rounded-lg border border-[var(--border)] bg-[var(--panel)] hover:bg-[var(--panel2)] text-[var(--fg)]">
+                  <Upload size={16} aria-hidden="true" /> Load
+                </button>
                 <input ref={fileRef} type="file" accept="application/json,.json" className="hidden" onChange={importJSON} aria-label="Choose backup file to restore" />
                 <IconBtn onClick={() => setDark((d) => !d)} title={dark ? "Switch to light theme" : "Switch to dark theme"}>{dark ? <Sun size={16} aria-hidden="true" /> : <Moon size={16} aria-hidden="true" />}</IconBtn>
               </div>
@@ -370,6 +380,7 @@ export default function App() {
               }} />}
               {tab === "plan" && <PlanTab {...{
                 dark,
+                planInputs, setPlanInputs,
                 // wrapper totals (holdings + cash) for one-click plan prefill
                 livePots: wealthModel ? Object.fromEntries(["SIPP", "ISA", "GIA", "LISA"].map((w) => [w, wealthModel.byWrapper[w]?.total ?? null])) : null,
                 liveSalary: income,
@@ -391,7 +402,7 @@ export default function App() {
                 positions: wealthModel ? wealthModel.positions : [],
                 yearlyLiab: allYears.results,
               }} />}
-              {tab === "allowances" && <AllowancesTab {...{ txns, pensionCashflows, incomeEntries, eriTxns, income, taxableDisposals }} />}
+              {tab === "allowances" && <AllowancesTab {...{ txns, pensionCashflows, incomeEntries, eriTxns, income, taxableDisposals, overrides: allowanceOverrides, setOverrides: setAllowanceOverrides }} />}
               {tab === "income" && <IncomeTab {...{ incomeEntries, setIncomeEntries, eriEntries, setEriEntries, eriTxns, incomeByYear, incomeAllWrappers, income, setIncome, txns: giaTxns, secMeta, setSecMeta, incomeCalendar }} />}
               {tab === "holdings" && <HoldingsTab {...{ positions: wealthModel ? wealthModel.positions : [], prices, setPrices, avKey, setAvKey, avMeta, setAvMeta, priceMeta, setPriceMeta, txns, secMeta, setSecMeta, dmoReportDate, setDmoReportDate }} />}
               {tab === "property" && <PropertyTab {...{ properties, setProperties, mortgages, setMortgages, otherLiabilities, setOtherLiabilities }} />}

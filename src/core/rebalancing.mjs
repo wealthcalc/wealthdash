@@ -3,18 +3,36 @@
 
    Takes the full, all-wrapper valued position list already computed by
    buildWealthModel() (core/portfolio.mjs — `wealthModel.positions`) plus a
-   user-set TARGET allocation by instrument kind ("assetClass" in
-   portfolio.mjs's terms: equity/fund/investment_trust/gilt/cash/bond_fund),
-   and works out:
-     1. the drift between current and target weight per kind (over/under),
+   user-set TARGET split between exactly two buckets — Bonds/gilts vs
+   Equities — and works out:
+     1. the drift between current and target weight in each bucket,
      2. WHICH SPECIFIC HOLDINGS to trim to close an overweight, ranked so the
         tax cost of doing so is minimised, and
-     3. which existing holdings could absorb new money for an underweight
-        kind (never invents a new fund to buy — this app has no basis to
+     3. which existing holdings could absorb new money for the underweight
+        bucket (never invents a new fund to buy — this app has no basis to
         recommend a specific product).
 
+   Deliberately just two buckets, not the finer equity/fund/investment_trust/
+   gilt/bond_fund split the Wealth tab's allocation view uses — rebalancing
+   is a bonds-vs-equities risk decision, not a "how many different fund
+   wrappers do I hold" question:
+     BOND bucket    — kind "gilt" or "bond_fund"
+     EQUITY bucket  — kind "equity", "fund", or "investment_trust"
+   Anything else (cash-classified instruments, unrecognised kinds) doesn't
+   fit either side of that decision and is excluded from every total here,
+   the same way VCTs are (see below) — silently forcing it into a bucket
+   would misrepresent both the percentages and the plan.
+
+   VCT holdings are EXCLUDED ENTIRELY, in every function below, regardless
+   of bucket — Venture Capital Trust shares must be held 5 years to keep
+   their income-tax relief (sell earlier and it's clawed back), and even
+   past that they're thin, illiquid secondary markets where a "just sell
+   some" suggestion is a much bigger ask than it is for an ISA/GIA ETF. A
+   rebalancing tool that casually suggested trimming a VCT would be
+   actively bad advice, so they never enter the candidate pool at all.
+
    Tax-aware ranking for sells (cheapest-to-sell first):
-     rank 0 — sheltered wrapper (ISA/SIPP/LISA/VCT) or CGT-exempt (individual
+     rank 0 — sheltered wrapper (ISA/SIPP/LISA) or CGT-exempt (individual
               gilts, TCGA 1992 s115): selling costs nothing in tax, ever.
      rank 1 — GIA holding sitting at a loss or breakeven: no CGT is due, and
               realising the loss is a genuine tax asset (banks a loss against
@@ -24,58 +42,81 @@
               means a partial disposal realises gain STRICTLY pro-rata to the
               fraction of the pool sold — so the smallest-gain-fraction
               holdings raise the most cash per pound of AEA consumed.
-   A single, portfolio-wide AEA budget (`aeaLeft`) is drawn down across ALL
-   kinds' sells together (CGT allowance isn't per asset class), same
+   A single, portfolio-wide AEA budget (`aeaLeft`) is drawn down across both
+   buckets' sells together (CGT allowance isn't per asset class), same
    modelling choice as bedAndIsaPlan() in core/allowances.mjs.
 
    Pure and React-free; runs under node --test (see rebalancing.test.mjs).
    ====================================================================== */
 
 const EPS = 1e-9;
-const SHELTERED = new Set(["ISA", "SIPP", "LISA", "VCT"]);
+const SHELTERED = new Set(["ISA", "SIPP", "LISA"]);
 const round2 = (x) => Math.round(x * 100) / 100;
 
-/* ---------------------------- allocation drift ---------------------------- */
-// `targets`: { [kind]: targetPercent }. Kinds not in `targets` are treated as
-// 0% target (fully overweight — flagged for trimming) rather than silently
-// ignored, since an un-targeted asset class is still real money that needs a
-// plan. `targetTotalPct` is returned so the caller can warn if targets don't
-// sum to ~100 (a user-input sanity check, not something this function can fix).
-export function allocationDrift({ positions = [], targets = {} } = {}) {
-  const byKind = new Map();
-  let total = 0;
+export const BOND_KINDS = new Set(["gilt", "bond_fund"]);
+export const EQUITY_KINDS = new Set(["equity", "fund", "investment_trust"]);
+export const BUCKETS = ["bonds", "equities"];
+export const BUCKET_LABEL = { bonds: "Bonds & gilts", equities: "Equities" };
+
+// kind -> "bonds" | "equities" | null (excluded from rebalancing entirely).
+export function bucketOf(kind) {
+  if (BOND_KINDS.has(kind)) return "bonds";
+  if (EQUITY_KINDS.has(kind)) return "equities";
+  return null;
+}
+
+// Positions eligible for rebalancing at all: priced, valued, not VCT-wrapped,
+// and classified into one of the two buckets. Every function below starts
+// from this same filtered list, so "excluded" behaves identically everywhere.
+function eligiblePositions(positions) {
+  const out = [];
   for (const p of positions) {
     if (!p || !p.priced || !(p.marketValue > 0)) continue;
-    const k = p.kind || "unknown";
-    byKind.set(k, (byKind.get(k) || 0) + p.marketValue);
-    total += p.marketValue;
+    if (String(p.wrapper).toUpperCase() === "VCT") continue;
+    const bucket = bucketOf(p.kind);
+    if (!bucket) continue;
+    out.push({ ...p, bucket });
   }
-  const kinds = new Set([...byKind.keys(), ...Object.keys(targets)]);
-  const rows = [...kinds].map((kind) => {
-    const currentValue = byKind.get(kind) || 0;
+  return out;
+}
+
+/* ---------------------------- allocation drift ---------------------------- */
+// `targets`: { bonds: targetPercent, equities: targetPercent }. Always
+// returns exactly two rows (bonds, equities), even at £0, so the UI has a
+// stable shape to render rather than a variable-length list. `total` is the
+// bonds+equities pool only — VCTs and anything outside the two buckets are
+// excluded from the denominator too, not just left out of the split, so the
+// percentages describe "of the money this tool can actually act on."
+export function allocationDrift({ positions = [], targets = {} } = {}) {
+  const eligible = eligiblePositions(positions);
+  const byBucket = { bonds: 0, equities: 0 };
+  let total = 0;
+  for (const p of eligible) { byBucket[p.bucket] += p.marketValue; total += p.marketValue; }
+
+  const rows = BUCKETS.map((bucket) => {
+    const currentValue = byBucket[bucket];
     const currentPct = total > EPS ? (currentValue / total) * 100 : 0;
-    const targetPct = Number.isFinite(+targets[kind]) ? +targets[kind] : 0;
+    const targetPct = Number.isFinite(+targets[bucket]) ? +targets[bucket] : 0;
     const targetValue = total > EPS ? (targetPct / 100) * total : 0;
     const driftValue = currentValue - targetValue; // positive = overweight, sell; negative = underweight, buy
     return {
-      kind, currentValue: round2(currentValue), currentPct, targetPct,
+      bucket, currentValue: round2(currentValue), currentPct, targetPct,
       targetValue: round2(targetValue), driftValue: round2(driftValue), driftPct: currentPct - targetPct,
     };
-  }).sort((a, b) => b.driftValue - a.driftValue);
-  const targetTotalPct = Object.values(targets).reduce((s, v) => s + (Number.isFinite(+v) ? +v : 0), 0);
+  });
+  const targetTotalPct = BUCKETS.reduce((s, b) => s + (Number.isFinite(+targets[b]) ? +targets[b] : 0), 0);
   return { total: round2(total), rows, targetTotalPct: round2(targetTotalPct), targetsSumTo100: Math.abs(targetTotalPct - 100) < 0.5 };
 }
 
 /* ------------------------------ sell suggestions --------------------------- */
 export function sellSuggestions({ positions = [], driftRows = [], aeaLeft = 0 } = {}) {
   const needed = new Map();
-  for (const r of driftRows) if (r.driftValue > EPS) needed.set(r.kind, r.driftValue);
+  for (const r of driftRows) if (r.driftValue > EPS) needed.set(r.bucket, r.driftValue);
   if (!needed.size) return { rows: [], aeaUsed: 0, aeaLeftAfter: round2(Math.max(0, aeaLeft)) };
 
   const candidates = [];
-  for (const p of positions) {
-    if (!p || !p.priced || !(p.marketValue > 0)) continue;
-    if (!needed.has(p.kind)) continue;
+  for (const p of eligiblePositions(positions)) {
+    if (!needed.has(p.bucket)) continue;
     const sheltered = SHELTERED.has(String(p.wrapper).toUpperCase()) || p.cgtExempt === true;
     const gainFrac = Number.isFinite(p.unrealisedPct) ? p.unrealisedPct : 0;
     const rank = sheltered ? 0 : (gainFrac <= 0 ? 1 : 2);
@@ -87,7 +128,7 @@ export function sellSuggestions({ positions = [], driftRows = [], aeaLeft = 0 } 
   let aeaUsed = 0;
   const rows = [];
   for (const c of candidates) {
-    const need = needed.get(c.kind);
+    const need = needed.get(c.bucket);
     if (!(need > EPS)) continue;
     const sellValue = Math.min(c.marketValue, need);
     // Section 104 pooling: a partial disposal realises gain strictly
@@ -109,30 +150,31 @@ export function sellSuggestions({ positions = [], driftRows = [], aeaLeft = 0 } 
     }
 
     rows.push({
-      wrapper: c.wrapper, ticker: c.ticker, kind: c.kind,
+      wrapper: c.wrapper, ticker: c.ticker, kind: c.kind, bucket: c.bucket,
       marketValue: round2(c.marketValue), sellValue: round2(sellValue),
       gainFrac: c.gainFrac, estGain: round2(gain), gainCoveredByAea: round2(gainCoveredByAea),
       wholePosition: sellValue >= c.marketValue - EPS,
       taxImpact,
     });
-    needed.set(c.kind, need - sellValue);
+    needed.set(c.bucket, need - sellValue);
   }
   return { rows, aeaUsed: round2(aeaUsed), aeaLeftAfter: round2(Math.max(0, aea)) };
 }
 
 /* ------------------------------- buy suggestions ---------------------------- */
 // Never invents a new fund — only surfaces existing holdings of the
-// underweight kind (if any) that new money could go into, sorted largest
+// underweight bucket (if any) that new money could go into, sorted largest
 // first (adding to an established position, not fragmenting further).
 export function buySuggestions({ positions = [], driftRows = [] } = {}) {
+  const eligible = eligiblePositions(positions);
   return driftRows
     .filter((r) => r.driftValue < -EPS)
     .map((r) => {
-      const existing = positions
-        .filter((p) => p && p.priced && p.kind === r.kind && p.marketValue > 0)
+      const existing = eligible
+        .filter((p) => p.bucket === r.bucket)
         .sort((a, b) => b.marketValue - a.marketValue)
         .map((p) => ({ wrapper: p.wrapper, ticker: p.ticker, marketValue: round2(p.marketValue) }));
-      return { kind: r.kind, amountNeeded: round2(-r.driftValue), existingHoldings: existing };
+      return { bucket: r.bucket, amountNeeded: round2(-r.driftValue), existingHoldings: existing };
     });
 }
 

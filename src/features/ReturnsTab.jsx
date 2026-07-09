@@ -214,11 +214,16 @@ function BenchmarkRiskView({ portfolioTWR, perHolding, secMeta, setSecMeta }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
-  const fetchBenchmark = async () => {
-    if (!symbol.trim() || !portfolioTWR?.from) return;
+  // Accepts an explicit symbol override so a suggestion button can set the
+  // symbol and fetch in the same click, without waiting on a state update /
+  // relying on a stale closure of `symbol`.
+  const fetchBenchmark = async (sym) => {
+    const s = (sym ?? symbol).trim();
+    if (!s || !portfolioTWR?.from) return;
+    setSymbol(s);
     setBusy(true); setErr(""); setBenchmarkData(null);
     try {
-      const r = await fetch(`/api/benchmark?symbol=${encodeURIComponent(symbol.trim())}&from=${encodeURIComponent(portfolioTWR.from)}&to=${encodeURIComponent(portfolioTWR.to)}`);
+      const r = await fetch(`/api/benchmark?symbol=${encodeURIComponent(s)}&from=${encodeURIComponent(portfolioTWR.from)}&to=${encodeURIComponent(portfolioTWR.to)}`);
       const body = await r.json();
       if (!r.ok) throw new Error(body.error || `HTTP ${r.status}`);
       setBenchmarkData(body);
@@ -269,15 +274,27 @@ function BenchmarkRiskView({ portfolioTWR, perHolding, secMeta, setSecMeta }) {
       {/* benchmark comparison */}
       <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 space-y-3">
         <div className="text-sm font-medium">Benchmark comparison</div>
-        <div className="flex items-end gap-2 flex-wrap">
-          <Field label="Benchmark ticker (Yahoo symbol)">
-            <input value={symbol} onChange={(e) => setSymbol(e.target.value.toUpperCase())} list="benchmark-suggestions" className="input w-40" placeholder="VWRL.L" />
-            <datalist id="benchmark-suggestions">{BENCHMARK_SUGGESTIONS.map(([s]) => <option key={s} value={s} />)}</datalist>
-          </Field>
-          <button onClick={fetchBenchmark} disabled={busy || !portfolioTWR?.from} className="btn-accent">{busy ? "Fetching…" : "Fetch"}</button>
-          {!portfolioTWR?.from && <span className="text-xs text-[var(--muted)]">Needs portfolio TWR (&gt;= 2 valuation snapshots) to know the comparison window.</span>}
+        <div className="space-y-2">
+          <div className="flex flex-wrap gap-1.5">
+            {BENCHMARK_SUGGESTIONS.map(([s, n]) => (
+              <button key={s} type="button" onClick={() => fetchBenchmark(s)} disabled={busy || !portfolioTWR?.from}
+                title={n}
+                className={"text-xs px-2.5 py-1 rounded-full border transition-colors disabled:opacity-50 disabled:cursor-not-allowed "
+                  + (symbol === s && benchmarkData?.symbol === s
+                    ? "border-[var(--accent)] bg-[color:color-mix(in_srgb,var(--accent)_14%,transparent)] text-[var(--accent)] font-medium"
+                    : "border-[var(--border)] bg-[var(--panel2)] hover:bg-[var(--chip)] text-[var(--fg)]")}>
+                {s} <span className="text-[var(--muted)]">— {n}</span>
+              </button>
+            ))}
+          </div>
+          <div className="flex items-end gap-2 flex-wrap">
+            <Field label="Or type your own (Yahoo symbol)">
+              <input value={symbol} onChange={(e) => setSymbol(e.target.value.toUpperCase())} className="input w-40" placeholder="e.g. ^GSPC" />
+            </Field>
+            <button onClick={() => fetchBenchmark()} disabled={busy || !portfolioTWR?.from || !symbol.trim()} className="btn-accent">{busy ? "Fetching…" : "Fetch"}</button>
+            {!portfolioTWR?.from && <span className="text-xs text-[var(--muted)]">Needs portfolio TWR (&gt;= 2 valuation snapshots) to know the comparison window.</span>}
+          </div>
         </div>
-        <p className="text-xs text-[var(--muted)]">Suggestions: {BENCHMARK_SUGGESTIONS.map(([s, n]) => `${s} (${n})`).join(" · ")} — or type any other Yahoo Finance symbol.</p>
         {err && <p className="text-xs text-[var(--loss)]">{err}</p>}
         {benchmarkData && (
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">

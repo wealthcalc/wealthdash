@@ -49,6 +49,27 @@ const useAppStore = create((set) => {
     // [{id, wrapper, label, institution, balance, rate, rateType, maturityDate, notes}]
     // — additive on top of `cash` (the manual/unallocated figure), see core/cash.mjs.
     cashAccounts: ls.get("cgt.cashaccounts", []), setCashAccounts: upd("cashAccounts"),
+    // { [taxYear]: { isaOnly, lisa, pension } } manual overrides for the Allowances
+    // tab. Previously lived entirely OUTSIDE this store (component-local state +
+    // its own localStorage write), which meant it was invisible to the IndexedDB
+    // durable mirror, the daily snapshot, AND the JSON backup/restore — a real
+    // data-loss bug (overrides silently missing after a restore, or after a
+    // localStorage eviction that everything else survived via the mirror). Falls
+    // back to the old mixed-case key once, for anyone with overrides saved there.
+    allowanceOverrides: ls.get("cgt.allowanceoverrides", ls.get("cgt.allowanceOverrides", {})),
+    setAllowanceOverrides: upd("allowanceOverrides"),
+    // UK retirement planner inputs (Plan tab). Previously lived entirely
+    // OUTSIDE this store — component-local state backed by its own
+    // `localStorage.setItem("uk-retirement-planner:inputs", JSON.stringify(p))`
+    // call, invisible to the IndexedDB durable mirror, the daily snapshot, and
+    // the JSON backup/restore — the same data-loss class fixed for
+    // allowanceOverrides above, and the reason the Plan tab had its own
+    // separate Save/Load buttons in the first place (it had no other way to
+    // round-trip through a backup). null = not yet customised — PlanTab falls
+    // back to its own DEFAULTS. The old key used the same JSON.stringify
+    // encoding `ls` uses, so it reads straight through as a one-time migration.
+    planInputs: ls.get("cgt.planinputs", ls.get("uk-retirement-planner:inputs", null)),
+    setPlanInputs: upd("planInputs"),
   };
 });
 

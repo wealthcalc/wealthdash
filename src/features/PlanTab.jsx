@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useCallback, useRef, useEffect } from "react";
+import React, { useMemo, useState, useCallback } from "react";
 import {
   ResponsiveContainer, ComposedChart, AreaChart, LineChart, BarChart,
   Area, Line, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
@@ -7,7 +7,7 @@ import {
 import {
   Settings2, TrendingUp, TrendingDown, ShieldAlert, Activity,
   Gauge, ChevronDown, ChevronUp, Info, RefreshCw, Building2, Coins, HeartPulse,
-  Download, Upload, Layers,
+  Layers,
 } from "lucide-react";
 
 /* ------------------------------------------------------------------ */
@@ -54,25 +54,16 @@ const themeVars = (obj) => Object.entries(obj).map(([k, v]) => `--t-${k}:${v};`)
 const THEME_CSS = `[data-theme="light"]{${themeVars(LIGHT)}}[data-theme="dark"]{${themeVars(DARK)}}`;
 
 /* ------------------------------------------------------------------ */
-/*  Local persistence (safe: no-ops if storage is unavailable)          */
+/*  Inputs are owned by the app's Zustand store (`planInputs`/            */
+/*  `setPlanInputs` props), not local state — this used to be a plain     */
+/*  `useState` backed by its own `localStorage.setItem(                   */
+/*  "uk-retirement-planner:inputs", ...)` call, invisible to the app's    */
+/*  IndexedDB durable mirror, daily snapshot, and JSON backup/restore,    */
+/*  the same data-loss class fixed for the Allowances tab's overrides.    */
+/*  It's also why this tab used to need its own Save/Load buttons: with   */
+/*  inputs living in the shared store, the app-wide Save/Load already     */
+/*  covers them, so this tab doesn't need its own.                        */
 /* ------------------------------------------------------------------ */
-const INPUT_KEY = "uk-retirement-planner:inputs";
-const store = {
-  get(key) {
-    try {
-      return typeof localStorage !== "undefined" ? localStorage.getItem(key) : null;
-    } catch {
-      return null;
-    }
-  },
-  set(key, val) {
-    try {
-      if (typeof localStorage !== "undefined") localStorage.setItem(key, val);
-    } catch {
-      /* storage blocked (e.g. sandboxed preview) — ignore */
-    }
-  },
-};
 const MONO = "ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace";
 const SANS = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Roboto, system-ui, sans-serif";
 const hdrBtn = {
@@ -1125,20 +1116,15 @@ const DEFAULTS = {
   healthy: true,
 };
 
-export default function PlanTab({ dark = true, livePots = null, liveSalary = null, liveOtherNetWorth = null }) {
-  const [p, setP] = useState(() => {
-    const saved = store.get(INPUT_KEY);
-    if (saved) {
-      try {
-        const obj = JSON.parse(saved);
-        if (obj && typeof obj === "object") return { ...DEFAULTS, ...obj };
-      } catch {
-        /* corrupt — fall back to defaults */
-      }
-    }
-    return DEFAULTS;
-  });
-  const set = useCallback((k, v) => setP((x) => ({ ...x, [k]: v })), []);
+export default function PlanTab({ dark = true, planInputs = null, setPlanInputs = null, livePots = null, liveSalary = null, liveOtherNetWorth = null }) {
+  // `planInputs` is null until the user changes something for the first
+  // time (nothing to persist yet) — DEFAULTS covers that first render.
+  // `setPlanInputs` may be omitted by a caller that hasn't wired the store
+  // prop through yet; guard so the tab still renders (read-only) rather than
+  // throwing, same defensive pattern as AllowancesTab's setOverrides.
+  const p = planInputs || DEFAULTS;
+  const set = useCallback((k, v) => setPlanInputs && setPlanInputs((x) => ({ ...(x || DEFAULTS), [k]: v })), [setPlanInputs]);
+  const setP = useCallback((updater) => setPlanInputs && setPlanInputs((x) => (typeof updater === "function" ? updater(x || DEFAULTS) : updater)), [setPlanInputs]);
 
   // Pull live wrapper totals (holdings + cash) from the wealth dashboard into
   // the plan inputs — one click instead of retyping pot values that the app
@@ -1156,12 +1142,7 @@ export default function PlanTab({ dark = true, livePots = null, liveSalary = nul
       // Property tab — static addendum to the estate, see otherNetWorthStart.
       ...(liveOtherNetWorth != null ? { otherNetWorthStart: Math.round(liveOtherNetWorth) } : {}),
     }));
-  }, [livePots, liveSalary, liveOtherNetWorth]);
-
-  // persist inputs locally so a refresh keeps them
-  useEffect(() => {
-    store.set(INPUT_KEY, JSON.stringify(p));
-  }, [p]);
+  }, [setP, livePots, liveSalary, liveOtherNetWorth]);
 
   // Theme follows the app shell (one toggle for the whole dashboard).
   const theme = dark ? "dark" : "light";
@@ -1175,38 +1156,6 @@ export default function PlanTab({ dark = true, livePots = null, liveSalary = nul
   const feeFree = useMemo(() => buildProjection({ ...p, fee: 0 }), [p]);
   const feeDrag = feeFree.wealthAtRetire - det.wealthAtRetire;
   const life = useMemo(() => lifeExpectancy(p.currentAge, p.sex, p.healthy), [p.currentAge, p.sex, p.healthy]);
-
-  const fileRef = useRef(null);
-  const saveInputs = useCallback(() => {
-    try {
-      const blob = new Blob([JSON.stringify(p, null, 2)], { type: "application/json" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = "retirement-plan.json";
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
-    } catch (e) {
-      /* download may be blocked in some sandboxes */
-    }
-  }, [p]);
-  const loadInputs = useCallback((e) => {
-    const f = e.target.files && e.target.files[0];
-    if (!f) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      try {
-        const obj = JSON.parse(reader.result);
-        if (obj && typeof obj === "object") setP((cur) => ({ ...cur, ...obj }));
-      } catch (err) {
-        /* ignore malformed files */
-      }
-    };
-    reader.readAsText(f);
-    e.target.value = "";
-  }, []);
 
   // accessibility / sanity: clamp retireAge
   const validRetire = p.retireAge > p.currentAge && p.retireAge >= p.accessAge - 0;
@@ -1262,53 +1211,33 @@ export default function PlanTab({ dark = true, livePots = null, liveSalary = nul
     >
       <style>{`
         ${THEME_CSS}
-        @media (max-width: 880px){ .rp-grid{ grid-template-columns: 1fr !important; } .rp-panel{ position: static !important; max-height: none !important; } }
         input[type=range]{ height: 4px; }
         .rp-tab:hover{ color:${T.ink} !important; }
         ::-webkit-scrollbar{ width:8px; height:8px;}
         ::-webkit-scrollbar-thumb{ background:${T.line}; border-radius:4px;}
+        .rp-assumptions-grid{ display:grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 4px 28px; }
       `}</style>
 
-      {/* Header */}
-      <header
+      {/* Slim controls bar — no page title/subheading here on purpose: the
+          sidebar's "Plan" tab already labels this, and the app-wide header
+          above already owns Save/Load, so this tab doesn't repeat either. */}
+      <div
+        className="rp-noprint"
         style={{
           borderBottom: `1px solid ${T.line}`,
           background: T.surface,
-          padding: "16px 22px",
+          padding: "10px 22px",
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
-          gap: 16,
+          gap: 12,
           flexWrap: "wrap",
         }}
       >
-        <div>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <div
-              style={{
-                width: 30,
-                height: 30,
-                borderRadius: 8,
-                background: T.ink,
-                color: T.paper,
-                display: "grid",
-                placeItems: "center",
-                fontFamily: MONO,
-                fontWeight: 700,
-                fontSize: 15,
-              }}
-            >
-              £
-            </div>
-            <h1 style={{ fontSize: 19, fontWeight: 700, margin: 0, letterSpacing: "-.01em" }}>
-              UK Retirement Planner
-            </h1>
-          </div>
-          <div style={{ fontSize: 12, color: T.muted, marginTop: 3, marginLeft: 40 }}>
-            Pre & post-retirement projections · 2025/26 tax rules · educational model, not advice
-          </div>
+        <div style={{ fontSize: 11.5, color: T.muted }}>
+          Pre &amp; post-retirement projections · 2025/26 tax rules · educational model, not advice
         </div>
-        <div className="rp-noprint" style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           <Segmented
             value={p.region}
             onChange={(v) => set("region", v)}
@@ -1317,13 +1246,6 @@ export default function PlanTab({ dark = true, livePots = null, liveSalary = nul
               { value: "scotland", label: "Scotland" },
             ]}
           />
-          <button onClick={saveInputs} style={hdrBtn}>
-            <Download size={14} /> Save
-          </button>
-          <button onClick={() => fileRef.current && fileRef.current.click()} style={hdrBtn}>
-            <Upload size={14} /> Load
-          </button>
-          <input ref={fileRef} type="file" accept="application/json,.json" style={{ display: "none" }} onChange={loadInputs} />
           {livePots && (
             <button onClick={syncFromPortfolio} style={hdrBtn}
               title="Copy current pot values from your live portfolio (SIPP / ISA / GIA / LISA wrapper totals incl. cash), salary, and property equity net of other liabilities (Property tab) into the plan inputs. If you've modelled a rental property below via Buy-to-let, check 'Other net worth' doesn't double-count it.">
@@ -1332,36 +1254,27 @@ export default function PlanTab({ dark = true, livePots = null, liveSalary = nul
           )}
           <button
             onClick={() => setPanelOpen((o) => !o)}
-            style={{ ...hdrBtn, background: T.ink, color: T.paper, border: "none" }}
+            style={{ ...hdrBtn, background: panelOpen ? T.ink : T.surface, color: panelOpen ? T.paper : T.ink }}
           >
-            <Settings2 size={14} /> Assumptions
+            <Settings2 size={14} /> Assumptions {panelOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
           </button>
         </div>
-      </header>
+      </div>
 
-      <div
-        className="rp-grid"
-        style={{
-          display: "grid",
-          gridTemplateColumns: panelOpen ? "330px 1fr" : "1fr",
-          gap: 0,
-          alignItems: "start",
-        }}
-      >
-        {/* ---- Assumptions panel ---- */}
-        {panelOpen && (
-          <aside
-            className="rp-panel"
-            style={{
-              position: "sticky",
-              top: 0,
-              maxHeight: "100vh",
-              overflowY: "auto",
-              borderRight: `1px solid ${T.line}`,
-              background: T.surface,
-              padding: "20px 18px 60px",
-            }}
-          >
+      {/* ---- Assumptions — a collapsible strip ABOVE the main content, laid
+          out as a wrapping card grid, not a side panel: the app already has
+          its own sidebar nav, so a second, narrower sidebar competing for
+          the same edge of the screen was the thing to remove. ---- */}
+      {panelOpen && (
+        <section
+          className="rp-panel"
+          style={{
+            borderBottom: `1px solid ${T.line}`,
+            background: T.surface,
+            padding: "18px 22px 8px",
+          }}
+        >
+          <div className="rp-assumptions-grid">
             <PanelSection title="You & timing">
               <Field label="Current age" value={p.currentAge} min={18} max={70} onChange={(v) => set("currentAge", v)} suffix="" />
               <Field label="Planned retirement age" value={p.retireAge} min={p.currentAge + 1} max={75} onChange={(v) => set("retireAge", v)}
@@ -1540,11 +1453,12 @@ export default function PlanTab({ dark = true, livePots = null, liveSalary = nul
                 </>
               )}
             </PanelSection>
-          </aside>
-        )}
+          </div>
+        </section>
+      )}
 
-        {/* ---- Main content ---- */}
-        <main style={{ padding: "20px 22px 60px", minWidth: 0 }}>
+      {/* ---- Main content ---- */}
+      <main style={{ padding: "20px 22px 60px", minWidth: 0 }}>
           {/* Tabs */}
           <div
             style={{
@@ -1731,8 +1645,7 @@ export default function PlanTab({ dark = true, livePots = null, liveSalary = nul
           {tab === "adequacy" && (
             <AdequacyTab p={p} mc={mc} running={mcRunning} runMC={runMC} det={det} life={life} set={set} />
           )}
-        </main>
-      </div>
+      </main>
     </div>
   );
 }

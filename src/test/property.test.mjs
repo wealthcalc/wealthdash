@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  estimatedPropertyValue, propertyEquity, netPropertyWorth,
+  estimatedPropertyValue, propertyEquity, netPropertyWorth, mortgageBalance,
   totalOtherLiabilities, mortgagesEndingSoon, householdNetWorth, regionLabel,
 } from "../core/property.mjs";
 
@@ -133,4 +133,92 @@ test("householdNetWorth: no property/debt at all is just the invested total", ()
 test("regionLabel: known slug resolves, unknown falls back to the slug itself", () => {
   assert.equal(regionLabel("london"), "London");
   assert.equal(regionLabel("nowhere"), "nowhere");
+});
+
+/* --------------------------- foreign currency ----------------------------- */
+
+test("estimatedPropertyValue: a GBP property (implicit or explicit) is unaffected — value is the native amount, fxConverted true", () => {
+  const p = { valuationMode: "manual", manualValue: 500000 };
+  const v = estimatedPropertyValue(p);
+  assert.equal(v.value, 500000);
+  assert.equal(v.nativeValue, 500000);
+  assert.equal(v.currency, "GBP");
+  assert.equal(v.fxConverted, true);
+  assert.equal(v.fxRate, 1);
+});
+
+test("estimatedPropertyValue: EUR property converts to GBP using the cached fxRate", () => {
+  const p = { currency: "EUR", valuationMode: "manual", manualValue: 400000, fxRate: 0.85, fxAsOf: "2026-07-01" };
+  const v = estimatedPropertyValue(p);
+  assert.equal(v.nativeValue, 400000);
+  assert.equal(v.currency, "EUR");
+  assert.equal(v.value, 340000); // 400000 * 0.85
+  assert.equal(v.fxConverted, true);
+  assert.equal(v.fxRate, 0.85);
+  assert.equal(v.fxAsOf, "2026-07-01");
+});
+
+test("estimatedPropertyValue: EUR property with no fxRate fetched yet is NOT treated as 1:1 GBP — excluded (£0), flagged fxConverted:false", () => {
+  const p = { currency: "EUR", valuationMode: "manual", manualValue: 400000 };
+  const v = estimatedPropertyValue(p);
+  assert.equal(v.nativeValue, 400000); // native amount preserved for display
+  assert.equal(v.value, 0);            // not counted in GBP totals until converted
+  assert.equal(v.fxConverted, false);
+  assert.equal(v.fxRate, null);
+});
+
+test("estimatedPropertyValue: HPI indexing never applies to a non-GBP property, even if valuationMode is 'hpi' — falls back to cost", () => {
+  const p = { currency: "EUR", valuationMode: "hpi", purchasePrice: 300000, hpi: { purchaseIndex: 100, latestIndex: 150 } };
+  const v = estimatedPropertyValue(p);
+  assert.equal(v.method, "cost");
+  assert.equal(v.nativeValue, 300000); // raw purchase price, not HPI-scaled
+});
+
+test("mortgageBalance: EUR mortgage converts via its own fxRate, independent of the property's currency", () => {
+  const m = { currency: "EUR", balance: 200000, fxRate: 0.85 };
+  const b = mortgageBalance(m);
+  assert.equal(b.nativeBalance, 200000);
+  assert.equal(b.balance, 170000);
+  assert.equal(b.fxConverted, true);
+});
+
+test("mortgageBalance: EUR mortgage with no fxRate yet contributes £0 and is flagged, not fabricated at 1:1", () => {
+  const m = { currency: "EUR", balance: 200000 };
+  const b = mortgageBalance(m);
+  assert.equal(b.balance, 0);
+  assert.equal(b.fxConverted, false);
+});
+
+test("propertyEquity: a EUR property with a converted-EUR mortgage nets correctly in GBP", () => {
+  const property = { id: "p1", currency: "EUR", valuationMode: "manual", manualValue: 400000, fxRate: 0.85 };
+  const mortgages = [{ id: "m1", propertyId: "p1", currency: "EUR", balance: 200000, fxRate: 0.85 }];
+  const eq = propertyEquity(property, mortgages);
+  assert.equal(eq.value, 340000);  // 400000 * 0.85
+  assert.equal(eq.debt, 170000);   // 200000 * 0.85
+  assert.equal(eq.equity, 170000);
+  assert.equal(eq.needsFxMortgages.length, 0);
+});
+
+test("propertyEquity: an unconverted mortgage is flagged in needsFxMortgages and excluded from debt (not fabricated)", () => {
+  const property = { id: "p1", valuationMode: "manual", manualValue: 500000 }; // GBP property
+  const mortgages = [{ id: "m1", propertyId: "p1", currency: "EUR", balance: 200000 }]; // no fxRate yet
+  const eq = propertyEquity(property, mortgages);
+  assert.equal(eq.debt, 0);
+  assert.deepEqual(eq.needsFxMortgages, ["m1"]);
+});
+
+test("netPropertyWorth: mixed GBP + EUR portfolio sums correctly and flags unconverted records via needsFx", () => {
+  const properties = [
+    { id: "p1", valuationMode: "manual", manualValue: 500000 },                                  // GBP
+    { id: "p2", currency: "EUR", valuationMode: "manual", manualValue: 400000, fxRate: 0.85 },    // EUR, converted
+    { id: "p3", currency: "EUR", valuationMode: "manual", manualValue: 200000 },                  // EUR, NOT converted yet
+  ];
+  const mortgages = [
+    { id: "m1", propertyId: "p1", balance: 200000 },
+    { id: "m2", propertyId: "p2", currency: "EUR", balance: 100000, fxRate: 0.85 },
+  ];
+  const out = netPropertyWorth(properties, mortgages);
+  assert.equal(out.value, 500000 + 340000 + 0); // p3 excluded until its rate is fetched
+  assert.equal(out.debt, 200000 + 85000);
+  assert.deepEqual(out.needsFx, ["p3"]);
 });

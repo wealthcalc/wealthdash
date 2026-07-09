@@ -5,7 +5,7 @@ import { aeaForYear, investmentIncomeTax } from "../core/uk-tax.mjs";
 import {
   ISA_LIMIT, LISA_LIMIT, isaSubscriptionsByYear, pensionAllowanceStatus, realisedForYear,
 } from "../core/allowances.mjs";
-import { store, gbp0, num, todayISO, CurrencyInput, Field } from "../ui/shared.jsx";
+import { gbp0, num, todayISO, CurrencyInput, Field } from "../ui/shared.jsx";
 
 /* ======================================================================
    ALLOWANCES HUB — one screen for the annual limits that actually drive
@@ -14,9 +14,15 @@ import { store, gbp0, num, todayISO, CurrencyInput, Field } from "../ui/shared.j
    and personal savings allowance. Everything is computed from the ledger
    where possible, with the caveats stated inline, and a manual override
    wherever the ledger can't know the truth.
-   ====================================================================== */
 
-const OVERRIDE_KEY = "cgt.allowanceOverrides"; // { [taxYear]: { isa, lisa, pension } }
+   `overrides`/`setOverrides` are lifted to the app store (see
+   state/appStore.js's `allowanceOverrides`) rather than owned locally —
+   they used to live in component state backed by their own ad-hoc
+   localStorage write, which meant they were invisible to the IndexedDB
+   durable mirror, the daily snapshot, AND the JSON backup/restore. A user
+   who saved a backup, restored it, or hit a localStorage eviction would
+   silently lose their override figures while everything else came back.
+   ====================================================================== */
 
 function Gauge({ label, used, limit, sub, warnOver = true }) {
   const pctUsed = limit > 0 ? Math.min(1, used / limit) : 0;
@@ -43,19 +49,24 @@ function Gauge({ label, used, limit, sub, warnOver = true }) {
 
 export default function AllowancesTab({
   txns = [], pensionCashflows = [], incomeEntries = [], eriTxns = [],
-  income = 0, taxableDisposals = [],
+  income = 0, taxableDisposals = [], overrides = {}, setOverrides,
 }) {
   const year = ukTaxYear(todayISO());
-  const [overrides, setOverrides] = React.useState(() => store.get(OVERRIDE_KEY, {}));
-  React.useEffect(() => store.set(OVERRIDE_KEY, overrides), [overrides]);
   const ov = overrides[year] || {};
-  const setOv = (k, v) => setOverrides((o) => ({ ...o, [year]: { ...(o[year] || {}), [k]: v } }));
+  const setOv = (k, v) => setOverrides && setOverrides((o) => ({ ...o, [year]: { ...(o[year] || {}), [k]: v } }));
 
-  // --- ISA / LISA ---
+  // --- ISA / LISA — a SINGLE combined £20,000 allowance; LISA subscriptions
+  // count inside it, they don't sit alongside it. Overriding either figure
+  // must feed the same combined total, so the two overrides are kept
+  // separate (ISA-only, LISA-only) and summed for the combined check —
+  // previously the "isa" override was treated as if it already included
+  // LISA, so overriding LISA alone left the combined figure stale (the
+  // actual bug behind "limits should be looked at across").
   const isaByYear = useMemo(() => isaSubscriptionsByYear(txns), [txns]);
   const computedIsa = isaByYear[year] || { ISA: 0, LISA: 0, total: 0 };
-  const isaUsed = ov.isa != null ? +ov.isa : computedIsa.total;
+  const isaOnlyUsed = ov.isaOnly != null ? +ov.isaOnly : computedIsa.ISA;
   const lisaUsed = ov.lisa != null ? +ov.lisa : computedIsa.LISA;
+  const combinedIsaUsed = isaOnlyUsed + lisaUsed;
 
   // --- pension AA ---
   const pension = useMemo(
@@ -103,10 +114,10 @@ export default function AllowancesTab({
       </div>
 
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
-        <Gauge label="ISA subscriptions" used={isaUsed} limit={ISA_LIMIT}
-          sub={<>Derived from ISA/LISA purchases this tax year ({gbp0(computedIsa.total)}) — an upper bound, since purchases funded by sales inside the ISA aren't new subscriptions. Override below if you know the true figure. LISA payments count within the £20,000.</>} />
-        <Gauge label="LISA (within ISA limit)" used={lisaUsed} limit={LISA_LIMIT}
-          sub={<>25% government bonus on contributions until age 50; the {gbp0(LISA_LIMIT)} cap sits inside the overall ISA allowance.</>} />
+        <Gauge label="ISA + LISA combined" used={combinedIsaUsed} limit={ISA_LIMIT}
+          sub={<>ISA-only {gbp0(isaOnlyUsed)} + LISA {gbp0(lisaUsed)} = {gbp0(combinedIsaUsed)} of the single {gbp0(ISA_LIMIT)} allowance — LISA doesn't sit alongside it, it's carved out of it. Derived from ISA/LISA purchases this tax year — an upper bound, since purchases funded by sales inside the ISA aren't new subscriptions. Override either figure below if you know the true numbers.</>} />
+        <Gauge label="LISA (within the combined limit)" used={lisaUsed} limit={LISA_LIMIT}
+          sub={<>25% government bonus on contributions until age 50; the {gbp0(LISA_LIMIT)} cap sits inside the combined {gbp0(ISA_LIMIT)} allowance above, not alongside it.</>} />
         <Gauge label={`Pension annual allowance${pension.tapered ? " (tapered)" : ""}`} used={pensionUsed} limit={pension.aa} warnOver={false}
           sub={<>
             From recorded contributions ({gbp0(pension.used)}). Taper tested against the app's income figure ({gbp0(income)}) as a proxy for <em>adjusted</em> income — add employer contributions to that figure mentally, or override below.
@@ -159,8 +170,8 @@ export default function AllowancesTab({
       <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4">
         <div className="text-sm font-semibold mb-2">Overrides (where the ledger can&apos;t know)</div>
         <div className="flex flex-wrap gap-4">
-          <Field label={`ISA subscribed ${year} (blank = computed ${gbp0(computedIsa.total)})`}>
-            <CurrencyInput value={ov.isa ?? computedIsa.total} onChange={(v) => setOv("isa", v)} />
+          <Field label={`ISA-only subscribed ${year} (blank = computed ${gbp0(computedIsa.ISA)})`}>
+            <CurrencyInput value={ov.isaOnly ?? computedIsa.ISA} onChange={(v) => setOv("isaOnly", v)} />
           </Field>
           <Field label={`LISA paid in ${year} (blank = computed ${gbp0(computedIsa.LISA)})`}>
             <CurrencyInput value={ov.lisa ?? computedIsa.LISA} onChange={(v) => setOv("lisa", v)} />
@@ -168,7 +179,7 @@ export default function AllowancesTab({
           <Field label={`Pension input ${year} incl. employer (blank = recorded ${gbp0(pension.used)})`}>
             <CurrencyInput value={ov.pension ?? pension.used} onChange={(v) => setOv("pension", v)} />
           </Field>
-          {(ov.isa != null || ov.lisa != null || ov.pension != null) && (
+          {(ov.isaOnly != null || ov.lisa != null || ov.pension != null) && setOverrides && (
             <button className="btn-accent self-end" onClick={() => setOverrides((o) => ({ ...o, [year]: {} }))}>
               <Check size={14} /> Reset to computed
             </button>

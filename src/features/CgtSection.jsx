@@ -3,7 +3,7 @@ import { AlertCircle, Download, Wand2, FlaskConical, Check, Printer, Info, Scale
 import { ukTaxYear } from "../core/cgt-engine.mjs";
 import { cfgFor, aeaForYear, paFor, liabilityForYear, sharesForTargetGain, nextTaxYear, optimiseDisposals } from "../core/uk-tax.mjs";
 import { ISA_LIMIT, isaSubscriptionsByYear, realisedForYear, bedAndIsaPlan } from "../core/allowances.mjs";
-import { rebalancePlan } from "../core/rebalancing.mjs";
+import { rebalancePlan, BUCKETS, BUCKET_LABEL } from "../core/rebalancing.mjs";
 import { KIND_LABEL, store, fmtRate, gbp, gbp0, WrapperChip, SubTabs, num, uid, todayISO, METHOD, CurrencyInput, NumberInput, Field, Stat, Row, MethodChip, Empty } from "../ui/shared.jsx";
 
 function CgtSection(props) {
@@ -29,11 +29,12 @@ function CgtSection(props) {
 }
 
 /* --------------------------- Rebalance tool --------------------------- */
-// Phase 2, step 6. Target allocation by instrument kind, drift vs. today's
-// full (all-wrapper) portfolio, and specific sell candidates ranked by tax
-// cost — see core/rebalancing.mjs for the ranking rationale. Targets are
-// persisted per-browser (not part of the ledger/backup — they're a live
-// planning input, not portfolio data).
+// Phase 2, step 6 (redesigned: two-bucket bonds/gilts vs equities, VCTs
+// excluded entirely — see core/rebalancing.mjs header for the full
+// rationale). Target allocation is just the bonds/equities split, drift vs.
+// today's full (all-wrapper, ex-VCT) portfolio, and specific sell candidates
+// ranked by tax cost. Targets are persisted per-browser (not part of the
+// ledger/backup — they're a live planning input, not portfolio data).
 const TARGETS_KEY = "cgt.rebalance.targets";
 
 function RebalanceTab({ positions = [], disposals = [], income = 0 }) {
@@ -45,16 +46,7 @@ function RebalanceTab({ positions = [], disposals = [], income = 0 }) {
 
   const [targets, setTargets] = useState(() => store.get(TARGETS_KEY, {}));
   React.useEffect(() => store.set(TARGETS_KEY, targets), [targets]);
-
-  // Every kind currently held, plus any kind the user has already given a
-  // target for (so removing the last holding of a kind doesn't silently
-  // drop its target row).
-  const kinds = useMemo(() => {
-    const s = new Set(Object.keys(targets));
-    for (const p of positions) if (p.priced && p.marketValue > 0) s.add(p.kind || "unknown");
-    return [...s].sort();
-  }, [positions, targets]);
-  const setTarget = (kind, v) => setTargets((t) => ({ ...t, [kind]: v === "" ? undefined : +v }));
+  const setTarget = (bucket, v) => setTargets((t) => ({ ...t, [bucket]: v === "" ? undefined : +v }));
 
   const plan = useMemo(() => rebalancePlan({ positions, targets, aeaLeft: effAea }), [positions, targets, effAea]);
 
@@ -62,35 +54,39 @@ function RebalanceTab({ positions = [], disposals = [], income = 0 }) {
   const rate = cfg.rates[cfg.rates.length - 1];
   const marginal = Math.max(0, income - paFor(cfg.pa, income)) > cfg.basicLimit ? rate.higher : rate.basic;
 
-  if (!positions.some((p) => p.priced && p.marketValue > 0)) {
-    return <Empty msg="No priced holdings yet — rebalancing needs the Wealth tab's live prices for at least one position." />;
+  const vctExcludedValue = useMemo(() => positions
+    .filter((p) => p.priced && p.marketValue > 0 && String(p.wrapper).toUpperCase() === "VCT")
+    .reduce((s, p) => s + p.marketValue, 0), [positions]);
+
+  if (!plan.total) {
+    return <Empty msg="No priced bond/gilt or equity holdings yet — rebalancing needs the Wealth tab's live prices for at least one eligible position (VCTs, cash and unclassified holdings aren't part of this bonds-vs-equities decision)." />;
   }
 
   return (
     <div className="space-y-5">
       <div className="flex items-start gap-2 text-xs rounded-lg px-3 py-2 border border-[var(--border)] bg-[var(--panel2)] text-[var(--muted)]">
         <Info size={14} className="mt-0.5 shrink-0 text-[var(--m-bb)]" />
-        <span>Spans every wrapper (ISA/SIPP/LISA/VCT/GIA), unlike the rest of this tab — rebalancing is a whole-portfolio question, and selling in a sheltered wrapper costs nothing in tax, which is exactly the point of ranking sells the way this does.</span>
+        <span>Spans every wrapper (ISA/SIPP/LISA/GIA), unlike the rest of this tab — rebalancing is a whole-portfolio question, and selling in a sheltered wrapper costs nothing in tax, which is exactly the point of ranking sells the way this does. This is purely a bonds/gilts vs equities decision — VCT holdings are excluded entirely (5-year minimum hold to keep income-tax relief, and a much thinner market to sell in), so they never appear as sell or buy candidates{vctExcludedValue > 0 && <> — currently {gbp0(vctExcludedValue)} of VCT holdings are excluded</>}.</span>
       </div>
 
       <div>
-        <h3 className="text-sm font-semibold mb-2">Target allocation, by instrument kind</h3>
+        <h3 className="text-sm font-semibold mb-2">Target split — bonds/gilts vs equities</h3>
         <div className="rounded-xl border border-[var(--border)] overflow-hidden">
           <table className="w-full text-sm">
             <thead className="bg-[var(--panel2)] text-[var(--muted)] text-xs uppercase tracking-wide">
-              <tr>{["Kind", "Current", "Target %", "Drift"].map((h, i) => (
+              <tr>{["Bucket", "Current", "Target %", "Drift"].map((h, i) => (
                 <th key={i} className={"px-3 py-2 font-medium " + (i === 0 ? "text-left" : "text-right")}>{h}</th>
               ))}</tr>
             </thead>
             <tbody className="divide-y divide-[var(--border)] bg-[var(--panel)]">
-              {kinds.map((kind) => {
-                const row = plan.rows.find((r) => r.kind === kind) || { currentPct: 0, currentValue: 0, driftValue: 0 };
+              {BUCKETS.map((bucket) => {
+                const row = plan.rows.find((r) => r.bucket === bucket) || { currentPct: 0, currentValue: 0, driftValue: 0 };
                 return (
-                  <tr key={kind}>
-                    <td className="px-3 py-2 font-medium">{KIND_LABEL?.[kind] || kind}</td>
+                  <tr key={bucket}>
+                    <td className="px-3 py-2 font-medium">{BUCKET_LABEL[bucket]}</td>
                     <td className="px-3 py-2 num text-right text-[var(--muted)]">{gbp0(row.currentValue)} ({row.currentPct.toFixed(1)}%)</td>
                     <td className="px-3 py-2 text-right">
-                      <input type="number" min="0" max="100" step="1" value={targets[kind] ?? ""} onChange={(e) => setTarget(kind, e.target.value)}
+                      <input type="number" min="0" max="100" step="1" value={targets[bucket] ?? ""} onChange={(e) => setTarget(bucket, e.target.value)}
                         className="input num w-20 text-right" placeholder="0" />
                     </td>
                     <td className={"px-3 py-2 num text-right font-medium " + (row.driftValue > 0.5 ? "text-[var(--loss)]" : row.driftValue < -0.5 ? "text-[var(--gain)]" : "text-[var(--muted)]")}>
@@ -150,19 +146,19 @@ function RebalanceTab({ positions = [], disposals = [], income = 0 }) {
           <div className="rounded-xl border border-[var(--border)] overflow-hidden">
             <table className="w-full text-sm">
               <thead className="bg-[var(--panel2)] text-[var(--muted)] text-xs uppercase tracking-wide">
-                <tr>{["Kind", "Amount needed", "Existing holdings you could add to"].map((h, i) => (
+                <tr>{["Bucket", "Amount needed", "Existing holdings you could add to"].map((h, i) => (
                   <th key={i} className={"px-3 py-2 font-medium " + (i === 1 ? "text-right" : "text-left")}>{h}</th>
                 ))}</tr>
               </thead>
               <tbody className="divide-y divide-[var(--border)] bg-[var(--panel)]">
                 {plan.buys.map((b) => (
-                  <tr key={b.kind}>
-                    <td className="px-3 py-2 font-medium">{KIND_LABEL?.[b.kind] || b.kind}</td>
+                  <tr key={b.bucket}>
+                    <td className="px-3 py-2 font-medium">{BUCKET_LABEL[b.bucket]}</td>
                     <td className="px-3 py-2 num text-right text-[var(--gain)]">{gbp(b.amountNeeded)}</td>
                     <td className="px-3 py-2 text-xs text-[var(--muted)]">
                       {b.existingHoldings.length
                         ? b.existingHoldings.map((h) => `${h.ticker} (${h.wrapper}, ${gbp0(h.marketValue)})`).join(", ")
-                        : "no existing holding of this kind — this app won't recommend a specific new fund; pick one that fits your own criteria"}
+                        : "no existing holding in this bucket — this app won't recommend a specific new fund; pick one that fits your own criteria"}
                     </td>
                   </tr>
                 ))}

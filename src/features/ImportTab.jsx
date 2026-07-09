@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useCallback, useRef } from "react";
 import Papa from "papaparse";
-import { Upload, Wand2, RefreshCw, FileUp, AlertTriangle } from "lucide-react";
+import { Upload, Wand2, RefreshCw, FileUp, AlertTriangle, Copy, Check } from "lucide-react";
 import { WRAPPERS, normWrapper } from "../core/portfolio.mjs";
 import { guessPensionColumns, mapPensionRow } from "../core/pension-import.mjs";
 import { parseIBKR } from "../core/ibkr-import.mjs";
@@ -9,6 +9,37 @@ import { gbp, num, uid, todayISO, fxHistorical, Field, Empty, SubTabs, round2, d
 
 const FIELDS = ["date", "ticker", "side", "quantity", "nativeCurrency", "nativeAmount", "fxRate", "gbpAmount"];
 const FIELDS_DIV = ["date", "ticker", "kind", "nativeCurrency", "nativeAmount", "fxRate", "gbpAmount"];
+
+// Example CSV shown as each textarea's placeholder AND offered via a "Copy
+// example format" button next to it — one canonical string per import
+// shape, so the button can never drift out of sync with what the user
+// actually sees typed in grey.
+const IBKR_EXAMPLE = "Symbol,ISIN,TradeDate,Buy/Sell,Quantity,TradePrice,Proceeds,IBCommission,CurrencyPrimary,FXRateToBase,AssetClass\nAAPL,US0378331005,20240115,BUY,10,180,-1800,-1,USD,0.79,STK";
+const GENERIC_EXAMPLE = "Date,Symbol,Action,Quantity,Currency,Amount,FXRate\n2025-06-02,WFC,SELL,200,USD,18718,0.78";
+const DIV_EXAMPLE = "Date,Symbol,Type,Currency,Amount\n2025-06-15,CSP1,Dividend,USD,42.10\n2025-07-01,,Interest,GBP,15.00";
+const PENSION_EXAMPLE = "Date,Symbol,Type,Currency,Amount\n2023-01-06,Pension,Employer Contribution,GBP,600.00\n2023-02-06,Pension,Employer Contribution,GBP,600.00";
+
+// Copies a canonical example CSV to the clipboard so a user can paste it
+// into their own spreadsheet/export as a template, without retyping the
+// placeholder text shown (greyed out, unselectable as real content) in the
+// textarea above it. Fails silently if the Clipboard API is blocked
+// (e.g. an insecure context) — the placeholder text is still visible either way.
+function CopyExampleButton({ text }) {
+  const [copied, setCopied] = useState(false);
+  const doCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch { /* clipboard blocked — button just won't confirm */ }
+  };
+  return (
+    <button type="button" onClick={doCopy} title="Copy this example CSV to your clipboard"
+      className="text-xs text-[var(--accent)] hover:underline inline-flex items-center gap-1">
+      {copied ? <><Check size={12} /> Copied!</> : <><Copy size={12} /> Copy example format</>}
+    </button>
+  );
+}
 
 // Duplicate-detection keys, one per data shape this tab can import into.
 // Deliberately loose on precision (rounded to the penny) since a re-export
@@ -244,10 +275,11 @@ function ImportTab({ setTxns, setTab, setIncomeEntries, setEriEntries, secMeta, 
         <>
           <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 space-y-3">
             <p className="text-sm text-[var(--muted)]">Paste (or upload) an IBKR <strong>Flex Query</strong> CSV or an <strong>Activity Statement</strong> CSV. Trades and dividends/interest are both picked up. A Flex query carries an FX-to-base rate, so GBP conversion is automatic; Activity exports lack it, so non-GBP rows are converted by trade-date FX on import. {wrapper !== "GIA" && <span className="text-[var(--fg)]">Note: {wrapper} is tax-sheltered, so these rows won't affect CGT or income tax.</span>}</p>
-            <textarea value={raw} onChange={(e) => setRaw(e.target.value)} rows={7} placeholder={"Symbol,ISIN,TradeDate,Buy/Sell,Quantity,TradePrice,Proceeds,IBCommission,CurrencyPrimary,FXRateToBase,AssetClass\nAAPL,US0378331005,20240115,BUY,10,180,-1800,-1,USD,0.79,STK"} className="input num w-full font-mono text-xs" />
+            <textarea value={raw} onChange={(e) => setRaw(e.target.value)} rows={7} placeholder={IBKR_EXAMPLE} className="input num w-full font-mono text-xs" />
             <div className="flex items-center gap-2">
               <button onClick={() => parseIb()} className="btn-accent"><Wand2 size={15} /> Parse</button>
               <label className="text-sm text-[var(--accent)] cursor-pointer flex items-center gap-1"><Upload size={14} /> Upload CSV<input type="file" accept=".csv,text/csv" className="hidden" onChange={(e) => readFile(e, (txt) => { setRaw(txt); parseIb(txt); })} /></label>
+              <CopyExampleButton text={IBKR_EXAMPLE} />
             </div>
           </div>
 
@@ -293,8 +325,11 @@ function ImportTab({ setTxns, setTab, setIncomeEntries, setEriEntries, secMeta, 
         <>
           <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 space-y-3">
             <p className="text-sm text-[var(--muted)]">Paste a CSV from any broker. Columns are auto-mapped — adjust below if needed. Rows import into <strong>{wrapper}</strong>.</p>
-            <textarea value={raw} onChange={(e) => setRaw(e.target.value)} rows={7} placeholder={"Date,Symbol,Action,Quantity,Currency,Amount,FXRate\n2025-06-02,WFC,SELL,200,USD,18718,0.78"} className="input num w-full font-mono text-xs" />
-            <button onClick={parse} className="btn-accent"><Wand2 size={15} /> Parse & map</button>
+            <textarea value={raw} onChange={(e) => setRaw(e.target.value)} rows={7} placeholder={GENERIC_EXAMPLE} className="input num w-full font-mono text-xs" />
+            <div className="flex items-center gap-2">
+              <button onClick={parse} className="btn-accent"><Wand2 size={15} /> Parse & map</button>
+              <CopyExampleButton text={GENERIC_EXAMPLE} />
+            </div>
           </div>
           {parsed && (
             <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 space-y-3">
@@ -337,8 +372,11 @@ function ImportTab({ setTxns, setTab, setIncomeEntries, setEriEntries, secMeta, 
             <p className="text-sm text-[var(--muted)]">
               Paste a dividend/interest CSV from any broker (a tax certificate export, consolidated statement, etc). Columns are auto-mapped — adjust below if needed. Rows import into <strong>{wrapper}</strong> as income entries (same as adding them by hand on the Income tab), amounts net of any withholding tax already deducted at source.
             </p>
-            <textarea value={rawDiv} onChange={(e) => setRawDiv(e.target.value)} rows={7} placeholder={"Date,Symbol,Type,Currency,Amount\n2025-06-15,CSP1,Dividend,USD,42.10\n2025-07-01,,Interest,GBP,15.00"} className="input num w-full font-mono text-xs" />
-            <button onClick={parseDiv} className="btn-accent"><Wand2 size={15} /> Parse & map</button>
+            <textarea value={rawDiv} onChange={(e) => setRawDiv(e.target.value)} rows={7} placeholder={DIV_EXAMPLE} className="input num w-full font-mono text-xs" />
+            <div className="flex items-center gap-2">
+              <button onClick={parseDiv} className="btn-accent"><Wand2 size={15} /> Parse & map</button>
+              <CopyExampleButton text={DIV_EXAMPLE} />
+            </div>
           </div>
           {parsedDiv && (
             <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 space-y-3">
@@ -384,8 +422,11 @@ function ImportTab({ setTxns, setTab, setIncomeEntries, setEriEntries, secMeta, 
               <input list="import-pension-providers" value={pensionProvider} onChange={(e) => setPensionProvider(e.target.value)} className="input w-56" placeholder="e.g. L&G (Citi)" />
               <datalist id="import-pension-providers">{existingProviders.map((p) => <option key={p} value={p} />)}</datalist>
             </Field>
-            <textarea value={rawPension} onChange={(e) => setRawPension(e.target.value)} rows={7} placeholder={"Date,Symbol,Type,Currency,Amount\n2023-01-06,Pension,Employer Contribution,GBP,600.00\n2023-02-06,Pension,Employer Contribution,GBP,600.00"} className="input num w-full font-mono text-xs" />
-            <button onClick={parsePension} className="btn-accent"><Wand2 size={15} /> Parse & map</button>
+            <textarea value={rawPension} onChange={(e) => setRawPension(e.target.value)} rows={7} placeholder={PENSION_EXAMPLE} className="input num w-full font-mono text-xs" />
+            <div className="flex items-center gap-2">
+              <button onClick={parsePension} className="btn-accent"><Wand2 size={15} /> Parse & map</button>
+              <CopyExampleButton text={PENSION_EXAMPLE} />
+            </div>
           </div>
           {parsedPension && (
             <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 space-y-3">
