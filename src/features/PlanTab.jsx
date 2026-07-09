@@ -4,6 +4,7 @@ import {
   Area, Line, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
   ReferenceLine, ReferenceArea,
 } from "recharts";
+import { useMonteCarloWorker } from "../ui/useMonteCarloWorker.js";
 import {
   Settings2, TrendingUp, TrendingDown, ShieldAlert, Activity,
   Gauge, ChevronDown, ChevronUp, Info, RefreshCw, Building2, Coins, HeartPulse,
@@ -731,71 +732,22 @@ function buildProjection(p) {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Monte Carlo (returns randomised; spending plan fixed)              */
+/*  Monte Carlo (returns randomised; spending plan fixed) — the actual    */
+/*  simulation loop now lives in core/monte-carlo.mjs (pure, node-tested, */
+/*  and importable from the Web Worker in workers/monteCarloWorker.js so */
+/*  it runs off the main thread — see useMonteCarloWorker()). This just  */
+/*  flattens this tab's `p`/`det` shapes into that module's plain input  */
+/*  interface, the same adapter role applyScenario()/buildProjection()   */
+/*  already play for the scenario table above.                           */
 /* ------------------------------------------------------------------ */
-function randn() {
-  let u = 0,
-    v = 0;
-  while (u === 0) u = Math.random();
-  while (v === 0) v = Math.random();
-  return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
-}
-
-function runMonteCarlo(p, det, runs = 600) {
-  const accumYears = det.accumYears;
-  const decYears = det.withdrawSchedule.length;
-  const totalYears = accumYears + decYears;
-  const volPre = p.vol / 100;
-  const volPost = (p.vol * 0.7) / 100; // assume slightly tamer in drawdown
-  const muPre = (p.growthPre - p.fee) / 100;
-  const muPost = (p.growthPost - p.fee) / 100;
-  const infl = effInflation(p) / 100;
-
-  let successes = 0;
-  const cols = Array.from({ length: totalYears }, () => []);
-  let potAtRetireDist = [];
-
-  for (let r = 0; r < runs; r++) {
-    let pot = det.startWealth; // total investable wealth (pension + ISA)
-    let survived = true;
-    for (let y = 0; y < totalYears; y++) {
-      const real = pot / Math.pow(1 + infl, y);
-      cols[y].push(real);
-      if (y < accumYears) {
-        const ret = muPre + volPre * randn();
-        pot = pot * (1 + ret) + det.wealthContribSchedule[y];
-        if (y === accumYears - 1) potAtRetireDist.push(pot);
-      } else {
-        const di = y - accumYears;
-        const ret = muPost + volPost * randn();
-        pot = (pot - det.withdrawSchedule[di]) * (1 + ret);
-        if (pot <= 0 && det.withdrawSchedule[di] > 0) {
-          survived = false;
-        }
-      }
-    }
-    if (survived && pot >= 0) successes++;
-  }
-
-  const pctl = (arr, q) => {
-    const s = [...arr].sort((a, b) => a - b);
-    const idx = Math.min(s.length - 1, Math.max(0, Math.floor(q * (s.length - 1))));
-    return s[idx];
-  };
-  const fan = cols.map((c, i) => ({
-    age: p.currentAge + i,
-    p10: Math.max(0, pctl(c, 0.1)),
-    p50: Math.max(0, pctl(c, 0.5)),
-    p90: Math.max(0, pctl(c, 0.9)),
-  }));
-  potAtRetireDist.sort((a, b) => a - b);
+function mcInputsFromPlan(p, det) {
   return {
-    successRate: successes / runs,
-    fan,
-    medianRetire: pctl(potAtRetireDist, 0.5),
-    p10Retire: pctl(potAtRetireDist, 0.1),
-    p90Retire: pctl(potAtRetireDist, 0.9),
-    runs,
+    startWealth: det.startWealth, // total investable wealth (pension + ISA)
+    accumYears: det.accumYears,
+    wealthContribSchedule: det.wealthContribSchedule,
+    withdrawSchedule: det.withdrawSchedule,
+    growthPre: p.growthPre, growthPost: p.growthPost, fee: p.fee, vol: p.vol,
+    inflation: effInflation(p), currentAge: p.currentAge,
   };
 }
 
@@ -1150,7 +1102,11 @@ export default function PlanTab({ dark = true, planInputs = null, setPlanInputs 
   const [tab, setTab] = useState("overview");
   const [panelOpen, setPanelOpen] = useState(true);
   const [mc, setMc] = useState(null);
+  const [mcB, setMcB] = useState(null);
   const [mcRunning, setMcRunning] = useState(false);
+  const [mcProgress, setMcProgress] = useState(0);
+  const [mcCompareKey, setMcCompareKey] = useState("none");
+  const runMonteCarloAsync = useMonteCarloWorker();
 
   const det = useMemo(() => buildProjection(p), [p]);
   const feeFree = useMemo(() => buildProjection({ ...p, fee: 0 }), [p]);
@@ -1175,14 +1131,40 @@ export default function PlanTab({ dark = true, planInputs = null, setPlanInputs 
     });
   }, [p]);
 
-  const runMC = useCallback(() => {
-    setMcRunning(true);
-    setTimeout(() => {
-      const res = runMonteCarlo(p, det, 600);
-      setMc(res);
+  // Runs off the main thread via useMonteCarloWorker() (see workers/
+  // monteCarloWorker.js) — the old version ran synchronously, wrapped in a
+  // setTimeout(...,30) purely so the "running" spinner had a chance to
+  // paint before the computation blocked everything else. A real progress
+  // percentage now comes back from the worker instead. When a "Compare
+  // against" scenario is selected, both runs share the same random seed
+  // (common random numbers) so the reported success-rate/median-wealth
+  // DELTA reflects the parameter change, not which random path each side
+  // happened to draw — same technique as core/monte-carlo.mjs's
+  // runScenarioAB, just run as two sequential worker calls here so a
+  // single progress bar can span both halves.
+  const runMC = useCallback(async () => {
+    setMcRunning(true); setMcProgress(0); setMc(null); setMcB(null);
+    const seed = Math.floor(Math.random() * 1e9);
+    const runsForBoth = mcCompareKey !== "none" ? 2 : 1;
+    try {
+      const resA = await runMonteCarloAsync(
+        { ...mcInputsFromPlan(p, det), runs: 1000, seed },
+        { onProgress: (f) => setMcProgress(f / runsForBoth) }
+      );
+      setMc(resA);
+      if (mcCompareKey !== "none") {
+        const spB = applyScenario(p, mcCompareKey);
+        const detB = buildProjection(spB);
+        const resB = await runMonteCarloAsync(
+          { ...mcInputsFromPlan(spB, detB), runs: 1000, seed },
+          { onProgress: (f) => setMcProgress(0.5 + f / runsForBoth) }
+        );
+        setMcB(resB);
+      }
+    } finally {
       setMcRunning(false);
-    }, 30);
-  }, [p, det]);
+    }
+  }, [p, det, mcCompareKey, runMonteCarloAsync]);
 
   // adequacy verdict
   const verdict = (() => {
@@ -1643,7 +1625,7 @@ export default function PlanTab({ dark = true, planInputs = null, setPlanInputs 
 
           {/* ===== MONTE CARLO ===== */}
           {tab === "adequacy" && (
-            <AdequacyTab p={p} mc={mc} running={mcRunning} runMC={runMC} det={det} life={life} set={set} />
+            <AdequacyTab p={p} mc={mc} mcB={mcB} progress={mcProgress} compareKey={mcCompareKey} setCompareKey={setMcCompareKey} running={mcRunning} runMC={runMC} det={det} life={life} set={set} />
           )}
       </main>
     </div>
@@ -2303,8 +2285,26 @@ function HistoricalReplay({ p, det }) {
 const cellMono = { padding: "12px 16px", textAlign: "right", fontFamily: MONO, fontVariantNumeric: "tabular-nums" };
 
 /* ---- Adequacy / Monte Carlo tab ---- */
-function AdequacyTab({ p, mc, running, runMC, det, life, set }) {
+// Merges two fan-chart arrays (base "A" run + an optional "B" comparison
+// scenario run) into one age-keyed row set for a single overlaid chart —
+// scenarios with a different total year count (a different retire/plan
+// age changes how many years get simulated) just leave the missing side's
+// keys undefined past where it ends, which recharts skips over cleanly.
+function mergeFans(fanA, fanB) {
+  const byAge = new Map();
+  for (const row of fanA) byAge.set(row.age, { age: row.age, aP10: row.p10, aP50: row.p50, aP90: row.p90 });
+  for (const row of fanB || []) {
+    const existing = byAge.get(row.age) || { age: row.age };
+    byAge.set(row.age, { ...existing, bP10: row.p10, bP50: row.p50, bP90: row.p90 });
+  }
+  return [...byAge.values()].sort((x, y) => x.age - y.age);
+}
+
+function AdequacyTab({ p, mc, mcB, progress = 0, compareKey = "none", setCompareKey, running, runMC, det, life, set }) {
   const planShort = p.planAge < life.q25; // planning shorter than 1-in-4 longevity
+  const compareOptions = [{ value: "none", label: "None" }, ...SCENARIOS.filter((s) => s.key !== "base").map((s) => ({ value: s.key, label: s.label }))];
+  const compareLabel = compareOptions.find((o) => o.value === compareKey)?.label || "comparison";
+  const mergedFan = useMemo(() => mergeFans(mc ? mc.fan : [], mcB ? mcB.fan : []), [mc, mcB]);
   return (
     <div>
       <Card style={{ marginBottom: 14 }}>
@@ -2341,7 +2341,7 @@ function AdequacyTab({ p, mc, running, runMC, det, life, set }) {
           <div>
             <h3 style={{ margin: "0 0 2px", fontSize: 15, fontWeight: 700 }}>Monte Carlo stress test</h3>
             <p style={{ margin: 0, fontSize: 12.5, color: T.muted, maxWidth: 560 }}>
-              Runs 600 randomised market paths (volatility {p.vol}%) against your fixed spending plan, then measures how often the pot survives to age {p.planAge}.
+              Runs 1,000 randomised market paths (volatility {p.vol}%) against your fixed spending plan in a background Web Worker (doesn't freeze the page), then measures how often the pot survives to age {p.planAge}.
             </p>
           </div>
           <button
@@ -2354,10 +2354,19 @@ function AdequacyTab({ p, mc, running, runMC, det, life, set }) {
             }}
           >
             <RefreshCw size={15} style={{ animation: running ? "spin 1s linear infinite" : "none" }} />
-            {mc ? "Re-run" : "Run simulation"}
+            {running ? `Running… ${Math.round(progress * 100)}%` : mc ? "Re-run" : "Run simulation"}
           </button>
         </div>
         <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+        <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px solid ${T.line}` }}>
+          <div style={{ fontSize: 12.5, color: T.ink2, fontWeight: 600, marginBottom: 6 }}>Compare against (Scenario A/B)</div>
+          <Segmented value={compareKey} onChange={setCompareKey} options={compareOptions} accent={T.blue} />
+          <p style={{ margin: "6px 0 0", fontSize: 11.5, color: T.muted }}>
+            {compareKey === "none"
+              ? "Runs your base plan alone. Pick a scenario to run it alongside your base plan, on the SAME random market paths, so any difference in outcome reflects the parameter change, not luck."
+              : `Runs your base plan (A) and "${compareLabel}" (B) on identical random draws — the reported difference isolates what changing to "${compareLabel}" actually does to your outcome.`}
+          </p>
+        </div>
       </Card>
 
       {!mc && !running && (
@@ -2371,20 +2380,35 @@ function AdequacyTab({ p, mc, running, runMC, det, life, set }) {
         <>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px,1fr))", gap: 12, marginTop: 14 }}>
             <Card style={{ background: mc.successRate >= 0.85 ? T.greenSoft : mc.successRate >= 0.65 ? T.amberSoft : T.redSoft, border: "none" }}>
-              <Stat big label="Success probability" value={pct(mc.successRate, 0)} sub={`pot survives to ${p.planAge} in ${Math.round(mc.successRate * mc.runs)} of ${mc.runs} runs`} tone={mc.successRate >= 0.85 ? "green" : mc.successRate >= 0.65 ? "amber" : "red"} />
+              <Stat big label={mcB ? "Success probability (A: base)" : "Success probability"} value={pct(mc.successRate, 0)} sub={`pot survives to ${p.planAge} in ${Math.round(mc.successRate * mc.runs)} of ${mc.runs} runs`} tone={mc.successRate >= 0.85 ? "green" : mc.successRate >= 0.65 ? "amber" : "red"} />
             </Card>
             <Card><Stat label="Median wealth at retirement" value={gbpK(mc.medianRetire)} sub="nominal, pension + ISA" /></Card>
             <Card><Stat label="Unlucky case (10th %ile)" value={gbpK(mc.p10Retire)} sub="1-in-10 downside" tone="amber" /></Card>
             <Card><Stat label="Lucky case (90th %ile)" value={gbpK(mc.p90Retire)} sub="1-in-10 upside" tone="green" /></Card>
           </div>
 
+          {mcB && (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px,1fr))", gap: 12, marginTop: 12 }}>
+              <Card style={{ background: mcB.successRate >= 0.85 ? T.greenSoft : mcB.successRate >= 0.65 ? T.amberSoft : T.redSoft, border: `1px solid ${T.blue}` }}>
+                <Stat big label={`Success probability (B: ${compareLabel})`} value={pct(mcB.successRate, 0)} sub={`pot survives to ${p.planAge} in ${Math.round(mcB.successRate * mcB.runs)} of ${mcB.runs} runs`} tone={mcB.successRate >= 0.85 ? "green" : mcB.successRate >= 0.65 ? "amber" : "red"} />
+              </Card>
+              <Card style={{ border: `1px solid ${T.blue}` }}><Stat label="Median wealth at retirement (B)" value={gbpK(mcB.medianRetire)} sub="nominal, pension + ISA" /></Card>
+              <Card style={{ border: `1px solid ${T.blue}` }}>
+                <Stat label="Δ success rate (B − A)" value={`${mcB.successRate >= mc.successRate ? "+" : ""}${Math.round((mcB.successRate - mc.successRate) * 100)}pp`} sub={`${compareLabel} vs. your base plan`} tone={mcB.successRate >= mc.successRate ? "green" : "red"} />
+              </Card>
+              <Card style={{ border: `1px solid ${T.blue}` }}>
+                <Stat label="Δ median wealth (B − A)" value={gbpK(mcB.medianRetire - mc.medianRetire)} sub={`${compareLabel} vs. your base plan`} tone={mcB.medianRetire >= mc.medianRetire ? "green" : "red"} />
+              </Card>
+            </div>
+          )}
+
           <Card style={{ marginTop: 14 }}>
             <h3 style={{ margin: "0 0 2px", fontSize: 15, fontWeight: 700 }}>Range of outcomes (real terms)</h3>
             <p style={{ margin: "0 0 12px", fontSize: 12.5, color: T.muted }}>
-              Shaded band spans the unlucky (10th) to lucky (90th) percentile; the line is the median path.
+              Shaded band spans the unlucky (10th) to lucky (90th) percentile; the line is the median path.{mcB ? ` Dashed blue is "${compareLabel}" (B) for comparison.` : ""}
             </p>
             <ResponsiveContainer width="100%" height={320}>
-              <ComposedChart data={mc.fan} margin={{ top: 10, right: 8, left: 8, bottom: 0 }}>
+              <ComposedChart data={mergedFan} margin={{ top: 10, right: 8, left: 8, bottom: 0 }}>
                 <defs>
                   <linearGradient id="fan" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="0%" stopColor={T.green} stopOpacity={0.18} />
@@ -2394,20 +2418,23 @@ function AdequacyTab({ p, mc, running, runMC, det, life, set }) {
                 <CartesianGrid stroke={T.lineSoft} vertical={false} />
                 <XAxis dataKey="age" tick={{ fontSize: 11, fill: T.muted }} tickLine={false} axisLine={{ stroke: T.line }} interval={4} />
                 <YAxis tickFormatter={gbpK} tick={{ fontSize: 11, fill: T.muted }} tickLine={false} axisLine={false} width={52} />
-                <Tooltip contentStyle={tooltipStyle()} formatter={(v, n) => [gbp(v), n === "p90" ? "Lucky (90th)" : n === "p50" ? "Median" : "Unlucky (10th)"]} labelFormatter={(a) => `Age ${a}`} />
+                <Tooltip contentStyle={tooltipStyle()} formatter={(v, n) => [gbp(v), { aP90: "Lucky (90th, A)", aP50: "Median (A)", aP10: "Unlucky (10th, A)", bP90: "Lucky (90th, B)", bP50: "Median (B)", bP10: "Unlucky (10th, B)" }[n] || n]} labelFormatter={(a) => `Age ${a}`} />
                 <ReferenceLine x={p.retireAge} stroke={T.amber} strokeDasharray="4 3" />
-                <Area type="monotone" dataKey="p90" stroke="none" fill="url(#fan)" />
-                <Area type="monotone" dataKey="p10" stroke="none" fill={T.surface} />
-                <Line type="monotone" dataKey="p50" stroke={T.green} strokeWidth={2.4} dot={false} />
-                <Line type="monotone" dataKey="p10" stroke={T.amber} strokeWidth={1} strokeDasharray="3 3" dot={false} />
-                <Line type="monotone" dataKey="p90" stroke={T.green} strokeWidth={1} strokeDasharray="3 3" dot={false} />
+                <Area type="monotone" dataKey="aP90" stroke="none" fill="url(#fan)" />
+                <Area type="monotone" dataKey="aP10" stroke="none" fill={T.surface} />
+                <Line type="monotone" dataKey="aP50" stroke={T.green} strokeWidth={2.4} dot={false} />
+                <Line type="monotone" dataKey="aP10" stroke={T.amber} strokeWidth={1} strokeDasharray="3 3" dot={false} />
+                <Line type="monotone" dataKey="aP90" stroke={T.green} strokeWidth={1} strokeDasharray="3 3" dot={false} />
+                {mcB && <Line type="monotone" dataKey="bP50" stroke={T.blue} strokeWidth={2.2} strokeDasharray="5 3" dot={false} />}
+                {mcB && <Line type="monotone" dataKey="bP10" stroke={T.blue} strokeWidth={1} strokeDasharray="2 2" dot={false} />}
+                {mcB && <Line type="monotone" dataKey="bP90" stroke={T.blue} strokeWidth={1} strokeDasharray="2 2" dot={false} />}
               </ComposedChart>
             </ResponsiveContainer>
-            <Legendlet items={[{ c: T.green, t: "Median outcome" }, { c: T.amber, t: "Unlucky / lucky bounds", dash: true }]} />
+            <Legendlet items={[{ c: T.green, t: "Median outcome (A)" }, { c: T.amber, t: "Unlucky / lucky bounds (A)", dash: true }, ...(mcB ? [{ c: T.blue, t: `Median (B: ${compareLabel})`, dash: true }] : [])]} />
           </Card>
 
           <Note tone={mc.successRate >= 0.85 ? "blue" : "amber"}>
-            A success rate above ~85% is often treated as a comfortable plan; 65–85% suggests building in flexibility (variable spending, working longer, or a cash buffer); below 65% the plan likely needs a higher pot or lower target. Each re-run draws fresh randomness, so the figure will wobble a few points — that variability is itself the point.
+            A success rate above ~85% is often treated as a comfortable plan; 65–85% suggests building in flexibility (variable spending, working longer, or a cash buffer); below 65% the plan likely needs a higher pot or lower target. Each re-run draws fresh randomness, so the figure will wobble a few points — that variability is itself the point (A/B comparisons above use the same random draws for both sides specifically to cancel out that wobble when judging the parameter change itself).
           </Note>
         </>
       )}

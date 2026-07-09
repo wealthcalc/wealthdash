@@ -1093,9 +1093,38 @@ wrapper system every other holding uses.
   restore exactly as before. New persisted keys registered in
   `durable.js`'s `PERSIST_KEYS`, with the exhaustiveness test updated.
 
+## Phase 3, step 1: Monte Carlo in a Web Worker + Scenario A/B
+- **`core/monte-carlo.mjs`** — the Plan tab's Monte Carlo stress test used
+  to live as a same-file `runMonteCarlo()`/`randn()` pair in PlanTab.jsx,
+  run SYNCHRONOUSLY on the main thread inside a `setTimeout(...,30)` hack
+  purely to let the "running" spinner paint a frame before the computation
+  froze everything else. Extracted into a pure, node-tested module with an
+  injectable seedable RNG (`mulberry32`) — seeding matters for two things:
+  reproducible test assertions, and `runScenarioAB()`'s "common random
+  numbers" comparison (two parameter sets run against the IDENTICAL
+  sequence of random market draws, so a success-rate/median-wealth delta
+  reflects the parameter change, not which random path each side happened
+  to draw). 12 new node tests.
+- **`workers/monteCarloWorker.js` + `ui/useMonteCarloWorker.js`** — the
+  simulation now runs in a real Web Worker, off the main thread, via a
+  plain `run(inputs, {onProgress}) -> Promise<result>` hook. One worker is
+  created lazily and reused across runs (including both sides of an A/B
+  comparison), terminated on unmount; falls back to a synchronous in-place
+  call if `Worker` is unavailable. The button now shows a real progress
+  percentage from the worker instead of a fake pre-computation delay, and
+  the run count went up from 600 to 1,000 since it no longer costs any UI
+  responsiveness to do so.
+- **Scenario A/B** on the Adequacy tab: a "Compare against" picker (reusing
+  the existing scenario presets — Bull market, Bear market, 1970s
+  stagflation, Lost decade, Sticky inflation) runs a second Monte Carlo
+  alongside the base plan, same seed, and shows a second row of headline
+  stats plus success-rate/median-wealth deltas, with both scenarios'
+  median and 10th/90th percentile lines overlaid on one fan chart (base in
+  green, comparison dashed in blue).
+
 ## Tests
 ```
-npm test        # node --test: 278 tests across the core modules + the DMO parser
+npm test        # node --test: 290 tests across the core modules + the DMO parser
 ```
 
 ## Deploy (recommended: Git → new Vercel project)
