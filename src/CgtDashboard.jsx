@@ -439,7 +439,7 @@ export default function App() {
               {tab === "private" && <PrivateTab {...{ holdings: privateHoldings, setHoldings: setPrivateHoldings, events: privateEvents, setEvents: setPrivateEvents }} />}
               {tab === "rsu" && <RsuTab {...{ grants: rsuGrants, setGrants: setRsuGrants, events: rsuEvents, setEvents: setRsuEvents, prices, setPrices, avKey, setAvKey, avMeta, setAvMeta, priceMeta, setPriceMeta, secMeta, setSecMeta, dmoReportDate, setDmoReportDate, txns }} />}
               {tab === "ledger" && <LedgerTab {...{ txns, setTxns }} />}
-              {tab === "import" && <ImportTab {...{ setTxns, setTab, setIncomeEntries, setEriEntries, secMeta, setPensionCashflows, pensionCashflows, recomputeProviderCost, txns, incomeEntries, eriEntries, ibkrQueryId, setIbkrQueryId, ibkrToken, setIbkrToken }} />}
+              {tab === "import" && <ImportTab {...{ setTxns, setTab, setIncomeEntries, setEriEntries, secMeta, setPensionCashflows, pensionCashflows, recomputeProviderCost, txns, incomeEntries, eriEntries, ibkrQueryId, setIbkrQueryId, ibkrToken, setIbkrToken, rsuGrants, setRsuGrants, rsuEvents, setRsuEvents }} />}
             </Suspense>
             </div>
 

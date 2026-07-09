@@ -37,7 +37,7 @@ export const NAV_SECTIONS = [
   ] },
   { title: "Data", items: [
     ["ledger", "Transactions", Receipt],
-    ["import", "Import CSV", FileUp],
+    ["import", "Import", FileUp],
   ] },
 ];
 

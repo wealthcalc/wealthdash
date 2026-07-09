@@ -1,11 +1,12 @@
 import React, { useState, useMemo, useCallback, useRef } from "react";
 import Papa from "papaparse";
-import { Upload, Wand2, RefreshCw, FileUp, AlertTriangle, Copy, Check } from "lucide-react";
+import { Upload, Wand2, RefreshCw, FileUp, AlertTriangle, Copy, Check, Trash2 } from "lucide-react";
 import { WRAPPERS, normWrapper } from "../core/portfolio.mjs";
 import { guessPensionColumns, mapPensionRow } from "../core/pension-import.mjs";
 import { parseIBKR } from "../core/ibkr-import.mjs";
 import { shapeFlexPull, shapeCashReport } from "../core/ibkr-flex.mjs";
 import { parseISharesWorkbook } from "../core/ishares-eri.mjs";
+import { buildRsuImport, guessTickerFromFilename } from "../core/rsu-import.mjs";
 import { gbp, num, uid, todayISO, fxHistorical, Field, Empty, SubTabs, round2, dedupeAgainstExisting } from "../ui/shared.jsx";
 
 const FIELDS = ["date", "ticker", "side", "quantity", "nativeCurrency", "nativeAmount", "fxRate", "gbpAmount"];
@@ -55,10 +56,11 @@ function ImportTab({
   setTxns, setTab, setIncomeEntries, setEriEntries, secMeta, setPensionCashflows, pensionCashflows = [], recomputeProviderCost,
   txns = [], incomeEntries = [], eriEntries = [],
   ibkrQueryId = "", setIbkrQueryId, ibkrToken = "", setIbkrToken,
+  rsuGrants = [], setRsuGrants, rsuEvents = [], setRsuEvents,
 }) {
   const [mode, setMode] = useState("ibkr");
   const [wrapper, setWrapper] = useState("GIA");
-  const [ibkrSource, setIbkrSource] = useState("paste"); // "paste" | "live"
+  const [ibkrSource, setIbkrSource] = useState("live"); // "paste" | "live"
   const [flexBusy, setFlexBusy] = useState(false);
   const [flexError, setFlexError] = useState("");
   const [cashReport, setCashReport] = useState(null);
@@ -128,6 +130,17 @@ function ImportTab({
     if (dupSkipped || fxSkipped) setNote(parts.join(" "));
     else setTab(dedTxns.rows.length ? "ledger" : "income");
   };
+
+  // Preview-time duplicate detection, reusing the same content keys
+  // doImportIb's own dedupeAgainstExisting() call will apply at import time —
+  // this just surfaces it earlier so a "dup" badge is visible before the
+  // user commits, rather than only learning about skipped rows afterwards.
+  const existingTxnKeys = useMemo(() => new Set(txns.map(txnKey)), [txns]);
+  const existingIncomeKeys = useMemo(() => new Set(incomeEntries.map(incomeKey)), [incomeEntries]);
+  const ibDupTrades = ib ? ib.trades.filter((t) => existingTxnKeys.has(txnKey(t))).length : 0;
+  const ibDupIncome = ib ? ib.income.filter((e) => existingIncomeKeys.has(incomeKey(e))).length : 0;
+  const removeIbTrade = (i) => setIb((r) => ({ ...r, trades: r.trades.filter((_, idx) => idx !== i) }));
+  const removeIbIncome = (i) => setIb((r) => ({ ...r, income: r.income.filter((_, idx) => idx !== i) }));
 
   // ---- generic ----
   const parse = () => {
@@ -277,6 +290,62 @@ function ImportTab({
     else setTab("income");
   };
 
+  // ---- RSU vest-release CSV (Wells Fargo/Shareworks-style export) ----
+  // rsuRows holds the raw parsed CSV (one entry per source row); grants and
+  // events are re-derived from it on every render via buildRsuImport, so a
+  // per-row delete just filters rsuRows and everything downstream (grant
+  // grouping, vest+tax-cover-sale pairing, dup detection) recomputes fresh —
+  // no separate "parsed" vs "editable" state to keep in sync.
+  const rsuGrantKey = (g) => `${(g.ticker || "").toUpperCase()}|${g.grantDate}|${(g.note || "").trim()}`;
+  const rsuEventKey = (e) => `${e.grantId}|${e.type}|${e.date}|${round2(e.shares)}`;
+  const [rsuRaw, setRsuRaw] = useState("");
+  const [rsuRows, setRsuRows] = useState(null);
+  const [rsuFileName, setRsuFileName] = useState("");
+  const [rsuTicker, setRsuTicker] = useState("");
+  const parseRsu = (text, fileName) => {
+    const t = (text ?? rsuRaw).trim(); if (!t) return;
+    const res = Papa.parse(t, { header: true, skipEmptyLines: true });
+    if (!res.data?.length) return;
+    setRsuRows(res.data);
+    const fn = fileName ?? rsuFileName;
+    if (fn) setRsuFileName(fn);
+    if (!rsuTicker) { const guess = guessTickerFromFilename(fn || rsuFileName); if (guess) setRsuTicker(guess); }
+  };
+  const rsuBuilt = useMemo(() => (rsuRows ? buildRsuImport(rsuRows, { ticker: rsuTicker }) : null), [rsuRows, rsuTicker]);
+  const rsuResolved = useMemo(() => {
+    if (!rsuBuilt) return null;
+    const existingGrantIds = new Map(rsuGrants.map((g) => [rsuGrantKey(g), g.id]));
+    const idFor = {};
+    const grants = rsuBuilt.grants.map((g) => {
+      const existingId = existingGrantIds.get(rsuGrantKey(g));
+      const id = existingId || g.key;
+      idFor[g.key] = id;
+      return { ...g, id, isNew: !existingId };
+    });
+    const existingEventKeys = new Set(rsuEvents.map(rsuEventKey));
+    const events = rsuBuilt.events.map((e) => {
+      const grantId = idFor[e.grantKey];
+      return { ...e, grantId, dup: existingEventKeys.has(rsuEventKey({ ...e, grantId })) };
+    });
+    return { grants, events, warnings: rsuBuilt.warnings };
+  }, [rsuBuilt, rsuGrants, rsuEvents]);
+  const removeRsuRow = (i) => setRsuRows((r) => r.filter((_, idx) => idx !== i));
+  const rsuDupCount = rsuResolved ? rsuResolved.events.filter((e) => e.dup).length : 0;
+  const doImportRsu = () => {
+    if (!rsuResolved) return;
+    const idMap = new Map(rsuResolved.grants.map((g) => [g.id, g.isNew ? uid() : g.id]));
+    const newGrants = rsuResolved.grants.filter((g) => g.isNew).map((g) => ({ id: idMap.get(g.id), ticker: g.ticker, grantDate: g.grantDate, note: g.note }));
+    const newEvents = rsuResolved.events.filter((e) => !e.dup).map((e) => ({ id: uid(), grantId: idMap.get(e.grantId), type: e.type, date: e.date, shares: e.shares, priceNative: e.priceNative, fxRate: e.fxRate, note: e.note }));
+    if (newGrants.length) setRsuGrants((p) => [...p, ...newGrants]);
+    if (newEvents.length) setRsuEvents((p) => [...p, ...newEvents]);
+    const dupSkipped = rsuResolved.events.length - newEvents.length;
+    const parts = [`Imported ${newGrants.length} grant${newGrants.length === 1 ? "" : "s"} and ${newEvents.length} event${newEvents.length === 1 ? "" : "s"}.`];
+    if (dupSkipped) parts.push(`${dupSkipped} duplicate event${dupSkipped === 1 ? "" : "s"} already recorded — skipped.`);
+    setNote(parts.join(" "));
+    setRsuRows(null);
+    if (!dupSkipped) setTab("rsu");
+  };
+
   const Tab = ({ k, label }) => (
     <button onClick={() => setMode(k)} className={"px-3 py-1.5 text-sm rounded-lg border " + (mode === k ? "bg-[var(--accent)] text-[var(--accent-fg)] border-transparent" : "border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)]")}>{label}</button>
   );
@@ -284,10 +353,10 @@ function ImportTab({
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-2 flex-wrap">
-        <Tab k="ibkr" label="Interactive Brokers" /><Tab k="generic" label="Generic CSV" /><Tab k="dividends" label="Dividends CSV" /><Tab k="pension" label="Pension contributions" /><Tab k="ishares" label="iShares ERI" />
+        <Tab k="ibkr" label="Interactive Brokers" /><Tab k="generic" label="Generic CSV" /><Tab k="dividends" label="Dividends CSV" /><Tab k="pension" label="Pension contributions" /><Tab k="ishares" label="iShares ERI" /><Tab k="rsu" label="RSU vest history" />
       </div>
 
-      {mode !== "ishares" && mode !== "pension" && (
+      {mode !== "ishares" && mode !== "pension" && mode !== "rsu" && (
         <div className="flex items-center gap-2 flex-wrap rounded-xl border border-[var(--border)] bg-[var(--panel2)] px-3 py-2">
           <span className="text-xs font-medium text-[var(--muted)]">Import into wrapper:</span>
           {WRAPPERS.map((w) => (
@@ -304,7 +373,7 @@ function ImportTab({
       {mode === "ibkr" && (
         <>
           <div className="flex items-center gap-2 text-xs">
-            {[["paste", "Paste CSV"], ["live", "Pull live (Flex Web Service)"]].map(([k, label]) => (
+            {[["live", "Pull live (Flex Web Service)"], ["paste", "Paste CSV"]].map(([k, label]) => (
               <button key={k} onClick={() => setIbkrSource(k)}
                 className={"px-2.5 py-1 rounded-full border font-medium transition " +
                   (ibkrSource === k ? "border-[var(--accent)] bg-[var(--accent)] text-[var(--accent-fg)]" : "border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)]")}>
@@ -312,18 +381,6 @@ function ImportTab({
               </button>
             ))}
           </div>
-
-          {ibkrSource === "paste" && (
-            <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 space-y-3">
-              <p className="text-sm text-[var(--muted)]">Paste (or upload) an IBKR <strong>Flex Query</strong> CSV or an <strong>Activity Statement</strong> CSV. Trades and dividends/interest are both picked up. A Flex query carries an FX-to-base rate, so GBP conversion is automatic; Activity exports lack it, so non-GBP rows are converted by trade-date FX on import. {wrapper !== "GIA" && <span className="text-[var(--fg)]">Note: {wrapper} is tax-sheltered, so these rows won't affect CGT or income tax.</span>}</p>
-              <textarea value={raw} onChange={(e) => setRaw(e.target.value)} rows={7} placeholder={IBKR_EXAMPLE} className="input num w-full font-mono text-xs" />
-              <div className="flex items-center gap-2">
-                <button onClick={() => parseIb()} className="btn-accent"><Wand2 size={15} /> Parse</button>
-                <label className="text-sm text-[var(--accent)] cursor-pointer flex items-center gap-1"><Upload size={14} /> Upload CSV<input type="file" accept=".csv,text/csv" className="hidden" onChange={(e) => readFile(e, (txt) => { setRaw(txt); parseIb(txt); })} /></label>
-                <CopyExampleButton text={IBKR_EXAMPLE} />
-              </div>
-            </div>
-          )}
 
           {ibkrSource === "live" && (
             <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 space-y-3">
@@ -346,6 +403,18 @@ function ImportTab({
             </div>
           )}
 
+          {ibkrSource === "paste" && (
+            <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 space-y-3">
+              <p className="text-sm text-[var(--muted)]">Paste (or upload) an IBKR <strong>Flex Query</strong> CSV or an <strong>Activity Statement</strong> CSV. Trades and dividends/interest are both picked up. A Flex query carries an FX-to-base rate, so GBP conversion is automatic; Activity exports lack it, so non-GBP rows are converted by trade-date FX on import. {wrapper !== "GIA" && <span className="text-[var(--fg)]">Note: {wrapper} is tax-sheltered, so these rows won't affect CGT or income tax.</span>}</p>
+              <textarea value={raw} onChange={(e) => setRaw(e.target.value)} rows={7} placeholder={IBKR_EXAMPLE} className="input num w-full font-mono text-xs" />
+              <div className="flex items-center gap-2">
+                <button onClick={() => parseIb()} className="btn-accent"><Wand2 size={15} /> Parse</button>
+                <label className="text-sm text-[var(--accent)] cursor-pointer flex items-center gap-1"><Upload size={14} /> Upload CSV<input type="file" accept=".csv,text/csv" className="hidden" onChange={(e) => readFile(e, (txt) => { setRaw(txt); parseIb(txt); })} /></label>
+                <CopyExampleButton text={IBKR_EXAMPLE} />
+              </div>
+            </div>
+          )}
+
           {ib && (
             <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 space-y-3">
               <div className="flex items-center gap-4 text-sm flex-wrap">
@@ -353,31 +422,58 @@ function ImportTab({
                 <span className="num">{ib.trades.length} trades</span>
                 <span className="num">{ib.income.filter((i) => i.kind === "dividend").length} dividends</span>
                 <span className="num">{ib.income.filter((i) => i.kind === "interest").length} interest</span>
+                {(ibDupTrades + ibDupIncome) > 0 && (
+                  <span className="text-[var(--muted)]">{ibDupTrades + ibDupIncome} look{ibDupTrades + ibDupIncome === 1 ? "s" : ""} like duplicate{ibDupTrades + ibDupIncome === 1 ? "" : "s"} of rows already in your ledger — flagged "dup" below, skipped automatically on import.</span>
+                )}
               </div>
               {ib.warnings.map((w, i) => (
                 <div key={i} className="flex items-start gap-2 text-xs rounded-lg px-3 py-2 text-[var(--loss)]" style={{ background: "color-mix(in srgb, var(--loss) 10%, transparent)" }}><AlertTriangle size={14} className="mt-0.5 shrink-0" />{w}</div>
               ))}
               {ib.trades.length > 0 && (
-                <div className="overflow-x-auto">
+                <div className="overflow-x-auto max-h-72 overflow-y-auto">
                   <table className="w-full text-xs">
-                    <thead className="text-[var(--muted)]"><tr>{["date", "ticker", "side", "qty", "ccy", "native", "GBP"].map((h) => <th key={h} className="px-2 py-1 text-left">{h}</th>)}</tr></thead>
+                    <thead className="text-[var(--muted)]"><tr>{["date", "ticker", "side", "qty", "ccy", "native", "GBP", "", ""].map((h, i) => <th key={i} className="px-2 py-1 text-left">{h}</th>)}</tr></thead>
                     <tbody className="num">
-                      {ib.trades.slice(0, 6).map((t, i) => (
-                        <tr key={i} className="border-t border-[var(--border)]">
-                          <td className="px-2 py-1">{t.date}</td><td className="px-2 py-1">{t.ticker}</td><td className="px-2 py-1">{t.side}</td>
-                          <td className="px-2 py-1">{num(t.quantity, t.quantity % 1 ? 4 : 0)}</td><td className="px-2 py-1">{t.nativeCurrency}</td>
-                          <td className="px-2 py-1">{num(t.nativeAmount)}</td><td className="px-2 py-1">{t.gbpAmount == null ? "FX on import" : gbp(t.gbpAmount)}</td>
-                        </tr>
-                      ))}
+                      {ib.trades.map((t, i) => {
+                        const dup = existingTxnKeys.has(txnKey(t));
+                        return (
+                          <tr key={i} className="border-t border-[var(--border)]">
+                            <td className="px-2 py-1">{t.date}</td><td className="px-2 py-1">{t.ticker}</td><td className="px-2 py-1">{t.side}</td>
+                            <td className="px-2 py-1">{num(t.quantity, t.quantity % 1 ? 4 : 0)}</td><td className="px-2 py-1">{t.nativeCurrency}</td>
+                            <td className="px-2 py-1">{num(t.nativeAmount)}</td><td className="px-2 py-1">{t.gbpAmount == null ? "FX on import" : gbp(t.gbpAmount)}</td>
+                            <td className="px-2 py-1">{dup && <span className="text-[10px] uppercase font-semibold px-1.5 py-0.5 rounded-full text-[var(--muted)] border border-[var(--border)]">dup</span>}</td>
+                            <td className="px-2 py-1"><button onClick={() => removeIbTrade(i)} title="Remove this row" className="text-[var(--muted)] hover:text-[var(--loss)]"><Trash2 size={13} /></button></td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
-                  {ib.trades.length > 6 && <p className="text-xs text-[var(--muted)] mt-1">+{ib.trades.length - 6} more…</p>}
+                </div>
+              )}
+              {ib.income.length > 0 && (
+                <div className="overflow-x-auto max-h-72 overflow-y-auto">
+                  <table className="w-full text-xs">
+                    <thead className="text-[var(--muted)]"><tr>{["date", "ticker", "kind", "GBP", "", ""].map((h, i) => <th key={i} className="px-2 py-1 text-left">{h}</th>)}</tr></thead>
+                    <tbody className="num">
+                      {ib.income.map((e, i) => {
+                        const dup = existingIncomeKeys.has(incomeKey(e));
+                        return (
+                          <tr key={i} className="border-t border-[var(--border)]">
+                            <td className="px-2 py-1">{e.date}</td><td className="px-2 py-1">{e.ticker || "—"}</td><td className="px-2 py-1 capitalize">{e.kind}</td>
+                            <td className="px-2 py-1">{e.amount == null ? "FX on import" : gbp(e.amount)}</td>
+                            <td className="px-2 py-1">{dup && <span className="text-[10px] uppercase font-semibold px-1.5 py-0.5 rounded-full text-[var(--muted)] border border-[var(--border)]">dup</span>}</td>
+                            <td className="px-2 py-1"><button onClick={() => removeIbIncome(i)} title="Remove this row" className="text-[var(--muted)] hover:text-[var(--loss)]"><Trash2 size={13} /></button></td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
                 </div>
               )}
               {note && <div className="text-xs text-[var(--muted)]">{note}</div>}
               <div className="flex items-center justify-between">
-                <span className="text-xs text-[var(--muted)]">Imports into <strong>{wrapper}</strong>. Trades → ledger, dividends/interest → Income tab.</span>
-                <button onClick={doImportIb} disabled={importing} className="btn-accent">{importing ? <RefreshCw size={15} className="animate-spin" /> : <FileUp size={15} />} Import</button>
+                <span className="text-xs text-[var(--muted)]">Imports into <strong>{wrapper}</strong>. Trades → ledger, dividends/interest → Income tab. Duplicates are skipped automatically even if not removed above.</span>
+                <button onClick={doImportIb} disabled={importing || (!ib.trades.length && !ib.income.length)} className="btn-accent disabled:opacity-50">{importing ? <RefreshCw size={15} className="animate-spin" /> : <FileUp size={15} />} Import</button>
               </div>
             </div>
           )}
@@ -608,6 +704,72 @@ function ImportTab({
                   </div>
                 </>
               )}
+            </div>
+          )}
+        </>
+      )}
+
+      {mode === "rsu" && (
+        <>
+          <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 space-y-3">
+            <p className="text-sm text-[var(--muted)]">
+              Paste (or upload) a Wells Fargo/Shareworks-style <strong>"restricted stock units"</strong> or <strong>"restricted stock awards"</strong> vest-release export. Rows sharing a plan label and grant date are grouped into one grant, each becoming a vest event; shares automatically withheld to cover tax are recorded as a same-date sale so held totals aren't overstated. This export has no ticker or per-tranche vest-date column, so set the ticker below (guessed from the filename if possible) and check dates on the RSU tab afterwards if you know the real vest dates.
+            </p>
+            <Field label="Ticker (e.g. WFC)"><input value={rsuTicker} onChange={(e) => setRsuTicker(e.target.value.toUpperCase())} placeholder="WFC" className="input w-32 font-mono text-xs" /></Field>
+            <textarea value={rsuRaw} onChange={(e) => setRsuRaw(e.target.value)} rows={7} placeholder={'"Plan Description","Instrument","Grant Date","Allocation quantity","Released quantity","Quantity to cover tax","Net quantity","Archive status"\n"11 Jan 2023 RSU Award","Restricted Stock Units","11 Jan 2023","383","383","161.00000","222.00000","Released"'} className="input num w-full font-mono text-xs" />
+            <div className="flex items-center gap-2">
+              <button onClick={() => parseRsu()} className="btn-accent"><Wand2 size={15} /> Parse</button>
+              <label className="text-sm text-[var(--accent)] cursor-pointer flex items-center gap-1"><Upload size={14} /> Upload CSV<input type="file" accept=".csv,text/csv" className="hidden" onChange={(e) => {
+                const f = e.target.files?.[0]; if (!f) return;
+                const r = new FileReader();
+                r.onload = () => { const txt = String(r.result); setRsuRaw(txt); parseRsu(txt, f.name); };
+                r.readAsText(f); e.target.value = "";
+              }} /></label>
+            </div>
+          </div>
+
+          {rsuResolved && (
+            <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 space-y-3">
+              <div className="flex items-center gap-4 text-sm flex-wrap">
+                <span className="font-semibold">{rsuRows.length} row{rsuRows.length === 1 ? "" : "s"} parsed</span>
+                <span className="num">{rsuResolved.grants.length} grant{rsuResolved.grants.length === 1 ? "" : "s"}</span>
+                <span className="num">{rsuResolved.events.filter((e) => e.type === "vest").length} vest events</span>
+                <span className="num">{rsuResolved.events.filter((e) => e.type === "sale").length} tax-cover sales</span>
+                {rsuDupCount > 0 && <span className="text-[var(--muted)]">{rsuDupCount} look{rsuDupCount === 1 ? "s" : ""} like duplicate{rsuDupCount === 1 ? "" : "s"} already recorded — flagged "dup", skipped automatically on import.</span>}
+              </div>
+              {rsuResolved.warnings.map((w, i) => (
+                <div key={i} className="flex items-start gap-2 text-xs rounded-lg px-3 py-2 text-[var(--loss)]" style={{ background: "color-mix(in srgb, var(--loss) 10%, transparent)" }}><AlertTriangle size={14} className="mt-0.5 shrink-0" />{w}</div>
+              ))}
+              {rsuRows.length > 0 && (
+                <div className="overflow-x-auto max-h-72 overflow-y-auto">
+                  <table className="w-full text-xs">
+                    <thead className="text-[var(--muted)]"><tr>{["plan", "grant date", "allocation", "tax cover", "net", "", ""].map((h, i) => <th key={i} className="px-2 py-1 text-left">{h}</th>)}</tr></thead>
+                    <tbody className="num">
+                      {rsuRows.map((row, i) => {
+                        const m = rsuBuilt?.events?.find((e) => e.sourceRow === i && e.type === "vest");
+                        const resolved = rsuResolved.events.find((e) => e.sourceRow === i && e.type === "vest");
+                        const dup = resolved?.dup;
+                        return (
+                          <tr key={i} className="border-t border-[var(--border)]">
+                            <td className="px-2 py-1 max-w-[12rem] truncate" title={row["Plan Description"] || row["Plan"]}>{row["Plan Description"] || row["Plan"] || "—"}</td>
+                            <td className="px-2 py-1">{row["Grant Date"] || "—"}</td>
+                            <td className="px-2 py-1">{row["Allocation quantity"] || "—"}</td>
+                            <td className="px-2 py-1">{row["Quantity to cover tax"] || "—"}</td>
+                            <td className="px-2 py-1">{row["Net quantity"] || "—"}</td>
+                            <td className="px-2 py-1">{m == null ? <span className="text-[var(--loss)]">unparsed</span> : dup && <span className="text-[10px] uppercase font-semibold px-1.5 py-0.5 rounded-full text-[var(--muted)] border border-[var(--border)]">dup</span>}</td>
+                            <td className="px-2 py-1"><button onClick={() => removeRsuRow(i)} title="Remove this row" className="text-[var(--muted)] hover:text-[var(--loss)]"><Trash2 size={13} /></button></td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              {note && <div className="text-xs text-[var(--muted)]">{note}</div>}
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-[var(--muted)]">Imports onto the RSU tab. Duplicates are skipped automatically even if not removed above.</span>
+                <button onClick={doImportRsu} disabled={!rsuTicker.trim() || !rsuResolved.events.length} className="btn-accent disabled:opacity-50"><FileUp size={15} /> Import</button>
+              </div>
             </div>
           )}
         </>

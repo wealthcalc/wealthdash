@@ -1177,9 +1177,23 @@ Diagnosed against an actual Flex Statement export from a real account (not a syn
 - **Warnings are now specific instead of one generic message**: a single-day statement explains the date-range fix directly ("widen the Flex Query's date range... e.g. 'Last 365 Days'"); Interest Accruals present without Cash Transactions flags that dividends specifically won't come through until that section's added; a genuinely empty statement (no sections enabled at all) gets the original catch-all message. `api/ibkr-flex.mjs` now also returns the statement's `fromDate`/`toDate`/`period` (via a new `extractStatementInfo()`) so the client can reason about *why* a pull came back thin, not just *that* it did.
 - 8 new node tests, including a direct repro of the real account's statement shape.
 
+## Import tab: full preview + duplicate flagging, RSU vest-history CSV import
+- **Renamed "Import CSV" → "Import"** (sidebar and page prose) — the tab now covers a live API pull too, not just CSV.
+- **IBKR source toggle reordered**: "Pull live (Flex Web Service)" first, "Paste CSV" second, matching which one most users will actually use now that the live pull works.
+- **IBKR preview is no longer capped at 6 rows.** Every parsed trade and every parsed income row (dividends + interest, previously shown only as a count) is listed in a scrollable table, each with its own delete button — remove a row before importing without having to touch the source paste/pull at all.
+- **Duplicate rows are flagged in the preview, not just reported after the fact.** `doImportIb`'s existing `dedupeAgainstExisting(...)` call (content-keyed on date/ticker/side/wrapper/quantity/amount, same as every other import path) already skipped duplicates silently at import time; the preview now runs the same key check up front and marks matching rows "dup", with a summary count and a note that they're skipped automatically either way — answers "how do I know this won't double-import" directly in the UI instead of only in this README.
+- **New: RSU vest-release CSV import**, for the Wells Fargo/Shareworks-style "restricted stock units" / "restricted stock awards" export (`src/core/rsu-import.mjs`, `buildRsuImport()`/`mapRsuCsvRow()`/`parseUkDate()`/`guessTickerFromFilename()`, 17 new node tests against synthetic fixtures matching the real column set). Real-world shape, confirmed against two actual exports:
+  - Columns: `Plan Description`/`Plan`, `Instrument`, `Grant Date` (UK-style "11 Jan 2023"), `Allocation quantity`, `Released quantity`, `Quantity to cover tax`, `Net quantity`, `Archive status` — no ticker column, no per-tranche vest-date column, only the original grant date.
+  - Rows are grouped into one grant per **plan label + grant date pair** (verified needed against real data: one file reuses a plan label across different grant dates, the other reuses a grant date across different plan labels — either field alone under- or over-merges).
+  - `Allocation quantity = Quantity to cover tax + Net quantity` on every row (verified arithmetically) — each row becomes a "vest" event for the gross allocation *plus* an automatic same-date "sale" event for the tax-withheld portion, so `core/rsu.mjs`'s held-shares total isn't overstated by shares that were never actually retained.
+  - Ticker isn't in the file, so it's guessed from the uploaded filename (`guessTickerFromFilename`, e.g. "WFC" out of "...Wells Fargo WFC (NYS).csv") and always user-editable before import.
+  - No vest-date-per-tranche column exists, so each vest/sale event is dated on the grant date, with an explicit warning that this is a limitation of the export — exact dates can be corrected on the RSU tab afterwards if known. Price/FMV is left blank, same "don't fabricate what the file doesn't say" policy as every other importer here.
+  - Preview shows every source CSV row (not events) with a per-row delete button — deleting a row removes both the vest and its paired tax-cover sale together, since that's the natural transaction unit; grants/events are rebuilt fresh from the remaining rows on every change, so there's no separate "parsed" vs "edited" state to drift apart.
+  - Import resolves against existing `rsuGrants`/`rsuEvents` by content key before assigning real ids, same two-phase dedupe pattern as the IBKR/pension/ERI importers — re-importing the same file is a no-op.
+
 ## Tests
 ```
-npm test        # node --test: 315 tests across the core modules + the DMO parser
+npm test        # node --test: 332 tests across the core modules + the DMO parser
 ```
 
 ## Deploy (recommended: Git → new Vercel project)

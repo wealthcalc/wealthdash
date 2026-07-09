@@ -224,7 +224,7 @@ function PensionTab({ txns, setTxns, cash, setCash, secMeta, setSecMeta, prices,
                   </div>
                 </div>
                 {!hasContributions && (
-                  <p className="text-xs text-[var(--muted)] px-3 pt-2">No contributions logged for this provider yet — cost below is set directly. Add contributions (below, or via Import CSV) to have cost derived from them instead.</p>
+                  <p className="text-xs text-[var(--muted)] px-3 pt-2">No contributions logged for this provider yet — cost below is set directly. Add contributions (below, or via Import) to have cost derived from them instead.</p>
                 )}
                 <table className="w-full text-sm">
                   <thead className="text-[var(--muted)] text-xs uppercase tracking-wide">
@@ -325,7 +325,7 @@ function PensionTab({ txns, setTxns, cash, setCash, secMeta, setSecMeta, prices,
       <p className="text-xs text-[var(--muted)]">
         Holdings are grouped by provider — click a provider's name to rename it (e.g. when a scheme moves administrator), or "Remove provider" to drop every holding under it in one go (for a full transfer/consolidation elsewhere). New funds pick up whichever provider you type or select.
         Editing units or price replaces the position outright (this is a snapshot, not a running ledger) — cost basis resets to the new value, since contribution history usually isn't available for insurer-administered pensions.
-        Contributions feed each provider's XIRR — add them one at a time above, or in bulk on the Import CSV tab's "Pension contributions" mode.
+        Contributions feed each provider's XIRR — add them one at a time above, or in bulk on the Import tab's "Pension contributions" mode.
         SIPP and LISA are both tax-sheltered, so nothing here affects any CGT or income-tax figure elsewhere in the app; it only feeds your total wealth.
       </p>
     </div>
