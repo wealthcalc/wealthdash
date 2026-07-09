@@ -1122,9 +1122,57 @@ wrapper system every other holding uses.
   median and 10th/90th percentile lines overlaid on one fan chart (base in
   green, comparison dashed in blue).
 
+## Phase 3, step 5: IBKR Flex Web Service — live pull
+- **`api/ibkr-flex.mjs` + `api/_lib/ibkr-flex-xml.mjs`** — a Vercel proxy for
+  IBKR's Flex Web Service (`ndcdyn.interactivebrokers.com`), same reason
+  api/quotes.mjs proxies Yahoo: no CORS for browser origins. Runs the
+  documented two-step flow (SendRequest → GetStatement, retried with
+  backoff since IBKR generates the report asynchronously) and hands back
+  plain `{normalisedAttrName: value}` rows for Trades/Cash Transactions/
+  Cash Report/Open Positions — no XML/DOM dependency, just two regexes
+  (Flex Statement XML is flat, attribute-per-row), same "no heavy
+  dependency" approach as `_lib/dmo-gilt-parser.mjs`'s RTF stripping. The
+  Flex Query ID and token are supplied by the CLIENT on every call and
+  never written to disk/logged server-side — this function exists purely
+  to get around the CORS wall, not to hold credentials.
+- **`core/ibkr-flex.mjs`** — shapes that raw pull into the EXACT same
+  `{trades, income, warnings, format}` structure `parseIBKR()`
+  (`core/ibkr-import.mjs`) already produces from a pasted Flex/Activity
+  CSV, by reusing that module's own row-mapping functions (now exported as
+  `ibTradeFromRow`/`ibCashFromRow`) — a live pull and a pasted CSV go
+  through IDENTICAL FX/currency handling, wrapper defaulting, and
+  needs-FX flagging, so every downstream consumer (ImportTab's preview
+  table, dedupe, the actual import) works on either without caring which
+  one produced it. 17 new node tests, including an end-to-end
+  XML-string → shaped-trades test.
+- **Import tab**: the existing "Interactive Brokers" import mode gained a
+  Paste CSV / Pull live (Flex Web Service) toggle. Live mode needs a Flex
+  Query ID and a Flex Web Service token (both entered once, stored
+  locally in the browser like the existing Alpha Vantage key — never sent
+  anywhere except to IBKR via this app's own proxy) and a Flex Query
+  configured with the Trades and Cash Transactions sections enabled.
+  Ending cash balances from the Cash Report are shown as a reconciliation
+  aid, not auto-imported. IBKR has no ISA/SIPP/LISA/VCT concept, so pulled
+  rows land in whichever wrapper is selected (defaults to GIA).
+- **Backup version 11** — adds `ibkrQueryId`, `ibkrToken`; older backups
+  restore exactly as before. New persisted keys registered in
+  `durable.js`'s `PERSIST_KEYS`, with the exhaustiveness test updated.
+  Note the backup file itself will contain the Flex token if one's set,
+  same as it already contains the Alpha Vantage key — treat exported
+  backup files with the same care as any file holding an API credential.
+- **Honesty note**: this was built strictly to IBKR's documented, decade-
+  stable Flex Statement XML schema (attribute names verified against
+  IBKR's own field reference), and the parsing pipeline is fully
+  node-tested against a synthetic statement — but this sandbox has no way
+  to reach IBKR's servers, so the first live pull against a real account
+  is the actual end-to-end test. If it comes back with zero trades/income
+  despite a successful (200) response, the most likely cause is the Flex
+  Query itself not having the Trades/Cash Transactions sections enabled —
+  check that first.
+
 ## Tests
 ```
-npm test        # node --test: 290 tests across the core modules + the DMO parser
+npm test        # node --test: 307 tests across the core modules + the DMO parser
 ```
 
 ## Deploy (recommended: Git → new Vercel project)

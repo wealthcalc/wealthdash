@@ -44,6 +44,8 @@ export const PERSIST_KEYS = {
   privateEvents: "cgt.privateevents",
   rsuGrants: "cgt.rsugrants",
   rsuEvents: "cgt.rsuevents",
+  ibkrQueryId: "cgt.ibkrqueryid",
+  ibkrToken: "cgt.ibkrtoken",
 };
 // Present in any real dataset — used to detect "localStorage was emptied".
 const SENTINEL_LS_KEYS = ["cgt.txns", "cgt.valuations", "cgt.pensioncf"];

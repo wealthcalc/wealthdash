@@ -4,6 +4,7 @@ import { Upload, Wand2, RefreshCw, FileUp, AlertTriangle, Copy, Check } from "lu
 import { WRAPPERS, normWrapper } from "../core/portfolio.mjs";
 import { guessPensionColumns, mapPensionRow } from "../core/pension-import.mjs";
 import { parseIBKR } from "../core/ibkr-import.mjs";
+import { shapeFlexPull, shapeCashReport } from "../core/ibkr-flex.mjs";
 import { parseISharesWorkbook } from "../core/ishares-eri.mjs";
 import { gbp, num, uid, todayISO, fxHistorical, Field, Empty, SubTabs, round2, dedupeAgainstExisting } from "../ui/shared.jsx";
 
@@ -50,9 +51,17 @@ const incomeKey = (e) => `${e.date}|${(e.ticker || "").toUpperCase()}|${e.kind}|
 const pensionKey = (c) => `${c.provider}|${c.date}|${c.type}|${round2(c.nativeAmount)}`;
 const eriKey = (e) => `${(e.ticker || "").toUpperCase()}|${e.periodEnd}|${e.distributionDate}`;
 
-function ImportTab({ setTxns, setTab, setIncomeEntries, setEriEntries, secMeta, setPensionCashflows, pensionCashflows = [], recomputeProviderCost, txns = [], incomeEntries = [], eriEntries = [] }) {
+function ImportTab({
+  setTxns, setTab, setIncomeEntries, setEriEntries, secMeta, setPensionCashflows, pensionCashflows = [], recomputeProviderCost,
+  txns = [], incomeEntries = [], eriEntries = [],
+  ibkrQueryId = "", setIbkrQueryId, ibkrToken = "", setIbkrToken,
+}) {
   const [mode, setMode] = useState("ibkr");
   const [wrapper, setWrapper] = useState("GIA");
+  const [ibkrSource, setIbkrSource] = useState("paste"); // "paste" | "live"
+  const [flexBusy, setFlexBusy] = useState(false);
+  const [flexError, setFlexError] = useState("");
+  const [cashReport, setCashReport] = useState(null);
   const [raw, setRaw] = useState("");
   const [parsed, setParsed] = useState(null);
   const [map, setMap] = useState({});
@@ -70,6 +79,27 @@ function ImportTab({ setTxns, setTab, setIncomeEntries, setEriEntries, secMeta, 
   // ---- IBKR ----
   const parseIb = (text) => { const t = (text ?? raw).trim(); if (!t) return; setIb(parseIBKR(t, { defaultWrapper: wrapper })); };
   React.useEffect(() => { if (ib) setIb((r) => ({ ...r, trades: r.trades.map((t) => ({ ...t, wrapper })), income: r.income.map((t) => ({ ...t, wrapper })) })); }, [wrapper]); // eslint-disable-line
+
+  // ---- IBKR: live pull via the Flex Web Service (api/ibkr-flex.mjs proxies
+  // the SendRequest -> GetStatement flow — IBKR has no CORS for browsers).
+  // Produces the EXACT same {trades, income, warnings} shape as parseIBKR()
+  // above (see core/ibkr-flex.mjs), so it feeds straight into the same `ib`
+  // state and the same preview/import UI below, unchanged.
+  const pullFromIbkr = async () => {
+    if (!ibkrQueryId.trim() || !ibkrToken.trim()) { setFlexError("Enter both your Flex Query ID and token first."); return; }
+    setFlexBusy(true); setFlexError(""); setNote(""); setCashReport(null);
+    try {
+      const url = `/api/ibkr-flex?token=${encodeURIComponent(ibkrToken.trim())}&queryId=${encodeURIComponent(ibkrQueryId.trim())}`;
+      const r = await fetch(url);
+      const j = await r.json();
+      if (!r.ok) { setFlexError(j.error || `IBKR pull failed (${r.status}).`); setFlexBusy(false); return; }
+      setIb(shapeFlexPull(j, { defaultWrapper: wrapper }));
+      setCashReport(shapeCashReport(j));
+    } catch (e) {
+      setFlexError(e?.message || "Couldn't reach the IBKR proxy — is this running on the deployed app (not a local sandbox)?");
+    }
+    setFlexBusy(false);
+  };
   const doImportIb = async () => {
     if (!ib) return; setImporting(true); setNote("");
     const cache = {};
@@ -273,20 +303,53 @@ function ImportTab({ setTxns, setTab, setIncomeEntries, setEriEntries, secMeta, 
 
       {mode === "ibkr" && (
         <>
-          <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 space-y-3">
-            <p className="text-sm text-[var(--muted)]">Paste (or upload) an IBKR <strong>Flex Query</strong> CSV or an <strong>Activity Statement</strong> CSV. Trades and dividends/interest are both picked up. A Flex query carries an FX-to-base rate, so GBP conversion is automatic; Activity exports lack it, so non-GBP rows are converted by trade-date FX on import. {wrapper !== "GIA" && <span className="text-[var(--fg)]">Note: {wrapper} is tax-sheltered, so these rows won't affect CGT or income tax.</span>}</p>
-            <textarea value={raw} onChange={(e) => setRaw(e.target.value)} rows={7} placeholder={IBKR_EXAMPLE} className="input num w-full font-mono text-xs" />
-            <div className="flex items-center gap-2">
-              <button onClick={() => parseIb()} className="btn-accent"><Wand2 size={15} /> Parse</button>
-              <label className="text-sm text-[var(--accent)] cursor-pointer flex items-center gap-1"><Upload size={14} /> Upload CSV<input type="file" accept=".csv,text/csv" className="hidden" onChange={(e) => readFile(e, (txt) => { setRaw(txt); parseIb(txt); })} /></label>
-              <CopyExampleButton text={IBKR_EXAMPLE} />
-            </div>
+          <div className="flex items-center gap-2 text-xs">
+            {[["paste", "Paste CSV"], ["live", "Pull live (Flex Web Service)"]].map(([k, label]) => (
+              <button key={k} onClick={() => setIbkrSource(k)}
+                className={"px-2.5 py-1 rounded-full border font-medium transition " +
+                  (ibkrSource === k ? "border-[var(--accent)] bg-[var(--accent)] text-[var(--accent-fg)]" : "border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)]")}>
+                {label}
+              </button>
+            ))}
           </div>
+
+          {ibkrSource === "paste" && (
+            <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 space-y-3">
+              <p className="text-sm text-[var(--muted)]">Paste (or upload) an IBKR <strong>Flex Query</strong> CSV or an <strong>Activity Statement</strong> CSV. Trades and dividends/interest are both picked up. A Flex query carries an FX-to-base rate, so GBP conversion is automatic; Activity exports lack it, so non-GBP rows are converted by trade-date FX on import. {wrapper !== "GIA" && <span className="text-[var(--fg)]">Note: {wrapper} is tax-sheltered, so these rows won't affect CGT or income tax.</span>}</p>
+              <textarea value={raw} onChange={(e) => setRaw(e.target.value)} rows={7} placeholder={IBKR_EXAMPLE} className="input num w-full font-mono text-xs" />
+              <div className="flex items-center gap-2">
+                <button onClick={() => parseIb()} className="btn-accent"><Wand2 size={15} /> Parse</button>
+                <label className="text-sm text-[var(--accent)] cursor-pointer flex items-center gap-1"><Upload size={14} /> Upload CSV<input type="file" accept=".csv,text/csv" className="hidden" onChange={(e) => readFile(e, (txt) => { setRaw(txt); parseIb(txt); })} /></label>
+                <CopyExampleButton text={IBKR_EXAMPLE} />
+              </div>
+            </div>
+          )}
+
+          {ibkrSource === "live" && (
+            <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 space-y-3">
+              <p className="text-sm text-[var(--muted)]">
+                Pulls trades and cash transactions straight from IBKR's Flex Web Service — no copy/paste needed. Requires a Flex Query (Performance &amp; Reports → Flex Queries) with the <strong>Trades</strong> and <strong>Cash Transactions</strong> sections enabled, and the Flex Web Service turned on (same page → Flex Web Service Configuration) to get a token. Both are stored only in this browser and sent straight to IBKR via this app's own proxy — never to anyone else. {wrapper !== "GIA" && <span className="text-[var(--fg)]">Note: {wrapper} is tax-sheltered, so these rows won't affect CGT or income tax.</span>} IBKR has no ISA/SIPP concept — everything pulled lands in the wrapper selected above (defaults to GIA, since an IBKR account is an ordinary taxable brokerage account for UK purposes).
+              </p>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 items-end">
+                <Field label="Flex Query ID"><input value={ibkrQueryId} onChange={(e) => setIbkrQueryId(e.target.value)} placeholder="e.g. 1568009" className="input w-full font-mono text-xs" /></Field>
+                <Field label="Flex Web Service token"><input value={ibkrToken} onChange={(e) => setIbkrToken(e.target.value)} placeholder="paste your token" type="password" className="input w-full font-mono text-xs" /></Field>
+                <button onClick={pullFromIbkr} disabled={flexBusy} className="btn-accent disabled:opacity-50">{flexBusy ? <RefreshCw size={15} className="animate-spin" /> : <RefreshCw size={15} />} {flexBusy ? "Pulling…" : "Pull from IBKR"}</button>
+              </div>
+              {flexError && (
+                <div className="flex items-start gap-2 text-xs rounded-lg px-3 py-2 text-[var(--loss)]" style={{ background: "color-mix(in srgb, var(--loss) 10%, transparent)" }}><AlertTriangle size={14} className="mt-0.5 shrink-0" />{flexError}</div>
+              )}
+              {cashReport && cashReport.length > 0 && (
+                <div className="text-xs text-[var(--muted)]">
+                  IBKR cash balance{cashReport.length > 1 ? "s" : ""}: {cashReport.map((c) => `${num(c.endingCash, 2)} ${c.currency}`).join(", ")} — a reconciliation check against the Wealth tab, not imported automatically.
+                </div>
+              )}
+            </div>
+          )}
 
           {ib && (
             <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 space-y-3">
               <div className="flex items-center gap-4 text-sm flex-wrap">
-                <span className="font-semibold">{ib.format === "activity" ? "Activity Statement" : "Flex Query"} detected</span>
+                <span className="font-semibold">{ibkrSource === "live" ? "Live Flex pull" : ib.format === "activity" ? "Activity Statement" : "Flex Query"} detected</span>
                 <span className="num">{ib.trades.length} trades</span>
                 <span className="num">{ib.income.filter((i) => i.kind === "dividend").length} dividends</span>
                 <span className="num">{ib.income.filter((i) => i.kind === "interest").length} interest</span>

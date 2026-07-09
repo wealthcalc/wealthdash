@@ -102,6 +102,17 @@ function _ibActivity(rows, defaultWrapper, baseCurrency, warnings) {
       income.push({ date, ticker: symM ? symM[1].toUpperCase() : "", isin: isinM ? isinM[1] : "", kind, nativeCurrency: currency, nativeAmount: amount, fxRate: currency === "GBP" ? 1 : null, amount: gbp == null ? null : Math.round(gbp * 100) / 100, needsFx, wrapper: defaultWrapper }); } }
   return { trades, income };
 }
+// Exported under plain names for reuse by core/ibkr-flex.mjs (the live
+// Flex Web Service pull) — same row-shaping rules (FX/currency handling,
+// wrapper defaulting, needsFx flagging) whether a trade/cash row came from
+// a pasted CSV or a live XML pull, so the two import paths can never
+// silently diverge. `get(...)` just needs to accept a list of candidate
+// column/attribute names and return the first that's present — it doesn't
+// care whether it's backed by a CSV row or an XML element's attributes.
+export const ibTradeFromRow = _ibTrade;
+export const ibCashFromRow = _ibCash;
+export const ibNormKey = _ibnorm;
+
 export function parseIBKR(text, { defaultWrapper = "GIA", baseCurrency = "GBP" } = {}) {
   const rows = parseCSVRows(text); if (!rows.length) return { trades: [], income: [], warnings: ["Empty file."], baseCurrency };
   const warnings = [];

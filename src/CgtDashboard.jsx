@@ -50,6 +50,7 @@ export default function App() {
     planInputs, setPlanInputs,
     privateHoldings, setPrivateHoldings, privateEvents, setPrivateEvents,
     rsuGrants, setRsuGrants, rsuEvents, setRsuEvents,
+    ibkrQueryId, setIbkrQueryId, ibkrToken, setIbkrToken,
   } = useAppStore();
   // Shared by the Pension tab (one-off add) and the Import tab (bulk CSV) —
   // one allocation function, not two copies that could drift. Accepts an
@@ -263,11 +264,12 @@ export default function App() {
 
   const exportJSON = async () => {
     const backup = {
-      __cgtBackup: true, version: 10, exportedAt: new Date().toISOString(),
+      __cgtBackup: true, version: 11, exportedAt: new Date().toISOString(),
       txns, incomeEntries, eriEntries, income, carried, cash, valuations,
       prices, priceMeta, avKey, avMeta, secMeta, pensionCashflows,
       properties, mortgages, otherLiabilities, cashAccounts, allowanceOverrides,
       planInputs, privateHoldings, privateEvents, rsuGrants, rsuEvents,
+      ibkrQueryId, ibkrToken,
     };
     const text = JSON.stringify(backup, null, 2);
     let downloaded = false;
@@ -319,6 +321,8 @@ export default function App() {
           if (Array.isArray(d.privateEvents)) setPrivateEvents(d.privateEvents.map((x) => ({ ...x, id: x.id || uid() })));
           if (Array.isArray(d.rsuGrants)) setRsuGrants(d.rsuGrants.map((x) => ({ ...x, id: x.id || uid() })));
           if (Array.isArray(d.rsuEvents)) setRsuEvents(d.rsuEvents.map((x) => ({ ...x, id: x.id || uid() })));
+          if (typeof d.ibkrQueryId === "string") setIbkrQueryId(d.ibkrQueryId);
+          if (typeof d.ibkrToken === "string") setIbkrToken(d.ibkrToken);
           flash(`Restored: ${n(d.txns)} transactions, ${n(d.incomeEntries)} dividend/interest entries, ${n(d.eriEntries)} ERI entries, ${n(d.pensionCashflows)} pension cashflows, ${n(d.properties)} properties, ${n(d.mortgages)} mortgages, ${n(d.cashAccounts)} cash accounts, ${n(d.privateHoldings)} private holdings, ${n(d.rsuGrants)} RSU grants, plus prices, allowance overrides, retirement plan inputs and settings.`);
         } else {
           setError("That file isn't a recognised backup — expected a transaction array or a full backup file exported from this app.");
@@ -435,7 +439,7 @@ export default function App() {
               {tab === "private" && <PrivateTab {...{ holdings: privateHoldings, setHoldings: setPrivateHoldings, events: privateEvents, setEvents: setPrivateEvents }} />}
               {tab === "rsu" && <RsuTab {...{ grants: rsuGrants, setGrants: setRsuGrants, events: rsuEvents, setEvents: setRsuEvents, prices, setPrices, avKey, setAvKey, avMeta, setAvMeta, priceMeta, setPriceMeta, secMeta, setSecMeta, dmoReportDate, setDmoReportDate, txns }} />}
               {tab === "ledger" && <LedgerTab {...{ txns, setTxns }} />}
-              {tab === "import" && <ImportTab {...{ setTxns, setTab, setIncomeEntries, setEriEntries, secMeta, setPensionCashflows, pensionCashflows, recomputeProviderCost, txns, incomeEntries, eriEntries }} />}
+              {tab === "import" && <ImportTab {...{ setTxns, setTab, setIncomeEntries, setEriEntries, secMeta, setPensionCashflows, pensionCashflows, recomputeProviderCost, txns, incomeEntries, eriEntries, ibkrQueryId, setIbkrQueryId, ibkrToken, setIbkrToken }} />}
             </Suspense>
             </div>
 

@@ -83,6 +83,13 @@ const useAppStore = create((set) => {
     // grant date) and events (vest tranches + sales — see core/rsu.mjs).
     rsuGrants: ls.get("cgt.rsugrants", []), setRsuGrants: upd("rsuGrants"),
     rsuEvents: ls.get("cgt.rsuevents", []), setRsuEvents: upd("rsuEvents"),
+    // IBKR Flex Web Service credentials (Import tab's live pull) — same
+    // "client holds it, sent per-request, never stored server-side"
+    // pattern as avKey. Still persisted locally like avKey so it doesn't
+    // need retyping every session; the security boundary that matters is
+    // server-side (api/ibkr-flex.mjs never writes it anywhere), not this.
+    ibkrQueryId: ls.get("cgt.ibkrqueryid", ""), setIbkrQueryId: upd("ibkrQueryId"),
+    ibkrToken: ls.get("cgt.ibkrtoken", ""), setIbkrToken: upd("ibkrToken"),
   };
 });
 
