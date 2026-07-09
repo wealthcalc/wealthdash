@@ -124,14 +124,18 @@ function LedgerTab({ txns, setTxns }) {
               <SortTh id="nativeAmount" label="Native" sort={sort} onSort={toggleSort} align="right" className="px-2 py-1.5 font-medium" />
               <SortTh id="fxRate" label="FX" sort={sort} onSort={toggleSort} align="right" className="px-2 py-1.5 font-medium" />
               <SortTh id="gbpAmount" label="GBP" sort={sort} onSort={toggleSort} align="right" className="px-2 py-1.5 font-medium" />
-              <th className="px-2 py-1.5 text-left font-medium">Delete</th>
+              {/* Sticky to the right so it's never scrolled out of view on a
+                  table this wide — the whole point of a delete control is
+                  that it's always reachable, not something you have to go
+                  hunting for past eight other columns. */}
+              <th className="px-2 py-1.5 text-left font-medium sticky right-0 bg-[var(--panel2)] border-l border-[var(--border)]">Delete</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-[var(--border)] bg-[var(--panel)]">
             {filteredRows.map((t) => {
               const isGBP = (t.nativeCurrency || "GBP") === "GBP";
               return (
-                <tr key={t.id} className="hover:bg-[var(--panel2)]">
+                <tr key={t.id} className="group hover:bg-[var(--panel2)]">
                   <td className="px-2 py-1"><input type="date" value={t.date} onChange={(e) => updateTxn(t.id, { date: e.target.value })} className="input num w-[9.5rem] py-1 text-sm" /></td>
                   <td className="px-2 py-1"><input value={t.ticker} onChange={(e) => updateTxn(t.id, { ticker: e.target.value.toUpperCase() })} className="input w-24 py-1 text-sm font-medium" /></td>
                   <td className="px-2 py-1">
@@ -153,7 +157,7 @@ function LedgerTab({ txns, setTxns }) {
                     <input type="number" value={t.fxRate ?? 1} disabled={isGBP} onChange={(e) => updateTxn(t.id, { fxRate: +e.target.value || 0 })} className="input num w-20 py-1 text-sm text-right disabled:opacity-50" />
                   </td>
                   <td className="px-2 py-1 text-right"><NumberInput value={t.gbpAmount} onChange={(v) => updateTxn(t.id, { gbpAmount: v })} className="w-28 py-1 text-sm font-medium" /></td>
-                  <td className="px-2 py-1">
+                  <td className="px-2 py-1 sticky right-0 bg-[var(--panel)] group-hover:bg-[var(--panel2)] border-l border-[var(--border)]">
                     <TwoStepDelete onConfirm={() => setTxns((p) => p.filter((x) => x.id !== t.id))} label={`Delete transaction: ${t.date} ${t.ticker}`} />
                   </td>
                 </tr>
