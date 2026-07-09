@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  extractElements, decodeXmlEntities, parseFlexStatementResponse, isFlexStatement, extractAccountId,
+  extractElements, decodeXmlEntities, parseFlexStatementResponse, isFlexStatement, extractAccountId, extractStatementInfo,
 } from "../../api/_lib/ibkr-flex-xml.mjs";
 
 const SAMPLE_STATEMENT = `<?xml version="1.0"?>
@@ -108,4 +108,26 @@ test("isFlexStatement: true for an actual statement, false for the status wrappe
 test("extractAccountId: reads accountId off the FlexStatement element", () => {
   assert.equal(extractAccountId(SAMPLE_STATEMENT), "U1234567");
   assert.equal(extractAccountId("<FlexQueryResponse></FlexQueryResponse>"), null);
+});
+
+/* --------------------------- extractStatementInfo ----------------------------- */
+
+test("extractStatementInfo: reads accountId, fromDate, toDate and period off FlexStatement", () => {
+  const info = extractStatementInfo(SAMPLE_STATEMENT);
+  assert.equal(info.accountId, "U1234567");
+  assert.equal(info.fromDate, "20250101");
+  assert.equal(info.toDate, "20260101");
+});
+
+test("extractStatementInfo: a single-day period statement (the real-world bug repro)", () => {
+  const xml = `<FlexQueryResponse><FlexStatements><FlexStatement accountId="U9999999" fromDate="20260708" toDate="20260708" period="LastBusinessDay"></FlexStatement></FlexStatements></FlexQueryResponse>`;
+  const info = extractStatementInfo(xml);
+  assert.equal(info.fromDate, "20260708");
+  assert.equal(info.toDate, "20260708");
+  assert.equal(info.period, "LastBusinessDay");
+});
+
+test("extractStatementInfo: missing FlexStatement tag returns all-null rather than throwing", () => {
+  const info = extractStatementInfo("<FlexQueryResponse></FlexQueryResponse>");
+  assert.deepEqual(info, { accountId: null, fromDate: null, toDate: null, period: null });
 });

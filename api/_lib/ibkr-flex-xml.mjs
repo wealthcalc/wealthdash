@@ -70,3 +70,14 @@ export function extractAccountId(xml) {
   const m = (xml || "").match(/<FlexStatement\s[^>]*\baccountId="([^"]*)"/);
   return m ? m[1] : null;
 }
+
+// fromDate/toDate/period off the <FlexStatement ...> opening tag — surfaced
+// so the client can explain an empty pull ("your query only covers a
+// single day") rather than just reporting "no rows found" with no context.
+export function extractStatementInfo(xml) {
+  const tagM = (xml || "").match(/<FlexStatement\s([^>]*)>/);
+  if (!tagM) return { accountId: null, fromDate: null, toDate: null, period: null };
+  const attrs = tagM[1];
+  const get = (name) => { const m = attrs.match(new RegExp(`\\b${name}="([^"]*)"`)); return m ? m[1] : null; };
+  return { accountId: get("accountId"), fromDate: get("fromDate"), toDate: get("toDate"), period: get("period") };
+}

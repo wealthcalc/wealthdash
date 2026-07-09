@@ -20,7 +20,7 @@
 // "not ready yet" Fail response until it's done (usually a few seconds),
 // so this retries with a short backoff before giving up.
 
-import { extractElements, parseFlexStatementResponse, isFlexStatement, extractAccountId } from "./_lib/ibkr-flex-xml.mjs";
+import { extractElements, parseFlexStatementResponse, isFlexStatement, extractStatementInfo } from "./_lib/ibkr-flex-xml.mjs";
 
 const SEND_URL = (token, queryId) =>
   `https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService/SendRequest?t=${encodeURIComponent(token)}&q=${encodeURIComponent(queryId)}&v=3`;
@@ -66,10 +66,15 @@ export default async function handler(req, res) {
       return;
     }
 
+    const info = extractStatementInfo(statementXml);
     res.status(200).json({
-      accountId: extractAccountId(statementXml),
+      ...info,
       trades: extractElements(statementXml, "Trade"),
       cashTransactions: extractElements(statementXml, "CashTransaction"),
+      // Not every Flex Query includes Cash Transactions — Interest Accruals
+      // is a common alternative that at least covers interest (not
+      // dividends), so it's pulled too and shaped separately client-side.
+      interestAccruals: extractElements(statementXml, "InterestAccrualsCurrency"),
       cashReport: extractElements(statementXml, "CashReportCurrency"),
       openPositions: extractElements(statementXml, "OpenPosition"),
     });

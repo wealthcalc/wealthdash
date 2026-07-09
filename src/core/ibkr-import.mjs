@@ -112,6 +112,7 @@ function _ibActivity(rows, defaultWrapper, baseCurrency, warnings) {
 export const ibTradeFromRow = _ibTrade;
 export const ibCashFromRow = _ibCash;
 export const ibNormKey = _ibnorm;
+export const ibDate = _ibdate;
 
 export function parseIBKR(text, { defaultWrapper = "GIA", baseCurrency = "GBP" } = {}) {
   const rows = parseCSVRows(text); if (!rows.length) return { trades: [], income: [], warnings: ["Empty file."], baseCurrency };

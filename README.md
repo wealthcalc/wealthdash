@@ -1170,9 +1170,16 @@ wrapper system every other holding uses.
   Query itself not having the Trades/Cash Transactions sections enabled —
   check that first.
 
+## Bug fix: IBKR live pull reported "no rows" against a real account with real data
+Diagnosed against an actual Flex Statement export from a real account (not a synthetic fixture) — surfaced two real gaps, both fixed:
+- **The generic "no Trade or Cash Transaction rows" message was accurate but unhelpful.** The account's Flex Query was configured with a `period="LastBusinessDay"` date range (one single day) and had the **Interest Accruals** section enabled instead of **Cash Transactions** — so trades were genuinely absent (correct, just not explained) and £8.23 of accrued interest was silently dropped (a real gap: nothing parsed `InterestAccrualsCurrency` rows at all).
+- **`core/ibkr-flex.mjs` now maps Interest Accruals into income too** — a different shape from Cash Transactions (`interestAccrued` not `amount`, no per-security symbol, a `fromDate`/`toDate` window not a settle date), so it's its own small mapping rather than a reuse of `ibCashFromRow`. IBKR's synthetic `BASE_SUMMARY` row (the whole account's accrual already converted to base currency) is used only when no real per-currency rows exist, so a multi-currency account never double-counts.
+- **Warnings are now specific instead of one generic message**: a single-day statement explains the date-range fix directly ("widen the Flex Query's date range... e.g. 'Last 365 Days'"); Interest Accruals present without Cash Transactions flags that dividends specifically won't come through until that section's added; a genuinely empty statement (no sections enabled at all) gets the original catch-all message. `api/ibkr-flex.mjs` now also returns the statement's `fromDate`/`toDate`/`period` (via a new `extractStatementInfo()`) so the client can reason about *why* a pull came back thin, not just *that* it did.
+- 8 new node tests, including a direct repro of the real account's statement shape.
+
 ## Tests
 ```
-npm test        # node --test: 307 tests across the core modules + the DMO parser
+npm test        # node --test: 315 tests across the core modules + the DMO parser
 ```
 
 ## Deploy (recommended: Git → new Vercel project)
