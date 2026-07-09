@@ -126,6 +126,13 @@ test("householdNetWorth: no property/debt at all is just the invested total", ()
   assert.equal(out.netWorth, 123456);
   assert.equal(out.propertyEquity, 0);
   assert.equal(out.totalLiabilities, 0);
+  assert.equal(out.privateValue, 0);
+});
+
+test("householdNetWorth: private holding valuations (EIS/SEIS/LP) add straight in, no debt netting", () => {
+  const out = householdNetWorth({ investedTotal: 100000, privateValue: 45000 });
+  assert.equal(out.privateValue, 45000);
+  assert.equal(out.netWorth, 145000);
 });
 
 /* -------------------------------- regions --------------------------------- */

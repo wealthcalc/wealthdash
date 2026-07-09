@@ -70,6 +70,14 @@ const useAppStore = create((set) => {
     // encoding `ls` uses, so it reads straight through as a one-time migration.
     planInputs: ls.get("cgt.planinputs", ls.get("uk-retirement-planner:inputs", null)),
     setPlanInputs: upd("planInputs"),
+    // Private investments (EIS/SEIS/LP funds — e.g. a direct EIS holding, or
+    // a venture LP like "Passion Capital IV"/"JamJar Fund II"). Two flat
+    // arrays, same "own array, own setter" shape as properties/mortgages:
+    // holdings (identity, type, share-issue date, relief %, manual
+    // valuation) and events (capital calls, distributions, write-offs —
+    // see core/private-investments.mjs for the full model).
+    privateHoldings: ls.get("cgt.privateholdings", []), setPrivateHoldings: upd("privateHoldings"),
+    privateEvents: ls.get("cgt.privateevents", []), setPrivateEvents: upd("privateEvents"),
   };
 });
 

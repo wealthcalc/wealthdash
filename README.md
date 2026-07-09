@@ -972,6 +972,61 @@ with an equity gain and a large gilt "gain" in the same tax year, confirming
 only the equity figure appears and the gilt is flagged as excluded, not
 silently dropped.
 
+## Private investments: EIS/SEIS shares and LP/VC funds
+
+New tracked asset class for money that doesn't fit anywhere else in the
+app: a direct EIS/SEIS investment, or a venture LP fund like "Passion
+Capital IV" or "JamJar Fund II". None of these are exchange-traded — no
+market price exists, and money moves via irregular capital calls and
+distributions rather than priced buy/sell trades — so they get their own
+tab and data model rather than being squeezed into the transaction-ledger/
+wrapper system every other holding uses.
+
+- **`core/private-investments.mjs`** (new, pure, 22 node tests) — two flat
+  arrays, same "own array, own setter" shape as properties/mortgages: a
+  HOLDING (identity, type EIS/SEIS/LP/other, share-issue date, income-tax
+  relief % claimed, manual valuation) and an EVENT ledger against it
+  ("call" for money invested — covers a single EIS subscription and an LP
+  fund's staged capital calls the same way, so a fund drawn down in
+  tranches is just several "call" events — "distribution_capital",
+  "distribution_income", or "write_off"). `holdingSummary` gives
+  called/distributed/current-value/MOIC/XIRR per holding (XIRR reuses
+  `returns.mjs`'s solver: calls as negative flows, distributions positive,
+  a terminal flow of today's valuation if still held); `privateTotals`
+  pools every holding's cashflows into one blended portfolio MOIC/XIRR.
+- **EIS/SEIS reliefs, modelled explicitly (2025/26 rates, stated not
+  assumed)**: income tax relief at 30%/50% of the amount invested,
+  aggregated by tax year of each holding's earliest capital call ACROSS
+  every EIS/SEIS holding against the combined annual cap (EIS £1m, SEIS
+  £200k) — the same "combined limit, not per-holding" check as the
+  ISA/LISA £20k modelling in `allowances.mjs`; a 3-year CGT-exemption
+  clock from the share-issue date (`cgtExemptionStatus`); and, for a
+  written-off or underwater holding, the amount eligible for EIS/SEIS loss
+  relief AGAINST INCOME rather than only gains (`lossReliefEligible`) — net
+  of income tax relief already given and any capital already returned,
+  usually far more valuable at the higher/additional rate than ordinary
+  CGT loss relief. LP/"other" holdings get none of this (0% relief, no
+  clock, no income-side loss relief) — they're just illiquid GIA-style
+  investments; CGT on their eventual distributions/exit isn't computed
+  here at all (there's no Section-104-style cost-pool concept for a fund's
+  irregular capital calls the way there is for priced shares) — the UI
+  says so rather than fabricating a number.
+- **New "Private" tab** (Portfolio section of the sidebar): headline stats
+  (called, distributed, current valuation, blended MOIC/XIRR), one
+  expandable card per holding with its own capital-call/distribution
+  ledger and CGT-exemption/loss-relief status chips, an add-holding form,
+  and an EIS/SEIS relief-by-tax-year table mirroring the Allowances tab's
+  style.
+- **Counted in net worth**: `householdNetWorth()` (core/property.mjs) gets
+  a new `privateValue` parameter — current valuations add straight into
+  net worth (no debt-netting concept, unlike property/mortgages) — and
+  Home's balance-sheet breakdown line shows a "Private holdings" figure
+  once any exist, same additive pattern as the Property tab's rollout.
+- **Backup version 9** — adds `privateHoldings`, `privateEvents`; older
+  backups restore exactly as before, just without this data. New
+  persisted keys registered in `durable.js`'s `PERSIST_KEYS`, with the
+  exhaustiveness test updated.
+
 ## Tests
 ```
 npm test        # node --test: 76 tests across the four core modules + the DMO parser
