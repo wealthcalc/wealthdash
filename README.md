@@ -1027,9 +1027,75 @@ wrapper system every other holding uses.
   persisted keys registered in `durable.js`'s `PERSIST_KEYS`, with the
   exhaustiveness test updated.
 
+## Ledger field widths + income calendar tax-treatment flag + income-by-wrapper chart
+- **Transactions tab list**: Date/Side/FX columns narrowed (they don't need
+  the full width of every other editable field); the add-entry form's Date
+  field is now wider than its 8 siblings (`grid-cols-[1.3fr_repeat(8,1fr)]`
+  instead of an equal 9-way split) — `yyyy-mm-dd` plus the native
+  date-picker icon needs more room than a plain text/number field.
+- **Income entries now carry a wrapper.** The "Dividends & interest" add
+  form was missing a Wrapper field entirely — every entry silently defaulted
+  to GIA via `normWrapper`'s null-handling, which meant the existing
+  "All investment income by wrapper" table could only ever show ISA/SIPP/
+  VCT rows for CSV-imported data, never anything added by hand. Fixed by
+  adding a Wrapper selector to the add form (defaults to GIA, same as
+  before, so nothing changes for existing data) and a Wrapper column to the
+  entries table.
+- **Income calendar tax-treatment flag**: every row in the Calendar
+  sub-tab now shows a tax-treatment badge — `GIA/taxed`, `ISA/tax-free`,
+  `VCT/tax-free`, `SIPP/tax-free`, `LISA/tax-free`, or `Interest/taxed` for
+  un-attributed cash interest with no wrapper on record. Gilt redemptions
+  and cash maturities show no badge (they're capital coming back, not
+  income). `buildIncomeCalendar()` (core/income-calendar.mjs) now threads
+  a `wrapper` through every event: straight from `gilts.mjs`'s cashflows
+  and the cash account record for gilt/cash rows, and from the MOST RECENT
+  matching income entry for dividend/interest forecasts (a holding can be
+  re-registered onto a different wrapper, so the latest record is the best
+  guide to where future payments will land).
+- **New chart: "Income by wrapper, year on year"** on the Income tab's Tax
+  by year sub-tab — a stacked bar chart (recharts, already a dependency)
+  built straight from the existing `incomeAllWrappers` data, one bar per
+  tax year (oldest → newest, left to right), one coloured segment per
+  wrapper. Wrapper → colour is a fixed mapping (GIA/ISA/SIPP/LISA/VCT each
+  keep the same colour across years, unlike the index-based palette used
+  for allocation bars elsewhere) reusing the app's existing `--accent`,
+  `--gain`, `--m-same`, `--m-pool`, `--m-bb` CSS variables.
+
+## RSU vesting tracker
+- **New `core/rsu.mjs`** — same "holding + events" model as private
+  investments: a GRANT is the holding (ticker, grant date, optional note);
+  VEST and SALE are events against it. Unlike private investments, an RSU
+  ticker plugs straight into the app's EXISTING live-price pipeline — held
+  shares are valued at `prices[ticker]` (the same GBP-per-share map every
+  other tab already populates via LivePricesPanel/Yahoo/Alpha Vantage), so
+  there's no new price-fetch code anywhere in this feature. A future-dated
+  vest event IS the schedule (no separate "planned schedule" array to keep
+  in sync with "actual" vests) — `vestingSchedule()` just splits a grant's
+  vest events into vested/scheduled by date. `grantSummary()`/`rsuTotals()`
+  compute held shares, an average vest-date-FMV cost basis, and an
+  unrealised gain/loss — informational only, not a tax computation (see
+  the module's header comment for exactly why UK income-tax-at-vest and
+  CGT-on-sale aren't computed here, same honesty policy as the LP fund CGT
+  gap in private-investments.mjs). 11 new node tests.
+- **New "RSUs" tab** (Portfolio section of the sidebar): headline stats
+  (held/vested/unvested shares, current value, unrealised gain), an
+  embedded Live prices panel scoped to just the RSU tickers, an "Upcoming
+  vests" table pooling every grant's future tranches soonest-first, and one
+  expandable card per grant with its full vesting schedule, any sale
+  events, and add-grant/add-event forms — same layout language as the
+  Private tab.
+- **Counted in net worth**: `householdNetWorth()` (core/property.mjs) gets
+  a new `rsuValue` parameter (defaults to 0, same additive pattern as
+  `privateValue`) — held RSU value adds straight into net worth, and
+  Home's balance-sheet breakdown line shows an "RSU holdings" figure once
+  any exist.
+- **Backup version 10** — adds `rsuGrants`, `rsuEvents`; older backups
+  restore exactly as before. New persisted keys registered in
+  `durable.js`'s `PERSIST_KEYS`, with the exhaustiveness test updated.
+
 ## Tests
 ```
-npm test        # node --test: 76 tests across the four core modules + the DMO parser
+npm test        # node --test: 278 tests across the core modules + the DMO parser
 ```
 
 ## Deploy (recommended: Git → new Vercel project)

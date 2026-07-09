@@ -166,22 +166,26 @@ export function mortgagesEndingSoon(mortgages = [], today, withinDays = 180) {
 // plus property equity (mortgages already netted off inside it) plus
 // private-holding current valuations (EIS/SEIS/LP funds — see
 // core/private-investments.mjs; no leverage concept there, so it's added
-// straight in, not netted against a debt figure), minus any other,
-// non-mortgage debts = true household net worth. `privateValue` defaults
-// to 0 so every existing call site (and every existing test) is unaffected
-// until a caller actually has private holdings to pass in.
-export function householdNetWorth({ investedTotal = 0, properties = [], mortgages = [], otherLiabilities = [], privateValue = 0 } = {}) {
+// straight in, not netted against a debt figure) plus held RSU shares'
+// current value (core/rsu.mjs — same "added straight in" treatment, no
+// leverage concept), minus any other, non-mortgage debts = true household
+// net worth. `privateValue`/`rsuValue` default to 0 so every existing call
+// site (and every existing test) is unaffected until a caller actually has
+// that kind of holding to pass in.
+export function householdNetWorth({ investedTotal = 0, properties = [], mortgages = [], otherLiabilities = [], privateValue = 0, rsuValue = 0 } = {}) {
   const prop = netPropertyWorth(properties, mortgages);
   const otherDebt = totalOtherLiabilities(otherLiabilities);
   const pv = Number.isFinite(+privateValue) ? +privateValue : 0;
+  const rv = Number.isFinite(+rsuValue) ? +rsuValue : 0;
   return {
     investedTotal,
     propertyValue: prop.value,
     propertyDebt: prop.debt,
     propertyEquity: prop.equity,
     privateValue: pv,
+    rsuValue: rv,
     otherLiabilities: otherDebt,
     totalLiabilities: prop.debt + otherDebt,
-    netWorth: investedTotal + prop.equity + pv - otherDebt,
+    netWorth: investedTotal + prop.equity + pv + rv - otherDebt,
   };
 }

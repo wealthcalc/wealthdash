@@ -8,6 +8,7 @@ import { allocateCostByValueWeight } from "./core/pension-import.mjs";
 import { liabilityForYear, liabilityAllYears } from "./core/uk-tax.mjs";
 import { householdNetWorth } from "./core/property.mjs";
 import { privateTotals } from "./core/private-investments.mjs";
+import { rsuTotals } from "./core/rsu.mjs";
 import { effectiveCashByWrapper } from "./core/cash.mjs";
 import { buildIncomeCalendar } from "./core/income-calendar.mjs";
 import { taxYearEndChecklist } from "./core/tax-year-end.mjs";
@@ -31,6 +32,7 @@ const LedgerTab = lazy(() => import("./features/LedgerTab.jsx"));
 const ImportTab = lazy(() => import("./features/ImportTab.jsx"));
 const PropertyTab = lazy(() => import("./features/PropertyTab.jsx"));
 const PrivateTab = lazy(() => import("./features/PrivateTab.jsx"));
+const RsuTab = lazy(() => import("./features/RsuTab.jsx"));
 
 /* ============================== app =================================== */
 export default function App() {
@@ -47,6 +49,7 @@ export default function App() {
     cashAccounts, setCashAccounts, allowanceOverrides, setAllowanceOverrides,
     planInputs, setPlanInputs,
     privateHoldings, setPrivateHoldings, privateEvents, setPrivateEvents,
+    rsuGrants, setRsuGrants, rsuEvents, setRsuEvents,
   } = useAppStore();
   // Shared by the Pension tab (one-off add) and the Import tab (bulk CSV) —
   // one allocation function, not two copies that could drift. Accepts an
@@ -142,14 +145,22 @@ export default function App() {
     [privateHoldings, privateEvents]
   );
 
+  // RSU grants — held (vested, unsold) shares valued at the SAME live
+  // `prices` map the rest of the app already fetches; full vesting-schedule
+  // detail lives entirely in RsuTab.
+  const rsuSummary = useMemo(
+    () => rsuTotals(rsuGrants, rsuEvents, prices, todayISO()),
+    [rsuGrants, rsuEvents, prices]
+  );
+
   // Phase 2: true household net worth = investments + cash (the existing
-  // wealth model) + property equity + private-holding valuations − other
-  // (non-mortgage) liabilities. Mortgages are netted off inside property
-  // equity, not subtracted again.
+  // wealth model) + property equity + private-holding valuations + held RSU
+  // value − other (non-mortgage) liabilities. Mortgages are netted off
+  // inside property equity, not subtracted again.
   const netWorth = useMemo(() => householdNetWorth({
     investedTotal: wealthModel ? wealthModel.total.total : 0,
-    properties, mortgages, otherLiabilities, privateValue: privateSummary.currentValue,
-  }), [wealthModel, properties, mortgages, otherLiabilities, privateSummary]);
+    properties, mortgages, otherLiabilities, privateValue: privateSummary.currentValue, rsuValue: rsuSummary.currentValueGBP,
+  }), [wealthModel, properties, mortgages, otherLiabilities, privateSummary, rsuSummary]);
 
   // Gilt ladder analytics (build step 4) — driven by secMeta kind: "gilt".
   const giltData = useMemo(() => {
@@ -252,11 +263,11 @@ export default function App() {
 
   const exportJSON = async () => {
     const backup = {
-      __cgtBackup: true, version: 9, exportedAt: new Date().toISOString(),
+      __cgtBackup: true, version: 10, exportedAt: new Date().toISOString(),
       txns, incomeEntries, eriEntries, income, carried, cash, valuations,
       prices, priceMeta, avKey, avMeta, secMeta, pensionCashflows,
       properties, mortgages, otherLiabilities, cashAccounts, allowanceOverrides,
-      planInputs, privateHoldings, privateEvents,
+      planInputs, privateHoldings, privateEvents, rsuGrants, rsuEvents,
     };
     const text = JSON.stringify(backup, null, 2);
     let downloaded = false;
@@ -306,7 +317,9 @@ export default function App() {
           if (d.planInputs && typeof d.planInputs === "object") setPlanInputs(d.planInputs);
           if (Array.isArray(d.privateHoldings)) setPrivateHoldings(d.privateHoldings.map((x) => ({ ...x, id: x.id || uid() })));
           if (Array.isArray(d.privateEvents)) setPrivateEvents(d.privateEvents.map((x) => ({ ...x, id: x.id || uid() })));
-          flash(`Restored: ${n(d.txns)} transactions, ${n(d.incomeEntries)} dividend/interest entries, ${n(d.eriEntries)} ERI entries, ${n(d.pensionCashflows)} pension cashflows, ${n(d.properties)} properties, ${n(d.mortgages)} mortgages, ${n(d.cashAccounts)} cash accounts, ${n(d.privateHoldings)} private holdings, plus prices, allowance overrides, retirement plan inputs and settings.`);
+          if (Array.isArray(d.rsuGrants)) setRsuGrants(d.rsuGrants.map((x) => ({ ...x, id: x.id || uid() })));
+          if (Array.isArray(d.rsuEvents)) setRsuEvents(d.rsuEvents.map((x) => ({ ...x, id: x.id || uid() })));
+          flash(`Restored: ${n(d.txns)} transactions, ${n(d.incomeEntries)} dividend/interest entries, ${n(d.eriEntries)} ERI entries, ${n(d.pensionCashflows)} pension cashflows, ${n(d.properties)} properties, ${n(d.mortgages)} mortgages, ${n(d.cashAccounts)} cash accounts, ${n(d.privateHoldings)} private holdings, ${n(d.rsuGrants)} RSU grants, plus prices, allowance overrides, retirement plan inputs and settings.`);
         } else {
           setError("That file isn't a recognised backup — expected a transaction array or a full backup file exported from this app.");
         }
@@ -420,6 +433,7 @@ export default function App() {
               {tab === "holdings" && <HoldingsTab {...{ positions: wealthModel ? wealthModel.positions : [], prices, setPrices, avKey, setAvKey, avMeta, setAvMeta, priceMeta, setPriceMeta, txns, secMeta, setSecMeta, dmoReportDate, setDmoReportDate }} />}
               {tab === "property" && <PropertyTab {...{ properties, setProperties, mortgages, setMortgages, otherLiabilities, setOtherLiabilities }} />}
               {tab === "private" && <PrivateTab {...{ holdings: privateHoldings, setHoldings: setPrivateHoldings, events: privateEvents, setEvents: setPrivateEvents }} />}
+              {tab === "rsu" && <RsuTab {...{ grants: rsuGrants, setGrants: setRsuGrants, events: rsuEvents, setEvents: setRsuEvents, prices, setPrices, avKey, setAvKey, avMeta, setAvMeta, priceMeta, setPriceMeta, secMeta, setSecMeta, dmoReportDate, setDmoReportDate, txns }} />}
               {tab === "ledger" && <LedgerTab {...{ txns, setTxns }} />}
               {tab === "import" && <ImportTab {...{ setTxns, setTab, setIncomeEntries, setEriEntries, secMeta, setPensionCashflows, pensionCashflows, recomputeProviderCost, txns, incomeEntries, eriEntries }} />}
             </Suspense>

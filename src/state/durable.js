@@ -42,6 +42,8 @@ export const PERSIST_KEYS = {
   planInputs: "cgt.planinputs",
   privateHoldings: "cgt.privateholdings",
   privateEvents: "cgt.privateevents",
+  rsuGrants: "cgt.rsugrants",
+  rsuEvents: "cgt.rsuevents",
 };
 // Present in any real dataset — used to detect "localStorage was emptied".
 const SENTINEL_LS_KEYS = ["cgt.txns", "cgt.valuations", "cgt.pensioncf"];

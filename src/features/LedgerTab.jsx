@@ -84,7 +84,10 @@ function LedgerTab({ txns, setTxns }) {
 
       {/* add row */}
       <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3">
-        <div className="grid grid-cols-2 sm:grid-cols-9 gap-2 items-end">
+        {/* Date gets a wider track than its 8 siblings (1.3fr vs 1fr each) —
+            "yyyy-mm-dd" plus the native date-picker icon needs more room than
+            an equal 1/9 share gives it. */}
+        <div className="grid grid-cols-2 sm:grid-cols-[1.3fr_repeat(8,1fr)] gap-2 items-end">
           <Field label="Date"><input type="date" value={draft.date} onChange={(e) => set("date", e.target.value)} className="input num w-full" /></Field>
           <Field label="Ticker"><input value={draft.ticker} onChange={(e) => set("ticker", e.target.value)} placeholder="WFC" className="input w-full" /></Field>
           <Field label="Side">
@@ -136,11 +139,11 @@ function LedgerTab({ txns, setTxns }) {
               const isGBP = (t.nativeCurrency || "GBP") === "GBP";
               return (
                 <tr key={t.id} className="group hover:bg-[var(--panel2)]">
-                  <td className="px-2 py-1"><input type="date" value={t.date} onChange={(e) => updateTxn(t.id, { date: e.target.value })} className="input num w-[9.5rem] py-1 text-sm" /></td>
+                  <td className="px-2 py-1"><input type="date" value={t.date} onChange={(e) => updateTxn(t.id, { date: e.target.value })} className="input num w-32 py-1 text-sm" /></td>
                   <td className="px-2 py-1"><input value={t.ticker} onChange={(e) => updateTxn(t.id, { ticker: e.target.value.toUpperCase() })} className="input w-24 py-1 text-sm font-medium" /></td>
                   <td className="px-2 py-1">
                     <select value={t.side} onChange={(e) => updateTxn(t.id, { side: e.target.value })}
-                      className={"input w-24 py-1 text-sm font-semibold " + (t.side === "BUY" ? "text-[var(--gain)]" : "text-[var(--loss)]")}>
+                      className={"input w-20 py-1 text-sm font-semibold " + (t.side === "BUY" ? "text-[var(--gain)]" : "text-[var(--loss)]")}>
                       <option>BUY</option><option>SELL</option>
                     </select>
                   </td>
@@ -154,7 +157,7 @@ function LedgerTab({ txns, setTxns }) {
                     <NumberInput value={isGBP ? t.gbpAmount : t.nativeAmount} onChange={(v) => updateTxn(t.id, { nativeAmount: v })} disabled={isGBP} className="w-28 py-1 text-sm" />
                   </td>
                   <td className="px-2 py-1 text-right">
-                    <input type="number" value={t.fxRate ?? 1} disabled={isGBP} onChange={(e) => updateTxn(t.id, { fxRate: +e.target.value || 0 })} className="input num w-20 py-1 text-sm text-right disabled:opacity-50" />
+                    <input type="number" value={t.fxRate ?? 1} disabled={isGBP} onChange={(e) => updateTxn(t.id, { fxRate: +e.target.value || 0 })} className="input num w-16 py-1 text-sm text-right disabled:opacity-50" />
                   </td>
                   <td className="px-2 py-1 text-right"><NumberInput value={t.gbpAmount} onChange={(v) => updateTxn(t.id, { gbpAmount: v })} className="w-28 py-1 text-sm font-medium" /></td>
                   <td className="px-2 py-1 sticky right-0 bg-[var(--panel)] group-hover:bg-[var(--panel2)] border-l border-[var(--border)]">

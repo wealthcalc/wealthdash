@@ -78,6 +78,11 @@ const useAppStore = create((set) => {
     // see core/private-investments.mjs for the full model).
     privateHoldings: ls.get("cgt.privateholdings", []), setPrivateHoldings: upd("privateHoldings"),
     privateEvents: ls.get("cgt.privateevents", []), setPrivateEvents: upd("privateEvents"),
+    // RSU grants (employer stock, e.g. WFC) — same "own array, own setter"
+    // shape as privateHoldings/privateEvents: grants (identity, ticker,
+    // grant date) and events (vest tranches + sales — see core/rsu.mjs).
+    rsuGrants: ls.get("cgt.rsugrants", []), setRsuGrants: upd("rsuGrants"),
+    rsuEvents: ls.get("cgt.rsuevents", []), setRsuEvents: upd("rsuEvents"),
   };
 });
 

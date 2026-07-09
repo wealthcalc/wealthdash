@@ -21,6 +21,15 @@
    contractual dates). Nothing here invents a payment that hasn't happened
    at least twice historically, and nothing forecasts a holding that's
    since been fully sold. Pure and React-free; runs under node --test.
+
+   Every event also carries a `wrapper` (GIA/ISA/SIPP/LISA/VCT), so the UI
+   can show the actual income-tax treatment alongside the amount — GIA
+   income is taxable, everything else here is sheltered/tax-free. Dividend/
+   interest forecasts use the WRAPPER OF THE MOST RECENT recorded payment in
+   that series (a holding can be re-registered onto a different wrapper);
+   gilts and cash maturities carry the wrapper straight through from
+   gilts.mjs/the cash account record. Unknown wrapper defaults to GIA, same
+   "unknown defaults to taxable" convention as core/portfolio.mjs.
    ====================================================================== */
 
 const DAY_MS = 86400000;
@@ -101,7 +110,7 @@ export function buildIncomeCalendar({
     if (cf.date > today && cf.date <= horizonISO) {
       events.push({
         date: cf.date, source: cf.type === "redemption" ? "gilt-redemption" : "gilt-coupon",
-        label: cf.ticker, amount: cf.amount, certainty: "scheduled",
+        label: cf.ticker, amount: cf.amount, certainty: "scheduled", wrapper: cf.wrapper || "GIA",
       });
     }
   }
@@ -115,23 +124,31 @@ export function buildIncomeCalendar({
   for (const e of incomeEntries) {
     if (!e || !e.date || !e.amount) continue;
     const key = `${e.ticker || ""}|${e.kind || "dividend"}`;
-    if (!series.has(key)) series.set(key, { ticker: e.ticker || "", kind: e.kind || "dividend", dates: [], amounts: [] });
+    if (!series.has(key)) series.set(key, { ticker: e.ticker || "", kind: e.kind || "dividend", dates: [], amounts: [], wrappers: [] });
     const s = series.get(key);
     s.dates.push(e.date);
     s.amounts.push(+e.amount);
+    s.wrappers.push(e.wrapper || "");
   }
   for (const s of series.values()) {
     const order = s.dates.map((_, i) => i).sort((a, b) => (s.dates[a] < s.dates[b] ? -1 : 1));
     const dates = order.map((i) => s.dates[i]);
     const amounts = order.map((i) => s.amounts[i]);
+    const wrappers = order.map((i) => s.wrappers[i]);
     if (dates.length < 2) continue;
     if (s.ticker && unitsHeldAt(txns, today, s.ticker) <= 1e-9) continue; // fully sold — no future income
     const cadence = detectCadence(dates);
     if (!cadence || cadence.label === "irregular") continue;
     const recent = amounts.slice(-3);
     const avgAmount = Math.round((recent.reduce((a, b) => a + b, 0) / recent.length) * 100) / 100;
+    // Wrapper attribution: the most recent entry's wrapper — a holding can
+    // move accounts (rare, but a re-registration onto ISA/SIPP is real), so
+    // the LATEST recorded wrapper is the best guide to where future payments
+    // will land, not the earliest. Falls back to GIA (same "unknown wrapper
+    // defaults to taxable" convention as core/portfolio.mjs).
+    const wrapper = wrappers[wrappers.length - 1] || "GIA";
     for (const d of nextOccurrences(dates[dates.length - 1], cadence.medianDays, today, horizonDays)) {
-      events.push({ date: d, source: s.kind === "interest" ? "interest" : "dividend", label: s.ticker || "Interest", amount: avgAmount, certainty: "estimated", cadence: cadence.label });
+      events.push({ date: d, source: s.kind === "interest" ? "interest" : "dividend", label: s.ticker || "Interest", amount: avgAmount, certainty: "estimated", cadence: cadence.label, wrapper });
     }
   }
 
@@ -139,7 +156,7 @@ export function buildIncomeCalendar({
   for (const a of cashAccounts) {
     if (a.rateType !== "fixed" || !a.maturityDate) continue;
     if (a.maturityDate > today && a.maturityDate <= horizonISO) {
-      events.push({ date: a.maturityDate, source: "cash-maturity", label: a.label || a.institution || a.wrapper, amount: +a.balance || 0, certainty: "scheduled" });
+      events.push({ date: a.maturityDate, source: "cash-maturity", label: a.label || a.institution || a.wrapper, amount: +a.balance || 0, certainty: "scheduled", wrapper: a.wrapper || "GIA" });
     }
   }
 

@@ -1,14 +1,24 @@
 import React, { useState, useMemo, useCallback, useRef } from "react";
 import { Plus, Trash2, AlertTriangle, Check } from "lucide-react";
+import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip } from "recharts";
 import { ukTaxYear } from "../core/cgt-engine.mjs";
-import { WRAPPERS, isWrapperTaxable } from "../core/portfolio.mjs";
+import { WRAPPERS, isWrapperTaxable, normWrapper } from "../core/portfolio.mjs";
 import { investmentIncomeTax } from "../core/uk-tax.mjs";
 import { addMonthsISO } from "../core/ishares-eri.mjs";
 import { summariseBySource } from "../core/income-calendar.mjs";
 import { store, unitsHeldAt, gbp, SubTabs, num, uid, todayISO, fxToGBP, Field, Empty, useSort, sortRows, SortTh } from "../ui/shared.jsx";
 
+// Fixed wrapper → colour mapping so the same wrapper reads as the same
+// colour everywhere this chart appears — unlike AllocBar's index-based
+// palette (fine for an arbitrary breakdown), a stacked year-on-year chart
+// needs the same wrapper to keep its colour as bars are added/removed
+// across years. Reuses the app's existing CSS custom-property palette
+// (the --m-* variables are otherwise used for CGT matching-rule badges).
+const WRAPPER_COLOR = { GIA: "var(--accent)", ISA: "var(--gain)", SIPP: "var(--m-same)", LISA: "var(--m-pool)", VCT: "var(--m-bb)" };
+const wrapperColor = (w) => WRAPPER_COLOR[w] || "var(--muted)";
+
 /* ----------------------------- Income tab --------------------------- */
-const DIV_BLANK = () => ({ id: uid(), date: todayISO(), ticker: "", kind: "dividend", amount: "" });
+const DIV_BLANK = () => ({ id: uid(), date: todayISO(), ticker: "", kind: "dividend", amount: "", wrapper: "GIA" });
 const ERI_BLANK = () => ({ id: uid(), ticker: "", periodEnd: "", distributionDate: "", perShare: "", currency: "GBp", fxRate: 1, treatment: "dividend" });
 const ERI_COLS = [
   { label: "Fund", align: "left" },
@@ -36,6 +46,20 @@ function IncomeTab({ incomeEntries, setIncomeEntries, eriEntries, setEriEntries,
     for (const y of allYears) for (const w of Object.keys(incomeAllWrappers[y])) set.add(w);
     return WRAPPERS.filter((w) => set.has(w));
   }, [allYears, incomeAllWrappers]);
+  // Year-on-year total income by wrapper — one stacked bar per tax year,
+  // one coloured segment per wrapper, ascending left-to-right so it reads
+  // as a timeline (the table above sorts newest-first, which is right for
+  // scanning a table but backwards for a trend chart).
+  const yoyChartData = useMemo(() => {
+    return [...allYears].sort().map((y) => {
+      const row = { year: y };
+      for (const w of presentWrappers) {
+        const d = incomeAllWrappers[y]?.[w];
+        row[w] = d ? Math.round((d.dividends + d.interest) * 100) / 100 : 0;
+      }
+      return row;
+    });
+  }, [allYears, presentWrappers, incomeAllWrappers]);
   const [incWrapper, setIncWrapper] = useState(() => store.get("cgt.income.wrapper", "GIA"));
   React.useEffect(() => store.set("cgt.income.wrapper", incWrapper), [incWrapper]);
   React.useEffect(() => { if (presentWrappers.length && !presentWrappers.includes(incWrapper)) setIncWrapper(presentWrappers[0]); }, [presentWrappers]);
@@ -70,6 +94,38 @@ function IncomeTab({ incomeEntries, setIncomeEntries, eriEntries, setEriEntries,
 
       {sub === "byyear" && (
         <div className="space-y-6">
+          {/* Year-on-year total income by wrapper, stacked bars coloured by wrapper */}
+          {yoyChartData.length ? (
+            <div className="space-y-2">
+              <h3 className="font-semibold text-sm">Income by wrapper, year on year</h3>
+              <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3">
+                <ResponsiveContainer width="100%" height={280}>
+                  <BarChart data={yoyChartData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                    <CartesianGrid stroke="var(--border)" vertical={false} />
+                    <XAxis dataKey="year" tick={{ fontSize: 11, fill: "var(--muted)" }} tickLine={false} axisLine={{ stroke: "var(--border)" }} />
+                    <YAxis tickFormatter={(v) => gbp(v)} tick={{ fontSize: 11, fill: "var(--muted)" }} tickLine={false} axisLine={false} width={64} />
+                    <Tooltip
+                      formatter={(v, n) => [gbp(v), n]}
+                      labelFormatter={(y) => `Tax year ${y}`}
+                      contentStyle={{ background: "var(--panel)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 12 }}
+                    />
+                    {presentWrappers.map((w) => (
+                      <Bar key={w} dataKey={w} stackId="income" fill={wrapperColor(w)} name={w} radius={presentWrappers[presentWrappers.length - 1] === w ? [3, 3, 0, 0] : undefined} />
+                    ))}
+                  </BarChart>
+                </ResponsiveContainer>
+                <div className="flex flex-wrap gap-3 mt-2">
+                  {presentWrappers.map((w) => (
+                    <span key={w} className="inline-flex items-center gap-1.5 text-xs text-[var(--muted)]">
+                      <span className="w-2 h-2 rounded-full inline-block" style={{ background: wrapperColor(w) }} />{w}
+                    </span>
+                  ))}
+                </div>
+              </div>
+              <p className="text-xs text-[var(--muted)]">Dividends + interest combined, gross of tax, by tax year and wrapper. ISA/SIPP/LISA income is tax-free; VCT dividends are exempt; only GIA feeds the tax table below.</p>
+            </div>
+          ) : null}
+
           {/* All-wrapper income overview (taxable + sheltered), one wrapper at a time */}
           {allYears.length ? (
             <div className="space-y-2">
@@ -146,6 +202,7 @@ function IncomeTab({ incomeEntries, setIncomeEntries, eriEntries, setEriEntries,
             <Field label="Date"><input type="date" value={dv.date} onChange={(e) => setDv({ ...dv, date: e.target.value })} className="input num" /></Field>
             <Field label="Ticker (optional)"><input value={dv.ticker} onChange={(e) => setDv({ ...dv, ticker: e.target.value.toUpperCase() })} className="input num w-24" placeholder="—" /></Field>
             <Field label="Type"><select value={dv.kind} onChange={(e) => setDv({ ...dv, kind: e.target.value })} className="input"><option value="dividend">Dividend</option><option value="interest">Interest</option></select></Field>
+            <Field label="Wrapper"><select value={dv.wrapper} onChange={(e) => setDv({ ...dv, wrapper: e.target.value })} className="input">{WRAPPERS.map((w) => <option key={w}>{w}</option>)}</select></Field>
             <Field label="Amount (£, GBP)"><input type="number" value={dv.amount} onChange={(e) => setDv({ ...dv, amount: e.target.value })} className="input num w-32" placeholder="0.00" /></Field>
             <button onClick={addDiv} className="btn-accent"><Plus size={15} /> Add</button>
           </div>
@@ -157,6 +214,7 @@ function IncomeTab({ incomeEntries, setIncomeEntries, eriEntries, setEriEntries,
                     <SortTh id="date" label="Date" sort={divSort} onSort={toggleDivSort} className="py-2 px-3 font-medium" />
                     <SortTh id="ticker" label="Ticker" sort={divSort} onSort={toggleDivSort} className="py-2 px-3 font-medium" />
                     <SortTh id="kind" label="Type" sort={divSort} onSort={toggleDivSort} className="py-2 px-3 font-medium" />
+                    <SortTh id="wrapper" label="Wrapper" sort={divSort} onSort={toggleDivSort} className="py-2 px-3 font-medium" />
                     <SortTh id="taxYear" label="Tax year" sort={divSort} onSort={toggleDivSort} className="py-2 px-3 font-medium" />
                     <SortTh id="amount" label="Amount" sort={divSort} onSort={toggleDivSort} align="right" className="py-2 px-3 font-medium" />
                     <th className="py-2 px-3"></th>
@@ -165,12 +223,13 @@ function IncomeTab({ incomeEntries, setIncomeEntries, eriEntries, setEriEntries,
                 <tbody className="divide-y divide-[var(--border)]">
                   {sortRows(incomeEntries, divSort, {
                     date: (e) => e.date, ticker: (e) => e.ticker || "", kind: (e) => e.kind,
-                    taxYear: (e) => ukTaxYear(e.date), amount: (e) => +e.amount || 0,
+                    wrapper: (e) => normWrapper(e.wrapper), taxYear: (e) => ukTaxYear(e.date), amount: (e) => +e.amount || 0,
                   }).map((e) => (
                     <tr key={e.id}>
                       <td className="py-2 px-3 num text-[var(--muted)]">{e.date}</td>
                       <td className="py-2 px-3">{e.ticker || "—"}</td>
                       <td className="py-2 px-3 capitalize">{e.kind}</td>
+                      <td className="py-2 px-3">{normWrapper(e.wrapper)}</td>
                       <td className="py-2 px-3 num">{ukTaxYear(e.date)}</td>
                       <td className="py-2 px-3 text-right num">{gbp(+e.amount)}</td>
                       <td className="py-2 px-3 text-right"><button onClick={() => setIncomeEntries((p) => p.filter((x) => x.id !== e.id))} aria-label={`Delete ${e.kind} entry: ${e.date}${e.ticker ? ` ${e.ticker}` : ""}`} title="Delete" className="text-[var(--muted)] hover:text-[var(--loss)]"><Trash2 size={15} aria-hidden="true" /></button></td>
@@ -269,6 +328,24 @@ const SOURCE_LABELS = {
   "cash-maturity": "Cash maturity",
 };
 
+// Tax-treatment badge for a calendar row — wrapper name + taxed/tax-free,
+// e.g. "GIA/taxed", "ISA/tax-free", "VCT/tax-free" (VCT dividends are
+// exempt under ITA 2007 Part 6, same rule as the byyear table above).
+// Redemptions and cash maturities return null: they're capital coming
+// back (individual gilts are CGT-exempt; a maturing balance is principal),
+// not income, so an income-tax label doesn't apply. Un-attributed interest
+// (no ticker, so no reliable wrapper on record) reads "Interest/taxed"
+// rather than guessing a wrapper — interest defaults to taxed unless it's
+// known to sit in a sheltered account.
+function taxTag(e) {
+  if (e.source === "gilt-redemption" || e.source === "cash-maturity") return null;
+  const taxed = isWrapperTaxable(e.wrapper);
+  // "Interest" with no ticker attached (un-attributed cash interest) has no
+  // reliable wrapper on record — label it by kind rather than guessing GIA.
+  if (e.source === "interest" && e.label === "Interest") return { text: `Interest/${taxed ? "taxed" : "tax-free"}`, taxed };
+  return { text: `${normWrapper(e.wrapper)}/${taxed ? "taxed" : "tax-free"}`, taxed };
+}
+
 function IncomeCalendarView({ events }) {
   const [calSort, toggleCalSort] = useSort("date", "asc");
   const summary = useMemo(() => summariseBySource(events), [events]);
@@ -300,25 +377,32 @@ function IncomeCalendarView({ events }) {
               <SortTh id="source" label="Source" sort={calSort} onSort={toggleCalSort} className="py-2 px-3 font-medium" />
               <SortTh id="label" label="Holding / account" sort={calSort} onSort={toggleCalSort} className="py-2 px-3 font-medium" />
               <SortTh id="amount" label="Amount" sort={calSort} onSort={toggleCalSort} align="right" className="py-2 px-3 font-medium" />
+              <th className="py-2 px-3 text-left font-medium">Tax treatment</th>
               <th className="py-2 px-3 text-left font-medium">Certainty</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-[var(--border)]">
             {sortRows(events, calSort, {
               date: (e) => e.date, source: (e) => e.source, label: (e) => e.label || "", amount: (e) => +e.amount || 0,
-            }).map((e, i) => (
-              <tr key={`${e.date}-${e.source}-${e.label}-${i}`}>
-                <td className="py-2 px-3 num text-[var(--muted)]">{e.date}</td>
-                <td className="py-2 px-3">{SOURCE_LABELS[e.source] || e.source}</td>
-                <td className="py-2 px-3">{e.label || "—"}{e.cadence ? <span className="text-[var(--muted)]"> · {e.cadence}</span> : null}</td>
-                <td className="py-2 px-3 text-right num">{gbp(e.amount)}</td>
-                <td className="py-2 px-3">
-                  {e.certainty === "scheduled"
-                    ? <span className="text-[var(--gain)]">Scheduled</span>
-                    : <span className="text-[var(--muted)]">Estimated</span>}
-                </td>
-              </tr>
-            ))}
+            }).map((e, i) => {
+              const tag = taxTag(e);
+              return (
+                <tr key={`${e.date}-${e.source}-${e.label}-${i}`}>
+                  <td className="py-2 px-3 num text-[var(--muted)]">{e.date}</td>
+                  <td className="py-2 px-3">{SOURCE_LABELS[e.source] || e.source}</td>
+                  <td className="py-2 px-3">{e.label || "—"}{e.cadence ? <span className="text-[var(--muted)]"> · {e.cadence}</span> : null}</td>
+                  <td className="py-2 px-3 text-right num">{gbp(e.amount)}</td>
+                  <td className="py-2 px-3">
+                    {tag ? <span className={tag.taxed ? "text-[var(--loss)]" : "text-[var(--gain)]"}>{tag.text}</span> : <span className="text-[var(--muted)]">—</span>}
+                  </td>
+                  <td className="py-2 px-3">
+                    {e.certainty === "scheduled"
+                      ? <span className="text-[var(--gain)]">Scheduled</span>
+                      : <span className="text-[var(--muted)]">Estimated</span>}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>

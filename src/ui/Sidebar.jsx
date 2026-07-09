@@ -10,7 +10,7 @@
 import React, { useEffect, useRef } from "react";
 import {
   Wallet, PoundSterling, PieChart, Percent, Landmark, PiggyBank, TrendingUp, Gauge, Target,
-  TableProperties, Receipt, FileUp, X, Home, Building2,
+  TableProperties, Receipt, FileUp, X, Home, Building2, Award,
 } from "lucide-react";
 
 export const NAV_SECTIONS = [
@@ -24,6 +24,7 @@ export const NAV_SECTIONS = [
     ["returns", "Returns", Percent],
     ["property", "Property", Home],
     ["private", "Private", Building2],
+    ["rsu", "RSUs", Award],
   ] },
   { title: "Instruments", items: [
     ["gilts", "Gilts", Landmark],
