@@ -1303,9 +1303,54 @@ Still deliberately NOT done here (Phase 2 material): encrypting `avKey`/
 `ibkrToken` at rest in localStorage (needs a passphrase UX decision), and a
 session-only "don't persist my token" option.
 
+## Daily net-worth history (full balance sheet, estimated days flagged)
+Product-review Phase 1, step 2. The Home headline has shown TRUE household
+net worth since Phase 2, but its history was never recorded — the only
+series was `valuations` (securities-only, and only on days every position
+was priced), so the trend chart ignored cash/property/liabilities and
+gapped whenever one pension fund lacked a quote.
+
+- **`core/net-worth-series.mjs`** (new, node-tested, 12 tests) — a second
+  daily series with the OPPOSITE contract to `valuations`, which is exactly
+  why it's a separate array rather than an extension: `valuations` must
+  only ever be recorded from fully-priced positions (it feeds the exact
+  portfolio TWR in `core/returns.mjs`), while a net-worth TREND should
+  record something honest every day the app opens. Days with unpriced
+  holdings record with `estimated: true` + the count instead of being
+  skipped. Each record keeps the component split (invested/cash/property
+  equity/private/RSU/liabilities), all-zero first-run states record
+  nothing, one record per day, last write wins, identical-record upserts
+  return the same array reference (no persist/re-render churn — same
+  convention as the valuations effect).
+- **Recording** — a shell effect in `CgtDashboard.jsx` right next to the
+  valuations one, built from aggregates the shell already computes
+  (`wealthModel.total` + `householdNetWorth()`). New persisted key
+  `cgt.networthsnapshots` registered in `durable.js` (IndexedDB mirror +
+  daily snapshots + the exhaustiveness test). **Backup version 14** adds
+  `netWorthSnapshots`; older backups restore as before, the series simply
+  restarts from today. No backfill: honest history requires prices the app
+  never stored — the series starts when the feature ships, it doesn't
+  fabricate a past.
+- **Home chart (`TrendChart`, was `NetWorthChart`)** — a "Net worth /
+  Invested" toggle (net worth default once it has ≥2 points; invested keeps
+  the longer history for existing users and stays the purer market signal),
+  "N days estimated" caption when the visible net-worth range includes
+  unpriced days, and the headline 1d/30d delta chips now track actual net
+  worth (matching the number they sit next to) once the series exists,
+  falling back to the old invested-only behaviour before that.
+- **Benchmark overlay ("vs VWRL.L")** — `overlaySeries()` rebases an index
+  close series (via the existing `/api/benchmark` proxy, cached per
+  symbol+span) to the first visible point. Stated honesty contract in the
+  module and in the UI caption: this shows index MOVEMENT over the window
+  and deliberately ignores later contributions/withdrawals — it is not a
+  performance comparison (the Returns tab's TWR-vs-benchmark is the fair
+  fight). Symbol is shared with the Returns tab's picker
+  (`cgt.benchmark.symbol`); fetch failures degrade to an inline note,
+  never block the chart.
+
 ## Tests
 ```
-npm test        # node --test: 464 tests across the core modules + the DMO parser + the API guard
+npm test        # node --test: 476 tests across the core modules + the DMO parser + the API guard
 ```
 
 ## Deploy (recommended: Git → new Vercel project)

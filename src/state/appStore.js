@@ -33,6 +33,11 @@ const useAppStore = create((set) => {
     // so callers can skip the network round-trip when nothing's changed.
     dmoReportDate: ls.get("cgt.dmoreportdate", null), setDmoReportDate: upd("dmoReportDate"),
     valuations: ls.get("cgt.valuations", []), setValuations: upd("valuations"), // [{date, value, byWrapper}]
+    // Daily household net-worth history (core/net-worth-series.mjs) — the
+    // TRUE-net-worth counterpart to `valuations`, recorded even on days with
+    // unpriced holdings (flagged `estimated`), which `valuations` must never
+    // be (it feeds the exact-TWR computation). One record per day.
+    netWorthSnapshots: ls.get("cgt.networthsnapshots", []), setNetWorthSnapshots: upd("netWorthSnapshots"),
     incomeEntries: ls.get("cgt.incomeEntries", []), setIncomeEntries: upd("incomeEntries"), // dividends/interest ledger
     eriEntries: ls.get("cgt.eriEntries", []), setEriEntries: upd("eriEntries"), // excess reportable income
     prices: ls.get("cgt.prices", {}), setPrices: upd("prices"),

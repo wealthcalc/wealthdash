@@ -5,7 +5,7 @@ import { PERSIST_KEYS, SNAPSHOT_KEEP, snapshotDatesToPrune, shouldRestore } from
 test("PERSIST_KEYS covers every localStorage key the app has ever used", () => {
   const expected = [
     "cgt.dark", "cgt.txns", "cgt.tab", "cgt.income", "cgt.carried", "cgt.cash",
-    "cgt.pensioncf", "cgt.dmoreportdate", "cgt.valuations", "cgt.incomeEntries",
+    "cgt.pensioncf", "cgt.dmoreportdate", "cgt.valuations", "cgt.networthsnapshots", "cgt.incomeEntries",
     "cgt.eriEntries", "cgt.prices", "cgt.avkey", "cgt.avmeta", "cgt.pricemeta", "cgt.secmeta",
     "cgt.properties", "cgt.mortgages", "cgt.otherliabilities", "cgt.cashaccounts",
     "cgt.allowanceoverrides", "cgt.planinputs", "cgt.privateholdings", "cgt.privateevents",

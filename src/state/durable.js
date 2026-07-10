@@ -27,6 +27,7 @@ export const PERSIST_KEYS = {
   pensionCashflows: "cgt.pensioncf",
   dmoReportDate: "cgt.dmoreportdate",
   valuations: "cgt.valuations",
+  netWorthSnapshots: "cgt.networthsnapshots",
   incomeEntries: "cgt.incomeEntries",
   eriEntries: "cgt.eriEntries",
   prices: "cgt.prices",

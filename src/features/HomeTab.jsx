@@ -1,7 +1,8 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect, useRef } from "react";
 import { TrendingUp, TrendingDown, AlertTriangle, PieChart, RefreshCw, CalendarClock } from "lucide-react";
 import { WRAPPERS } from "../core/portfolio.mjs";
 import { mortgagesEndingSoon } from "../core/property.mjs";
+import { snapshotAtOrBefore, overlaySeries } from "../core/net-worth-series.mjs";
 import {
   store, gbp, gbp0, num, pct, WrapperChip, AllocBar, KIND_LABEL, RateCell, Empty, todayISO,
 } from "../ui/shared.jsx";
@@ -87,59 +88,128 @@ function TaxYearEndBanner({ taxYearEnd, setTab }) {
 
 const DAY = 86400000;
 const isoDaysAgo = (n) => new Date(Date.now() - n * DAY).toISOString().slice(0, 10);
-// Latest snapshot dated on/before `dateISO`, or null.
-const snapshotAtOrBefore = (valuations, dateISO) => {
-  let hit = null;
-  for (const v of valuations) { if (v.date <= dateISO) hit = v; else break; }
-  return hit;
-};
+// (snapshotAtOrBefore moved to core/net-worth-series.mjs — one generic
+// "latest record on/before this date" helper shared by both series.)
 
-/* ------------------------- invested-value chart ----------------------- */
-// Pure-SVG area chart over the securities-only valuation series the app
-// already records each day all holdings are priced. Time-scaled x axis
-// (not index-scaled), so a gap in snapshots looks like a gap.
+/* ---------------------------- trend chart ------------------------------ */
+// Pure-SVG area chart with two selectable series and an optional index
+// overlay. Time-scaled x axis (not index-scaled), so a gap in snapshots
+// looks like a gap.
+//  - "Net worth": the full household series (core/net-worth-series.mjs) —
+//    investments + cash + property + private/RSU − liabilities, recorded
+//    every day the app opens, estimated days flagged rather than skipped.
+//  - "Invested": the legacy securities-only `valuations` series (exact,
+//    all-priced days only — the TWR source). Kept selectable because it's
+//    the longer history for existing users and the purer market signal.
+// The benchmark overlay rebases an index to the first visible point —
+// "how did the index move over this window", deliberately ignoring later
+// contributions (see overlaySeries' honesty contract; money-vs-index
+// judgement lives in the Returns tab's TWR comparison, not here).
 const RANGES = [["3M", 92], ["1Y", 366], ["All", Infinity]];
 
-function NetWorthChart({ valuations }) {
+function TrendChart({ valuations, snapshots }) {
+  const canNetWorth = snapshots.length >= 2;
   const [range, setRange] = useState(() => store.get("cgt.home.range", "All"));
   React.useEffect(() => store.set("cgt.home.range", range), [range]);
+  const [seriesMode, setSeriesMode] = useState(() => store.get("cgt.home.series", "networth"));
+  React.useEffect(() => store.set("cgt.home.series", seriesMode), [seriesMode]);
+  const mode = canNetWorth && seriesMode === "networth" ? "networth" : "invested";
+  const source = mode === "networth" ? snapshots : valuations;
+
+  const [showBench, setShowBench] = useState(() => store.get("cgt.home.bench", false));
+  React.useEffect(() => store.set("cgt.home.bench", showBench), [showBench]);
+  const benchSymbol = store.get("cgt.benchmark.symbol", "VWRL.L"); // shared with the Returns tab's picker
+  const [bench, setBench] = useState(null); // { symbol, from, to, prices } | { symbol, error }
+  const benchCache = useRef({});
 
   const pts = useMemo(() => {
     const days = (RANGES.find(([k]) => k === range) || RANGES[2])[1];
     const cutoff = days === Infinity ? "0000-00-00" : isoDaysAgo(days);
-    return valuations.filter((v) => v.date >= cutoff);
-  }, [valuations, range]);
+    return source.filter((v) => v.date >= cutoff);
+  }, [source, range]);
+  const series = pts.length >= 2 ? pts : source; // range too narrow -> fall back to all
+  const first = series.length ? series[0] : null;
+  const last = series.length ? series[series.length - 1] : null;
 
-  if (valuations.length < 2) {
+  // Fetch the benchmark for the visible span, cached per (symbol,from,to)
+  // so range flips don't re-hit the proxy. Failures degrade to a small
+  // inline note — never block the chart itself.
+  useEffect(() => {
+    if (!showBench || !first || !last || first.date === last.date) { setBench(null); return; }
+    const key = `${benchSymbol}|${first.date}|${last.date}`;
+    if (benchCache.current[key]) { setBench(benchCache.current[key]); return; }
+    let dead = false;
+    (async () => {
+      try {
+        const r = await fetch(`/api/benchmark?symbol=${encodeURIComponent(benchSymbol)}&from=${encodeURIComponent(first.date)}&to=${encodeURIComponent(last.date)}`);
+        const j = await r.json();
+        const val = r.ok ? { symbol: benchSymbol, prices: j.prices || [] } : { symbol: benchSymbol, error: j.error || `HTTP ${r.status}` };
+        benchCache.current[key] = val;
+        if (!dead) setBench(val);
+      } catch (e) {
+        if (!dead) setBench({ symbol: benchSymbol, error: e?.message || "fetch failed" });
+      }
+    })();
+    return () => { dead = true; };
+  }, [showBench, benchSymbol, first?.date, last?.date]);
+
+  const overlay = useMemo(
+    () => (showBench && bench?.prices ? overlaySeries(bench.prices, series) : []),
+    [showBench, bench, series]
+  );
+
+  if (source.length < 2) {
     return (
       <div className="text-sm text-[var(--muted)] py-10 text-center">
-        The trend chart appears once two daily valuation snapshots exist.
-        Snapshots are recorded automatically whenever every holding is priced — fetch prices today and check back tomorrow.
+        The trend chart appears once two daily snapshots exist — one is recorded automatically each day you open the app (even if some holdings are unpriced), so check back tomorrow.
       </div>
     );
   }
-  const series = pts.length >= 2 ? pts : valuations; // range too narrow -> fall back to all
+
   const W = 800, H = 220, PAD_L = 8, PAD_R = 8, PAD_T = 14, PAD_B = 18;
-  const t0 = +new Date(series[0].date), t1 = +new Date(series[series.length - 1].date);
-  const vs = series.map((s) => s.value);
+  const t0 = +new Date(first.date), t1 = +new Date(last.date);
+  const vs = [...series.map((s) => s.value), ...overlay.map((p) => p.value)];
   let lo = Math.min(...vs), hi = Math.max(...vs);
   if (hi - lo < 1e-9) { hi += 1; lo -= 1; }
   const padV = (hi - lo) * 0.08;
   lo -= padV; hi += padV;
   const x = (d) => PAD_L + ((+new Date(d) - t0) / Math.max(1, t1 - t0)) * (W - PAD_L - PAD_R);
   const y = (v) => PAD_T + (1 - (v - lo) / (hi - lo)) * (H - PAD_T - PAD_B);
-  const line = series.map((s, i) => `${i ? "L" : "M"}${x(s.date).toFixed(1)},${y(s.value).toFixed(1)}`).join("");
-  const area = `${line}L${x(series[series.length - 1].date).toFixed(1)},${H - PAD_B}L${x(series[0].date).toFixed(1)},${H - PAD_B}Z`;
-  const last = series[series.length - 1], first = series[0];
+  const pathOf = (arr) => arr.map((s, i) => `${i ? "L" : "M"}${x(s.date).toFixed(1)},${y(s.value).toFixed(1)}`).join("");
+  const line = pathOf(series);
+  const area = `${line}L${x(last.date).toFixed(1)},${H - PAD_B}L${x(first.date).toFixed(1)},${H - PAD_B}Z`;
   const up = last.value >= first.value;
+  const estimatedDays = mode === "networth" ? series.filter((s) => s.estimated).length : 0;
+
+  const modeLabel = mode === "networth"
+    ? "Net worth (all assets − liabilities)"
+    : "Invested value (securities only — cash balances have no snapshot history)";
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-1">
+      <div className="flex items-center justify-between gap-2 flex-wrap mb-1">
         <div className="text-xs text-[var(--muted)]">
-          Invested value (securities only — cash balances have no snapshot history) · {first.date} → {last.date}
+          {modeLabel} · {first.date} → {last.date}
+          {estimatedDays > 0 && <span className="text-[var(--m-bb)]" title="Days where at least one holding had no price — the total carries the last known values and understates by the unpriced part."> · {estimatedDays} day{estimatedDays > 1 ? "s" : ""} estimated</span>}
         </div>
-        <div className="flex gap-1">
+        <div className="flex gap-1 items-center flex-wrap">
+          {canNetWorth && (
+            <div className="flex gap-1 mr-2" role="group" aria-label="Chart series">
+              {[["networth", "Net worth"], ["invested", "Invested"]].map(([k, lbl]) => (
+                <button key={k} onClick={() => setSeriesMode(k)} aria-pressed={mode === k}
+                  className={"px-2 py-0.5 text-xs rounded border " +
+                    (mode === k ? "border-[var(--accent)] text-[var(--fg)]" : "border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)]")}>
+                  {lbl}
+                </button>
+              ))}
+            </div>
+          )}
+          <button onClick={() => setShowBench((b) => !b)} aria-pressed={showBench}
+            title={`Overlay ${benchSymbol}, rebased to the first day shown — index movement over the same window, NOT a performance comparison (contributions are ignored; see the Returns tab for TWR vs benchmark). Change the symbol on the Returns tab.`}
+            className={"px-2 py-0.5 text-xs rounded border mr-2 " +
+              (showBench ? "border-[var(--m-same)] text-[var(--fg)]" : "border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)]")}>
+            vs {benchSymbol}
+          </button>
           {RANGES.map(([k]) => (
             <button key={k} onClick={() => setRange(k)}
               className={"px-2 py-0.5 text-xs rounded border " +
@@ -150,13 +220,25 @@ function NetWorthChart({ valuations }) {
         </div>
       </div>
       <svg viewBox={`0 0 ${W} ${H}`} className="w-full" role="img"
-        aria-label={`Invested value from ${gbp0(first.value)} on ${first.date} to ${gbp0(last.value)} on ${last.date}`}>
+        aria-label={`${mode === "networth" ? "Net worth" : "Invested value"} from ${gbp0(first.value)} on ${first.date} to ${gbp0(last.value)} on ${last.date}${overlay.length ? `, with ${benchSymbol} overlay` : ""}`}>
         <path d={area} fill={up ? "var(--gain)" : "var(--loss)"} opacity="0.12" />
         <path d={line} fill="none" stroke={up ? "var(--gain)" : "var(--loss)"} strokeWidth="2" vectorEffect="non-scaling-stroke" />
+        {overlay.length >= 2 && (
+          <path d={pathOf(overlay)} fill="none" stroke="var(--m-same)" strokeWidth="1.5" strokeDasharray="5 4" vectorEffect="non-scaling-stroke" opacity="0.9" />
+        )}
         <circle cx={x(last.date)} cy={y(last.value)} r="3.5" fill={up ? "var(--gain)" : "var(--loss)"} />
         <text x={PAD_L} y={PAD_T - 3} fontSize="11" fill="var(--muted)" className="num">{gbp0(hi)}</text>
         <text x={PAD_L} y={H - 4} fontSize="11" fill="var(--muted)" className="num">{gbp0(lo)}</text>
       </svg>
+      {showBench && (
+        <div className="text-[11px] text-[var(--muted)] mt-0.5">
+          {bench?.error
+            ? <>Couldn't load {benchSymbol}: {bench.error}</>
+            : overlay.length >= 2
+              ? <><span style={{ color: "var(--m-same)" }}>┄</span> {benchSymbol} rebased to {gbp0(overlay[0].value)} on {overlay[0].date} — index movement over this window, not a like-for-like performance comparison (your later contributions/withdrawals are ignored; the Returns tab's TWR comparison is the fair fight).</>
+              : bench ? <>No {benchSymbol} data inside this window.</> : <>Loading {benchSymbol}…</>}
+        </div>
+      )}
     </div>
   );
 }
@@ -179,7 +261,7 @@ function DeltaChip({ label, from, to }) {
 
 /* ------------------------------- home ---------------------------------- */
 export default function HomeTab({
-  model, valuations = [], returns, priceMeta = {}, setTab,
+  model, valuations = [], netWorthSnapshots = [], returns, priceMeta = {}, setTab,
   netWorth, mortgages = [], taxYearEnd = null,
   // price-refresh plumbing (same engine as the Wealth/Holdings panels)
   txns = [], secMeta = {}, avKey = "", avMeta = {},
@@ -229,9 +311,18 @@ export default function HomeTab({
   };
 
   const last = valuations.length ? valuations[valuations.length - 1] : null;
-  const prev = valuations.length > 1 ? valuations[valuations.length - 2] : null;
-  const d30 = snapshotAtOrBefore(valuations, isoDaysAgo(30));
   const investedNow = total.unpriced > 0 ? null : total.marketValue;
+  // Headline deltas track the same quantity as the headline: full net worth
+  // once its series exists (today's record is written by the shell's effect,
+  // so "prev" = the latest record BEFORE today), falling back to the legacy
+  // invested-only deltas for anyone whose net-worth series is <2 days old.
+  const nwLast = netWorthSnapshots.length ? netWorthSnapshots[netWorthSnapshots.length - 1] : null;
+  const useNwDeltas = netWorthSnapshots.length >= 2 && nwLast;
+  const deltaTo = useNwDeltas ? nwLast.value : investedNow;
+  const deltaPrev = useNwDeltas
+    ? snapshotAtOrBefore(netWorthSnapshots, isoDaysAgo(1))
+    : (valuations.length > 1 ? valuations[valuations.length - 2] : null);
+  const delta30 = snapshotAtOrBefore(useNwDeltas ? netWorthSnapshots : valuations, isoDaysAgo(30));
 
   const wrappersPresent = WRAPPERS.filter((w) => byWrapper[w] && (byWrapper[w].positions > 0 || byWrapper[w].cash > 0));
   // Property/liabilities haven't been entered for most existing users, in
@@ -257,8 +348,8 @@ export default function HomeTab({
           <div className="text-sm text-[var(--muted)]">{hasBalanceSheetExtras ? "Net worth (assets − liabilities)" : "Total wealth (holdings + cash, all wrappers)"}</div>
           <div className="flex items-baseline gap-3 flex-wrap mt-1">
             <div className="text-3xl font-semibold num">{gbp0(headlineValue)}</div>
-            {investedNow != null && <DeltaChip label="1d" from={prev} to={investedNow} />}
-            {investedNow != null && <DeltaChip label="30d" from={d30} to={investedNow} />}
+            {deltaTo != null && <DeltaChip label="1d" from={deltaPrev} to={deltaTo} />}
+            {deltaTo != null && <DeltaChip label="30d" from={delta30} to={deltaTo} />}
           </div>
           {hasBalanceSheetExtras && (
             <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-[var(--muted)] mt-1.5 num">
@@ -277,7 +368,7 @@ export default function HomeTab({
             </div>
           )}
           <div className="mt-3">
-            <NetWorthChart valuations={valuations} />
+            <TrendChart valuations={valuations} snapshots={netWorthSnapshots} />
           </div>
         </div>
 
@@ -312,12 +403,12 @@ export default function HomeTab({
               <span className="text-[var(--muted)]"> — check the Property tab; an expired fixed deal usually reverts to a much higher SVR.</span>
             </button>
           )}
-          {valuations.length < 2 && (
+          {valuations.length < 2 && netWorthSnapshots.length < 2 && (
             <div className="text-xs text-[var(--muted)] rounded-lg border border-[var(--border)] bg-[var(--panel2)] px-3 py-2">
-              No trend yet — snapshots record automatically each day every holding is priced.
+              No trend yet — a net-worth snapshot records automatically each day you open the app (plus an exact invested-value snapshot on days every holding is priced).
             </div>
           )}
-          {staleTickers.length === 0 && total.unpriced === 0 && mortgagesSoon.length === 0 && valuations.length >= 2 && (
+          {staleTickers.length === 0 && total.unpriced === 0 && mortgagesSoon.length === 0 && (valuations.length >= 2 || netWorthSnapshots.length >= 2) && (
             <div className="text-xs text-[var(--muted)] rounded-lg border border-[var(--border)] bg-[var(--panel2)] px-3 py-2">
               All prices fresh, all holdings priced, snapshot recorded {last ? `(${last.date})` : ""}. Nothing needs you today.
             </div>
@@ -358,7 +449,7 @@ export default function HomeTab({
       </div>
 
       <p className="text-[11px] text-[var(--muted)]">
-        Read-only overview as of {todayISO()}. Prices update from the Wealth tab; cash balances from Pension &amp; LISA / Wealth; the chart tracks securities value only (cash has no snapshot history).
+        Read-only overview as of {todayISO()}. Prices update from the Wealth tab; cash balances from Pension &amp; LISA / Wealth. The chart's "Net worth" series records daily from whatever you've entered (estimated days flagged); "Invested" is the exact securities-only series used for TWR.
       </p>
     </div>
   );

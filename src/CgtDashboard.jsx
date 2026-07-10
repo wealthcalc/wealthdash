@@ -12,6 +12,7 @@ import { privateTotals } from "./core/private-investments.mjs";
 import { rsuTotals } from "./core/rsu.mjs";
 import { effectiveCashByWrapper } from "./core/cash.mjs";
 import { buildIncomeCalendar } from "./core/income-calendar.mjs";
+import { buildNetWorthSnapshot, upsertDailySnapshot } from "./core/net-worth-series.mjs";
 import { taxYearEndChecklist } from "./core/tax-year-end.mjs";
 import { unitsHeldAt, uid, todayISO, IconBtn } from "./ui/shared.jsx";
 import { DesktopSidebar, MobileDrawer } from "./ui/Sidebar.jsx";
@@ -45,6 +46,7 @@ export default function App() {
     dark, setDark, txns, setTxns, tab, setTab, income, setIncome,
     carried, setCarried, cash, setCash, pensionCashflows, setPensionCashflows,
     dmoReportDate, setDmoReportDate, valuations, setValuations,
+    netWorthSnapshots, setNetWorthSnapshots,
     incomeEntries, setIncomeEntries, eriEntries, setEriEntries,
     prices, setPrices, avKey, setAvKey, avMeta, setAvMeta,
     priceMeta, setPriceMeta, secMeta, setSecMeta,
@@ -179,6 +181,19 @@ export default function App() {
     creditCardDebt,
   }), [wealthModel, properties, mortgages, otherLiabilities, privateSummary, rsuSummary, creditCardDebt]);
 
+  // Daily household net-worth snapshot (core/net-worth-series.mjs) — the
+  // headline number's own history. Unlike the `valuations` effect above,
+  // this records EVEN WHEN holdings are unpriced (flagged `estimated`):
+  // valuations must stay exact because TWR is computed from it; a
+  // net-worth TREND is useless if it gaps every day one pension fund has
+  // no quote. All-zero states record nothing (see the engine's header).
+  React.useEffect(() => {
+    if (!wealthModel || !netWorth) return;
+    const rec = buildNetWorthSnapshot({ date: todayISO(), total: wealthModel.total, netWorth });
+    if (!rec) return;
+    setNetWorthSnapshots((s) => upsertDailySnapshot(s, rec));
+  }, [wealthModel, netWorth]);
+
   // Gilt ladder analytics (build step 4) — driven by secMeta kind: "gilt".
   const giltData = useMemo(() => {
     try { return giltAnalytics({ txns, secMeta, prices }); }
@@ -286,8 +301,8 @@ export default function App() {
     // Restore still ACCEPTS them from v12-and-earlier files, so old backups
     // lose nothing. (ibkrQueryId stays: useless without its token.)
     const backup = {
-      __cgtBackup: true, version: 13, exportedAt: new Date().toISOString(),
-      txns, incomeEntries, eriEntries, income, carried, cash, valuations,
+      __cgtBackup: true, version: 14, exportedAt: new Date().toISOString(),
+      txns, incomeEntries, eriEntries, income, carried, cash, valuations, netWorthSnapshots,
       prices, priceMeta, avMeta, secMeta, pensionCashflows,
       properties, mortgages, otherLiabilities, cashAccounts, allowanceOverrides,
       planInputs, privateHoldings, privateEvents, rsuGrants, rsuEvents,
@@ -327,6 +342,7 @@ export default function App() {
           if (typeof d.carried === "number") setCarried(d.carried);
           if (d.cash && typeof d.cash === "object" && !Array.isArray(d.cash)) setCash(d.cash);
           if (Array.isArray(d.valuations)) setValuations(d.valuations);
+          if (Array.isArray(d.netWorthSnapshots)) setNetWorthSnapshots(d.netWorthSnapshots);
           if (d.prices && typeof d.prices === "object") setPrices(d.prices);
           if (d.priceMeta && typeof d.priceMeta === "object") setPriceMeta(d.priceMeta);
           if (typeof d.avKey === "string") setAvKey(d.avKey);
@@ -359,7 +375,7 @@ export default function App() {
   // Shared by the normal "home" tab render AND the read-only mobile summary
   // below — one object, so the two call sites can never quietly drift.
   const homeTabProps = {
-    model: wealthModel, valuations, returns, priceMeta, setTab, netWorth, mortgages,
+    model: wealthModel, valuations, netWorthSnapshots, returns, priceMeta, setTab, netWorth, mortgages,
     txns, secMeta, avKey, avMeta, setPrices, setPriceMeta, dmoReportDate, setDmoReportDate,
     taxYearEnd,
   };
