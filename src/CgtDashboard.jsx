@@ -470,6 +470,19 @@ export default function App() {
                 // above so it's never treated as liquid, growing, drawdown-
                 // eligible wealth by the projection engine.
                 liveOtherNetWorth: netWorth ? netWorth.propertyEquity - netWorth.otherLiabilities - netWorth.creditCardDebt : null,
+                // IHT module: a clean, separate bundle of `netWorth`'s pieces
+                // for "your estate today" — deliberately NOT reusing
+                // liveOtherNetWorth above (that figure is already net of
+                // liabilities/credit cards, for the drawdown engine's
+                // "static addendum" role); the IHT card needs each
+                // component raw so it can apply its own band/relief maths.
+                liveEstate: netWorth ? {
+                  propertyEquity: netWorth.propertyEquity,
+                  privateValue: netWorth.privateValue,
+                  rsuValue: netWorth.rsuValue,
+                  otherLiabilities: netWorth.otherLiabilities,
+                  creditCardDebt: netWorth.creditCardDebt,
+                } : null,
               }} />}
               {tab === "wealth" && <WealthTab {...{ model: wealthModel, cash, setCash, cashAccounts, setCashAccounts, creditCards, setCreditCards, prices, setPrices, avKey, setAvKey, avMeta, setAvMeta, priceMeta, setPriceMeta, txns, secMeta, setSecMeta, dmoReportDate, setDmoReportDate }} />}
               {tab === "returns" && <ReturnsTab {...{ returns, valuations, pensionCashflows, secMeta, setSecMeta, txns }} />}

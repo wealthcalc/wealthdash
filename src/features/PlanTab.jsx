@@ -8,7 +8,7 @@ import { useMonteCarloWorker } from "../ui/useMonteCarloWorker.js";
 import {
   Settings2, TrendingUp, TrendingDown, ShieldAlert, Activity,
   Gauge, ChevronDown, ChevronUp, Info, RefreshCw, Building2, Coins, HeartPulse,
-  Layers,
+  Layers, Landmark, Plus, Trash2,
 } from "lucide-react";
 import { taxRUK, taxScot, employeeNI } from "../core/uk-income-tax.mjs";
 import {
@@ -17,6 +17,7 @@ import {
 import { solveSWR } from "../core/swr.mjs";
 import { runGuytonKlinger } from "../core/guyton-klinger.mjs";
 import { rollingStressTest } from "../core/sequence-risk.mjs";
+import { projectIHT, pensionsInEstate, PENSIONS_IN_ESTATE_FROM } from "../core/iht.mjs";
 
 /* ------------------------------------------------------------------ */
 /*  Design tokens — resolved via CSS variables so the theme can swap    */
@@ -448,9 +449,20 @@ const DEFAULTS = {
   // longevity
   sex: "male",
   healthy: true,
+  // inheritance tax — see core/iht.mjs. `ihtGifts` is an array field on this
+  // same flat object (not a new store key) so it rides along with every
+  // existing planInputs persistence/backup path for free.
+  ihtMarried: false,
+  ihtMainResidenceToDescendants: true,
+  ihtCharityPct: 0, // 0-100, % of the taxable estate left to charity
+  ihtBusinessAgriculturalValue: 0,
+  ihtGifts: [], // [{ id, date, amount, exempt, note }]
 };
 
-export default function PlanTab({ dark = true, planInputs = null, setPlanInputs = null, livePots = null, liveSalary = null, liveOtherNetWorth = null }) {
+export default function PlanTab({
+  dark = true, planInputs = null, setPlanInputs = null, livePots = null, liveSalary = null, liveOtherNetWorth = null,
+  liveEstate = null,
+}) {
   // `planInputs` is null until the user changes something for the first
   // time (nothing to persist yet) — DEFAULTS covers that first render.
   // `setPlanInputs` may be omitted by a caller that hasn't wired the store
@@ -854,6 +866,7 @@ export default function PlanTab({ dark = true, planInputs = null, setPlanInputs 
               { k: "btl", label: "Buy-to-let", icon: Building2 },
               { k: "stress", label: "Scenarios & stress", icon: ShieldAlert },
               { k: "adequacy", label: "Monte Carlo", icon: Activity },
+              { k: "iht", label: "Inheritance tax", icon: Landmark },
             ].map(({ k, label, icon: Icon }) => {
               const active = tab === k;
               return (
@@ -1021,6 +1034,11 @@ export default function PlanTab({ dark = true, planInputs = null, setPlanInputs 
           {/* ===== MONTE CARLO ===== */}
           {tab === "adequacy" && (
             <AdequacyTab p={p} mc={mc} mcB={mcB} progress={mcProgress} compareKey={mcCompareKey} setCompareKey={setMcCompareKey} running={mcRunning} runMC={runMC} det={det} life={life} set={set} />
+          )}
+
+          {/* ===== INHERITANCE TAX ===== */}
+          {tab === "iht" && (
+            <IhtTab p={p} det={det} set={set} liveEstate={liveEstate} livePots={livePots} />
           )}
       </main>
     </div>
@@ -1944,6 +1962,199 @@ function AdequacyTab({ p, mc, mcB, progress = 0, compareKey = "none", setCompare
           The trade-off guardrails make explicit: a {gk.successDelta > 0 ? `${Math.round(gk.successDelta * 100)}pp higher` : "similar"} success rate comes at the cost of {gk.avgCutsPerPath >= 1 ? "occasionally living on less than planned" : "rarely needing to flex"} — this doesn't model the 4th "portfolio management" GK rule (asset-allocation shifts after guardrail triggers), which this app has no dynamic-allocation engine to represent.
         </p>
       </Card>
+    </div>
+  );
+}
+
+/* ---- Inheritance tax tab ---- */
+// Two snapshots through the SAME `projectIHT()` engine (core/iht.mjs): your
+// estate as it stands TODAY (from the live portfolio, pensions excluded
+// since that's before the April 2027 rule change), and your estate at the
+// END of this plan (from `det`'s final timeline row, decades from now —
+// pensions almost certainly included by then). Gifts you log below age
+// naturally between the two snapshots since each just passes a different
+// `asOfDate` into the same taper-relief maths.
+function IhtTab({ p, det, set, liveEstate, livePots }) {
+  const [giftForm, setGiftForm] = useState({ date: "", amount: "", exempt: false, note: "" });
+  const todayISO = useMemo(() => new Date().toISOString().slice(0, 10), []);
+  const planEndISO = useMemo(() => {
+    const years = Math.max(0, (p.planAge || 0) - (p.currentAge || 0));
+    const d = new Date();
+    d.setUTCFullYear(d.getUTCFullYear() + years);
+    return d.toISOString().slice(0, 10);
+  }, [p.planAge, p.currentAge]);
+
+  // Individual primitives (not one object literal) as the useMemo deps
+  // below, so the two projections only recompute when something that
+  // actually feeds `projectIHT()` changes — not on every render.
+  const ihtMainResidenceToDescendants = p.ihtMainResidenceToDescendants;
+  const ihtMarried = p.ihtMarried;
+  const ihtCharityPct = (p.ihtCharityPct || 0) / 100;
+  const ihtBusinessAgriculturalValue = p.ihtBusinessAgriculturalValue || 0;
+  const ihtGifts = p.ihtGifts || [];
+
+  const todayResult = useMemo(() => {
+    const investedValue = (livePots?.ISA || 0) + (livePots?.GIA || 0) + (livePots?.LISA || 0);
+    return projectIHT({
+      mainResidenceToDescendants: ihtMainResidenceToDescendants,
+      married: ihtMarried,
+      charityGiftPct: ihtCharityPct,
+      businessAgriculturalValue: ihtBusinessAgriculturalValue,
+      gifts: ihtGifts,
+      investedValue,
+      pensionValue: livePots?.SIPP || 0,
+      propertyEquity: liveEstate?.propertyEquity || 0,
+      privateValue: liveEstate?.privateValue || 0,
+      rsuValue: liveEstate?.rsuValue || 0,
+      otherLiabilities: liveEstate?.otherLiabilities || 0,
+      creditCardDebt: liveEstate?.creditCardDebt || 0,
+      asOfDate: todayISO,
+    });
+  }, [livePots, liveEstate, ihtMainResidenceToDescendants, ihtMarried, ihtCharityPct, ihtBusinessAgriculturalValue, ihtGifts, todayISO]);
+
+  const futureResult = useMemo(() => {
+    const lastRow = det.timeline[det.timeline.length - 1] || {};
+    const pensionValue = Math.max(0, lastRow.pensionReal || 0);
+    // det.estateReal already bundles pension + bridge (ISA/GIA/LISA) + BTL
+    // equity (if unsold) + other net worth into one real-terms figure —
+    // subtracting the pension-only piece leaves everything else in one
+    // clean "invested + other" number, which is all projectIHT needs
+    // (it just sums whatever it's given; it doesn't care which named
+    // field a given £ arrives in).
+    const investedValue = Math.max(0, (det.estateReal || 0) - pensionValue);
+    return projectIHT({
+      mainResidenceToDescendants: ihtMainResidenceToDescendants,
+      married: ihtMarried,
+      charityGiftPct: ihtCharityPct,
+      businessAgriculturalValue: ihtBusinessAgriculturalValue,
+      gifts: ihtGifts,
+      investedValue,
+      pensionValue,
+      asOfDate: planEndISO,
+    });
+  }, [det, ihtMainResidenceToDescendants, ihtMarried, ihtCharityPct, ihtBusinessAgriculturalValue, ihtGifts, planEndISO]);
+
+  const addGift = () => {
+    const amount = +giftForm.amount;
+    if (!giftForm.date || !Number.isFinite(amount) || amount <= 0) return;
+    const gift = { id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, date: giftForm.date, amount, exempt: giftForm.exempt, note: giftForm.note.trim() };
+    set("ihtGifts", [...(p.ihtGifts || []), gift]);
+    setGiftForm({ date: "", amount: "", exempt: false, note: "" });
+  };
+  const removeGift = (id) => set("ihtGifts", (p.ihtGifts || []).filter((g) => g.id !== id));
+
+  const EstateCard = ({ title, sub, r }) => (
+    <Card style={{ marginBottom: 14 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8, marginBottom: 2 }}>
+        <div>
+          <h3 style={{ margin: "0 0 2px", fontSize: 15, fontWeight: 700 }}>{title}</h3>
+          <p style={{ margin: 0, fontSize: 12.5, color: T.muted }}>{sub}</p>
+        </div>
+        <span style={{
+          fontSize: 11, fontWeight: 700, padding: "4px 10px", borderRadius: 20,
+          background: r.pensionCounted ? T.amberSoft : T.greenSoft,
+          color: r.pensionCounted ? T.amber : T.green,
+        }}>
+          {r.pensionCounted ? "Pension IN estate" : "Pension excluded"}
+        </span>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px,1fr))", gap: 12, marginTop: 12 }}>
+        <Card style={{ background: T.paper, border: "none" }}><Stat label="Gross estate" value={gbpK(r.deathEstate)} sub={r.pensionCounted ? `incl. ${gbpK(r.pensionInEstateValue)} pension` : "pension excluded"} /></Card>
+        <Card style={{ background: T.paper, border: "none" }}><Stat label="NRB + RNRB available" value={gbpK(r.bandsAvailable)} sub={r.married ? "married — both bands doubled" : "single"} /></Card>
+        <Card style={{ background: T.paper, border: "none" }}><Stat label="Taxable estate" value={gbpK(r.netTaxableEstate)} sub={`at ${pct(r.rate, 0)}`} /></Card>
+        <Card style={{ background: r.totalIHT > 0 ? T.redSoft : T.greenSoft, border: "none" }}>
+          <Stat big label="IHT due" value={gbp(r.totalIHT)} sub={`${pct(r.effectiveRate, 1)} effective rate`} tone={r.totalIHT > 0 ? "red" : "green"} />
+        </Card>
+        <Card style={{ background: T.paper, border: "none" }}><Stat label="Net to heirs" value={gbpK(r.netEstateToHeirs)} sub={r.charityGiftAmount > 0 ? `after ${gbpK(r.charityGiftAmount)} to charity` : undefined} /></Card>
+      </div>
+      {r.giftTaxDue > 0 && (
+        <div style={{ marginTop: 10, fontSize: 12, color: T.amber }}>
+          + {gbp(r.giftTaxDue)} additional tax on lifetime gifts within 7 years (typically borne by the recipients, not the estate).
+        </div>
+      )}
+    </Card>
+  );
+
+  return (
+    <div>
+      <Card style={{ marginBottom: 14 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 2 }}>
+          <Landmark size={17} color={T.ink} />
+          <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700 }}>Inheritance tax projection</h3>
+        </div>
+        <p style={{ margin: 0, fontSize: 12.5, color: T.muted, maxWidth: 680 }}>
+          Nil-rate band £{(325000).toLocaleString("en-GB")} + residence nil-rate band £{(175000).toLocaleString("en-GB")} (tapered above a £2m estate), 40% on the excess (36% if 10%+ of the taxable estate goes to charity). Doesn't model the annual £3,000 gift exemption, so lifetime gifting looks slightly less sheltered here than it would with proper planning — a conservative simplification, not an optimistic one. Unused pension funds join the taxable estate for deaths on or after {PENSIONS_IN_ESTATE_FROM} — which is why "today" and "at your plan's end" below usually look structurally different, not just bigger.
+        </p>
+      </Card>
+
+      <EstateCard title="Your estate today" sub={`As of ${todayISO}, from your live portfolio`} r={todayResult} />
+      <EstateCard title={`At your plan's final year (age ${p.planAge})`} sub={`Projected ${planEndISO}, from the Overview projection`} r={futureResult} />
+
+      <Card style={{ marginBottom: 14 }}>
+        <h3 style={{ margin: "0 0 12px", fontSize: 15, fontWeight: 700 }}>Assumptions</h3>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px,1fr))", gap: 18 }}>
+          <div>
+            <Toggle label="Married / civil partnership" checked={p.ihtMarried} onChange={(v) => set("ihtMarried", v)} />
+            <div style={{ fontSize: 11, color: T.muted, margin: "4px 0 14px" }}>Assumes a spouse who's used none of their own NRB/RNRB — doubles both bands. The real transferable fraction depends on their estate, which isn't modelled here.</div>
+            <Toggle label="Main home passes to children/grandchildren" checked={p.ihtMainResidenceToDescendants} onChange={(v) => set("ihtMainResidenceToDescendants", v)} />
+            <div style={{ fontSize: 11, color: T.muted, margin: "4px 0 0" }}>Required for the residence nil-rate band to apply at all.</div>
+          </div>
+          <div>
+            <Field label="Left to charity" value={p.ihtCharityPct} min={0} max={100} step={1} suffix="%" onChange={(v) => set("ihtCharityPct", v)} hint="10%+ of the taxable estate drops the rate to 36%" />
+            <Field label="Business/agricultural property (BPR/APR)" value={p.ihtBusinessAgriculturalValue} min={0} max={10000000} step={10000} prefix="£" onChange={(v) => set("ihtBusinessAgriculturalValue", v)} hint="100% relief up to £2.5m from April 2026, 50% above" />
+          </div>
+        </div>
+      </Card>
+
+      <Card>
+        <h3 style={{ margin: "0 0 2px", fontSize: 15, fontWeight: 700 }}>Lifetime gifts (PETs)</h3>
+        <p style={{ margin: "0 0 12px", fontSize: 12.5, color: T.muted }}>
+          Gifts drop out of your estate entirely after 7 years; within 7 years, tax on the excess over your remaining nil-rate band tapers down the closer to 7 years you get. Mark a gift "exempt" if it went to a spouse/civil partner or registered charity — those are always outside IHT.
+        </p>
+        {(p.ihtGifts || []).length > 0 && (
+          <div style={{ marginBottom: 12 }}>
+            {(p.ihtGifts || []).slice().sort((a, b) => (a.date < b.date ? -1 : 1)).map((g) => (
+              <div key={g.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderBottom: `1px solid ${T.lineSoft}`, fontSize: 13 }}>
+                <span style={{ color: T.muted, width: 92 }}>{g.date}</span>
+                <span style={{ fontWeight: 600, width: 100 }} className="num">{gbp(g.amount)}</span>
+                {g.exempt && <span style={{ fontSize: 10.5, fontWeight: 700, color: T.green, background: T.greenSoft, padding: "2px 8px", borderRadius: 10 }}>EXEMPT</span>}
+                <span style={{ color: T.muted, flex: 1 }}>{g.note}</span>
+                <button onClick={() => removeGift(g.id)} title="Remove" style={{ border: "none", background: "none", cursor: "pointer", color: T.red, display: "flex" }}>
+                  <Trash2 size={14} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-end" }}>
+          <div>
+            <div style={{ fontSize: 11, color: T.muted, marginBottom: 4 }}>Date</div>
+            <input type="date" value={giftForm.date} onChange={(e) => setGiftForm({ ...giftForm, date: e.target.value })}
+              style={{ border: `1px solid ${T.line}`, borderRadius: 8, padding: "7px 9px", fontSize: 13, background: T.surface, color: T.ink }} />
+          </div>
+          <div>
+            <div style={{ fontSize: 11, color: T.muted, marginBottom: 4 }}>Amount (£)</div>
+            <input type="number" min="0" step="1000" value={giftForm.amount} onChange={(e) => setGiftForm({ ...giftForm, amount: e.target.value })}
+              style={{ border: `1px solid ${T.line}`, borderRadius: 8, padding: "7px 9px", fontSize: 13, width: 110, background: T.surface, color: T.ink }} />
+          </div>
+          <div>
+            <div style={{ fontSize: 11, color: T.muted, marginBottom: 4 }}>Note (optional)</div>
+            <input type="text" value={giftForm.note} onChange={(e) => setGiftForm({ ...giftForm, note: e.target.value })} placeholder="e.g. deposit for daughter's house"
+              style={{ border: `1px solid ${T.line}`, borderRadius: 8, padding: "7px 9px", fontSize: 13, width: 220, background: T.surface, color: T.ink }} />
+          </div>
+          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, color: T.ink2, paddingBottom: 8 }}>
+            <input type="checkbox" checked={giftForm.exempt} onChange={(e) => setGiftForm({ ...giftForm, exempt: e.target.checked })} />
+            Exempt (spouse/charity)
+          </label>
+          <button onClick={addGift} style={{ display: "flex", alignItems: "center", gap: 6, background: T.ink, color: T.paper, border: "none", borderRadius: 9, padding: "8px 14px", fontWeight: 600, fontSize: 13, cursor: "pointer" }}>
+            <Plus size={14} /> Add gift
+          </button>
+        </div>
+      </Card>
+
+      <Note tone="amber">
+        Estimates only, not a substitute for professional estate planning advice — real IHT positions involve trusts, business/agricultural relief eligibility tests, and a transferable-band calculation that depends on a spouse's own estate, none of which this simplified model can verify. Figures are today's rules and thresholds; NRB/RNRB are frozen to April 2031 but nothing is guaranteed to stay the same at your plan's final year, decades away.
+      </Note>
     </div>
   );
 }

@@ -1245,9 +1245,19 @@ The app already had real responsive infrastructure — a desktop sidebar / mobil
 - **`CgtDashboard.jsx`**: on a mobile-width viewport, the default view is now this read-only summary — `PlanHealthCard` + the existing `HomeTab` (reusing its exact prop object, `homeTabProps`, so there's only one place that assembles them) — instead of the tab tree. Sidebar, drawer, and Save/Load are hidden in this mode (nothing to navigate to, nothing new to back up from a read-only screen); a single "Open full app" button is the explicit escape hatch into the normal tabbed experience (sidebar/drawer return, every tab reachable exactly as on desktop), with a "← Summary" link back. The toggle is session-only, never persisted — every fresh mobile visit lands back on the summary, which is the point, while a mid-session "I need to add a transaction" moment is one tap away, not a dead end.
 - No PWA/installable-app work (manifest, service worker, home-screen icon) — confirmed none existed before and treated as a separate, explicit follow-up rather than silently bundling it into "read-only layer".
 
+## Inheritance tax projection
+A new "Inheritance tax" sub-tab on the Plan tab — `core/iht.mjs`, a from-scratch pure engine (nothing IHT-related existed anywhere before this), plus a new sub-tab reusing the drawdown engine's own output rather than a second projection.
+- **Nil-rate band (£325k) + residence nil-rate band (£175k, tapered £1 per £2 over a £2m estate)**, transferable between spouses via a single "married — assume full transferable bands" toggle (the real transferable fraction depends on the first spouse's own estate/NRB use, which this app has no way to model without a second full estate). 40% on the taxable excess, 36% if 10%+ of it goes to charity.
+- **Business/agricultural property relief**, date-gated at the 6 April 2026 reform: 100% relief on the first £2.5m of combined qualifying value, 50% above (uncapped 100% relief for a projection dated before the cap takes effect).
+- **Lifetime gifts (PETs)**: a per-gift log (date/amount/optional "exempt" flag for spousal/charity gifts/note), allocated against the nil-rate band in chronological order (oldest first, matching HMRC's own rule), with the standard 7-year taper relief table (0% relief inside 3 years, stepping to 100%/fully exempt at 7+) applied only to the portion of each gift that exceeds whatever NRB is left for it by the time it's considered.
+- **Pensions join the taxable estate for deaths on/after 6 April 2027** (`pensionsInEstate()`), not before — the single biggest recent IHT rule change, and the reason the module always shows two snapshots side by side: "your estate today" (pensions excluded, since today is before that date) and "at your plan's final year" (pensions included, decades from now). The future snapshot reuses `buildProjection()`'s own final timeline row (`pensionReal`, `estateReal`) rather than a second projection engine — gifts you've logged simply age naturally between the two snapshots, since both call the same `projectIHT()` with a different `asOfDate`.
+- **Live estate data gap fixed along the way**: the Plan tab never received private-investment or RSU values from `netWorth` at all (only property equity, net of liabilities, via the pre-existing `liveOtherNetWorth`) — a new `liveEstate` prop bundle (`CgtDashboard.jsx`) closes that gap for "today's" IHT snapshot.
+- Deliberately doesn't model the £3,000/year annual gift exemption (a conservative simplification — real lifetime gifting shelters more than shown here, never less), trusts, or per-asset BPR/APR eligibility tests — stated once in the module's header rather than scattered across the UI.
+- 22 new node tests, including HMRC's exact taper-relief percentages, RNRB taper arithmetic, chronological multi-gift NRB allocation, and the pension-in-estate date boundary.
+
 ## Tests
 ```
-npm test        # node --test: 428 tests across the core modules + the DMO parser
+npm test        # node --test: 450 tests across the core modules + the DMO parser
 ```
 
 ## Deploy (recommended: Git → new Vercel project)
