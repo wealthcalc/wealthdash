@@ -3,7 +3,24 @@ import assert from "node:assert/strict";
 import {
   isaSubscriptionsByYear, taperedAA, pensionContributionsByYear,
   pensionAllowanceStatus, realisedForYear, bedAndIsaPlan,
+  MPAA_LIMIT, mpaaLimitedAA,
 } from "../core/allowances.mjs";
+
+/* ---------------------------------- MPAA -------------------------------- */
+
+test("mpaaLimitedAA: untriggered returns the AA unchanged, whatever it is", () => {
+  assert.equal(mpaaLimitedAA(60000, false), 60000);
+  assert.equal(mpaaLimitedAA(10000, false), 10000);
+});
+
+test("mpaaLimitedAA: triggered caps at £10,000 even if the standard/tapered AA is higher", () => {
+  assert.equal(mpaaLimitedAA(60000, true), MPAA_LIMIT);
+  assert.equal(mpaaLimitedAA(40000, true), MPAA_LIMIT);
+});
+
+test("mpaaLimitedAA: triggered never RAISES an already-lower tapered AA (the floor, not a separate reduction)", () => {
+  assert.equal(mpaaLimitedAA(4000, true), 4000); // pre-2023 taper floor is below MPAA
+});
 
 /* ------------------------- ISA subscriptions -------------------------- */
 

@@ -84,28 +84,6 @@ function IncomeTab({ incomeEntries, setIncomeEntries, eriEntries, setEriEntries,
       return row;
     });
   }, [allYears, presentWrappers, incomeAllWrappers]);
-  // Income by calendar month — same stacked-by-wrapper shape as the
-  // year-on-year chart above, but at monthly granularity so payment
-  // seasonality (e.g. quarterly dividend clusters) is visible, not just the
-  // tax-year total. Capped to the most recent 24 months so the chart stays
-  // readable rather than compressing into unreadable bars as history grows.
-  const monthlyChartData = useMemo(() => {
-    const map = new Map();
-    for (const e of incomeEntries) {
-      if (!e.date || !e.amount) continue;
-      const m = e.date.slice(0, 7);
-      if (!map.has(m)) map.set(m, { month: m });
-      const row = map.get(m);
-      const w = normWrapper(e.wrapper);
-      row[w] = Math.round(((row[w] || 0) + (+e.amount || 0)) * 100) / 100;
-    }
-    return [...map.values()].sort((a, b) => (a.month < b.month ? -1 : 1)).slice(-24);
-  }, [incomeEntries]);
-  const monthWrappers = useMemo(() => {
-    const set = new Set();
-    for (const row of monthlyChartData) for (const k of Object.keys(row)) if (k !== "month") set.add(k);
-    return WRAPPERS.filter((w) => set.has(w));
-  }, [monthlyChartData]);
   const [incWrapper, setIncWrapper] = useState(() => store.get("cgt.income.wrapper", "GIA"));
   React.useEffect(() => store.set("cgt.income.wrapper", incWrapper), [incWrapper]);
   React.useEffect(() => { if (presentWrappers.length && !presentWrappers.includes(incWrapper)) setIncWrapper(presentWrappers[0]); }, [presentWrappers]);
@@ -165,34 +143,6 @@ function IncomeTab({ incomeEntries, setIncomeEntries, eriEntries, setEriEntries,
                 </div>
               </div>
               <p className="text-xs text-[var(--muted)]">Dividends + interest combined, gross of tax, by tax year and wrapper. ISA/SIPP/LISA income is tax-free; VCT dividends are exempt; only GIA feeds the tax table below.</p>
-            </div>
-          ) : null}
-
-          {/* Income by calendar month — same stacked-by-wrapper shape, monthly granularity */}
-          {monthlyChartData.length ? (
-            <div className="space-y-2">
-              <h3 className="font-semibold text-sm">Income by month</h3>
-              <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3">
-                <ResponsiveContainer width="100%" height={280}>
-                  <BarChart data={monthlyChartData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-                    <CartesianGrid stroke="var(--border)" vertical={false} />
-                    <XAxis dataKey="month" tick={{ fontSize: 10, fill: "var(--muted)" }} tickLine={false} axisLine={{ stroke: "var(--border)" }} interval="preserveStartEnd" />
-                    <YAxis tickFormatter={(v) => gbp(v)} tick={{ fontSize: 11, fill: "var(--muted)" }} tickLine={false} axisLine={false} width={64} />
-                    <Tooltip content={<StackedTotalTooltip />} />
-                    {monthWrappers.map((w) => (
-                      <Bar key={w} dataKey={w} stackId="income" fill={wrapperColor(w)} name={w} radius={monthWrappers[monthWrappers.length - 1] === w ? [3, 3, 0, 0] : undefined} />
-                    ))}
-                  </BarChart>
-                </ResponsiveContainer>
-                <div className="flex flex-wrap gap-3 mt-2">
-                  {monthWrappers.map((w) => (
-                    <span key={w} className="inline-flex items-center gap-1.5 text-xs text-[var(--muted)]">
-                      <span className="w-2 h-2 rounded-full inline-block" style={{ background: wrapperColor(w) }} />{w}
-                    </span>
-                  ))}
-                </div>
-              </div>
-              <p className="text-xs text-[var(--muted)]">Same dividends + interest by wrapper as above, at monthly granularity — last 24 months, so quarterly/annual payment clusters are visible rather than smoothed into a single tax-year bar. Hover a bar for the month's total across every wrapper.</p>
             </div>
           ) : null}
 
@@ -397,6 +347,12 @@ const SOURCE_LABELS = {
   interest: "Interest",
   "cash-maturity": "Cash maturity",
 };
+// Fixed per-source colour mapping for the forecast chart below (same "fixed
+// mapping, not an index-based palette" reasoning as WRAPPER_COLOR above —
+// a source keeps its colour as bars are added/removed month to month).
+const SOURCE_COLOR = { dividend: "var(--accent)", interest: "var(--gain)", "gilt-coupon": "var(--m-same)", "gilt-redemption": "var(--m-pool)", "cash-maturity": "var(--m-bb)" };
+const SOURCE_ORDER = ["dividend", "interest", "gilt-coupon", "gilt-redemption", "cash-maturity"];
+const sourceColor = (s) => SOURCE_COLOR[s] || "var(--muted)";
 
 // Tax-treatment badge for a calendar row — wrapper name + taxed/tax-free/
 // tax-exempt, e.g. "GIA (taxed)", "ISA (tax-free)", "VCT (tax-exempt)" (VCT
@@ -424,6 +380,30 @@ function IncomeCalendarView({ events }) {
   const [calSort, toggleCalSort] = useSort("date", "asc");
   const summary = useMemo(() => summariseBySource(events), [events]);
   const total = events.reduce((s, e) => s + (+e.amount || 0), 0);
+  // Same events as the table below, grouped by calendar month and stacked
+  // by source — the forward-looking analogue of the historical "by wrapper"
+  // charts on the Tax by year sub-tab, but broken down by source (Gilt
+  // coupon/redemption, Dividend, Interest, Cash maturity) rather than
+  // wrapper, since that's the more meaningful split for "what's coming and
+  // when" (a gilt redemption isn't about wrapper tax treatment, it's
+  // capital coming back). Never needs a 24-month cap like the historical
+  // chart — buildIncomeCalendar() already bounds this to a 12-month horizon.
+  const monthlyData = useMemo(() => {
+    const map = new Map();
+    for (const e of events) {
+      if (!e.date || !e.amount) continue;
+      const m = e.date.slice(0, 7);
+      if (!map.has(m)) map.set(m, { month: m });
+      const row = map.get(m);
+      row[e.source] = Math.round(((row[e.source] || 0) + (+e.amount || 0)) * 100) / 100;
+    }
+    return [...map.values()].sort((a, b) => (a.month < b.month ? -1 : 1));
+  }, [events]);
+  const monthlySources = useMemo(() => {
+    const set = new Set();
+    for (const row of monthlyData) for (const k of Object.keys(row)) if (k !== "month") set.add(k);
+    return SOURCE_ORDER.filter((s) => set.has(s));
+  }, [monthlyData]);
 
   if (!events.length) {
     return <Empty msg="No forward income scheduled or forecast in the next 12 months. Dividend/interest forecasts need at least two historical payments on an open holding; gilt coupons and cash maturities show automatically once you hold them." />;
@@ -443,6 +423,30 @@ function IncomeCalendarView({ events }) {
           <div className="font-semibold num">{gbp(total)}</div>
         </div>
       </div>
+
+      {monthlyData.length > 1 && (
+        <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3">
+          <div className="text-xs font-medium text-[var(--muted)] mb-1.5">By month</div>
+          <ResponsiveContainer width="100%" height={220}>
+            <BarChart data={monthlyData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+              <CartesianGrid stroke="var(--border)" vertical={false} />
+              <XAxis dataKey="month" tick={{ fontSize: 10, fill: "var(--muted)" }} tickLine={false} axisLine={{ stroke: "var(--border)" }} />
+              <YAxis tickFormatter={(v) => gbp(v)} tick={{ fontSize: 11, fill: "var(--muted)" }} tickLine={false} axisLine={false} width={64} />
+              <Tooltip content={<StackedTotalTooltip />} />
+              {monthlySources.map((s) => (
+                <Bar key={s} dataKey={s} stackId="cal" fill={sourceColor(s)} name={SOURCE_LABELS[s] || s} radius={monthlySources[monthlySources.length - 1] === s ? [3, 3, 0, 0] : undefined} />
+              ))}
+            </BarChart>
+          </ResponsiveContainer>
+          <div className="flex flex-wrap gap-3 mt-2">
+            {monthlySources.map((s) => (
+              <span key={s} className="inline-flex items-center gap-1.5 text-xs text-[var(--muted)]">
+                <span className="w-2 h-2 rounded-full inline-block" style={{ background: sourceColor(s) }} />{SOURCE_LABELS[s] || s}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
       <div className="rounded-xl border border-[var(--border)] overflow-hidden">
         <table className="w-full text-sm">
           <thead className="bg-[var(--panel2)] text-[var(--muted)] text-xs uppercase tracking-wide">

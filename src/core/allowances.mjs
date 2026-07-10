@@ -21,6 +21,24 @@ import { classifyInstrument } from "./portfolio.mjs";
 export const ISA_LIMIT = 20000;   // 2026/27 (LISA's £4,000 counts within it)
 export const LISA_LIMIT = 4000;
 
+// Money Purchase Annual Allowance — once someone takes a UFPLS payment, or
+// any income from flexi-access drawdown (taking the tax-free 25% alone via
+// normal PCLS/capped drawdown does NOT trigger it), further DC contributions
+// are capped at this flat figure regardless of the standard/tapered AA
+// above. Unlike AA_BY_YEAR it hasn't moved with tax-year changes recently
+// (£10,000 since 2023/24, £4,000 2017/18–2022/23) — kept as a single
+// current-law constant rather than a by-year table since this app doesn't
+// otherwise model pre-2023 MPAA scenarios.
+export const MPAA_LIMIT = 10000;
+
+// Apply the MPAA cap on top of whatever the standard/tapered AA works out
+// to: once triggered, the money-purchase annual allowance is the LOWER of
+// the two, never the tapered AA alone (someone tapered to £10k floor and
+// also MPAA-restricted is still just capped at £10k, not double-reduced).
+export function mpaaLimitedAA(aa, mpaaTriggered) {
+  return mpaaTriggered ? Math.min(aa, MPAA_LIMIT) : aa;
+}
+
 /* ------------------------- ISA subscriptions -------------------------- */
 // { taxYear: { ISA, LISA, total } } from BUY rows in ISA/LISA wrappers.
 export function isaSubscriptionsByYear(txns = []) {
