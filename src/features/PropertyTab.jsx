@@ -51,11 +51,17 @@ function PropertyTab({
     if (!form.label.trim() || !(+form.purchasePrice > 0) || !form.purchaseDate) return;
     // Land Registry HPI has no foreign coverage — a non-GBP property is
     // always manually valued, regardless of what the form's toggle says.
+    // Its region is stored as the explicit "foreign" pseudo-region too
+    // (rather than left at whatever UK region was selected before the
+    // currency was switched away from GBP), so the stored record is
+    // internally consistent even before display logic elsewhere re-derives
+    // "foreign" from currency.
     const foreign = form.currency !== "GBP";
     setProperties((p) => [...p, {
       ...form, label: form.label.trim(), purchasePrice: +form.purchasePrice,
       manualValue: form.manualValue === "" ? null : +form.manualValue,
       valuationMode: foreign ? "manual" : form.valuationMode,
+      region: foreign ? "foreign" : form.region,
     }]);
     setForm(PROPERTY_BLANK());
   };
@@ -249,7 +255,11 @@ function PropertyTab({
                 </select>
               </Field>
             ) : (
-              <Field label="Region"><span className="input w-full flex items-center text-xs text-[var(--muted)]">n/a — foreign</span></Field>
+              <Field label="Region">
+                <select className="input w-full" value="foreign" disabled>
+                  <option value="foreign">Foreign</option>
+                </select>
+              </Field>
             )}
             <Field label="Purchase date"><input type="date" className="input num w-full" value={form.purchaseDate} onChange={(e) => setForm({ ...form, purchaseDate: e.target.value })} /></Field>
             <Field label={`Purchase price (${form.currency})`}><input type="number" className="input num w-full" value={form.purchasePrice} onChange={(e) => setForm({ ...form, purchasePrice: e.target.value })} /></Field>

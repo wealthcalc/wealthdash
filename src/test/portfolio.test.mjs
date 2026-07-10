@@ -4,7 +4,7 @@ import {
   WRAPPER_META, WRAPPERS, normWrapper, isWrapperTaxable,
   classifyInstrument, isDisposalTaxable, isIncomeTaxable,
   buildPositions, valuePositions, rollupByWrapper, totalWealth,
-  incomeByWrapper, allocation, buildWealthModel,
+  incomeByWrapper, allocation, buildWealthModel, withCashBucket,
 } from "../core/portfolio.mjs";
 
 const close = (a, b, eps = 1e-6) => Math.abs(a - b) <= eps;
@@ -290,6 +290,34 @@ test("allocation by asset class and geography sums to the priced total", () => {
   assert.ok(close(gb.marketValue, 2200)); // TR31 1000 + SMT 1200
 });
 
+/* ------------------------------ withCashBucket ----------------------------- */
+
+test("withCashBucket: adds a 'cash' bucket and rescales every pct against the new combined total", () => {
+  const buckets = [{ key: "equity", marketValue: 3000, pct: 1 }];
+  const r = withCashBucket(buckets, 1000);
+  assert.equal(r.length, 2);
+  const cash = r.find((b) => b.key === "cash");
+  assert.equal(cash.marketValue, 1000);
+  assert.ok(close(cash.pct, 0.25)); // 1000 / 4000
+  const equity = r.find((b) => b.key === "equity");
+  assert.ok(close(equity.pct, 0.75)); // 3000 / 4000
+  assert.ok(close(r.reduce((s, b) => s + b.pct, 0), 1));
+});
+
+test("withCashBucket: zero or negative cash adds no bucket at all (no zero-width sliver)", () => {
+  const buckets = [{ key: "equity", marketValue: 3000, pct: 1 }];
+  assert.deepEqual(withCashBucket(buckets, 0), buckets);
+  assert.deepEqual(withCashBucket(buckets, -50), buckets);
+  assert.deepEqual(withCashBucket(buckets, null), buckets);
+});
+
+test("withCashBucket: cash-only (no priced positions) is the whole pie", () => {
+  const r = withCashBucket([], 500);
+  assert.equal(r.length, 1);
+  assert.equal(r[0].key, "cash");
+  assert.equal(r[0].pct, 1);
+});
+
 /* --------------------------- unified model -------------------------- */
 test("buildWealthModel assembles the whole picture", () => {
   const model = buildWealthModel({
@@ -319,4 +347,12 @@ test("buildWealthModel assembles the whole picture", () => {
   assert.ok(model.allocation.assetClass.length >= 2);
   assert.ok(model.allocation.wrapper.length === 3); // GIA, ISA, SIPP have priced value
   assert.ok(model.allocation.currency.length >= 1); // currency dimension present
+  // assetClass folds cash in as its own bucket (the £500 GIA cash above);
+  // wrapper/geography/currency deliberately don't, so those still sum to
+  // exactly the priced total, not the priced total + cash.
+  const cashBucket = model.allocation.assetClass.find((b) => b.key === "cash");
+  assert.ok(cashBucket, "assetClass allocation should include a cash bucket");
+  assert.ok(close(cashBucket.marketValue, 500));
+  assert.ok(close(model.allocation.assetClass.reduce((s, b) => s + b.pct, 0), 1));
+  assert.ok(close(model.allocation.wrapper.reduce((s, b) => s + b.marketValue, 0), 7150));
 });

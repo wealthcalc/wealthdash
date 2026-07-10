@@ -1,6 +1,7 @@
 /* Shared UI primitives, formatters, price/FX fetch helpers and seed data —
    extracted verbatim from CgtDashboard.jsx (UI split, phase 1). */
 import React, { useState, useMemo, useCallback, useRef } from "react";
+import { dedupeAgainstExisting as _dedupeAgainstExisting } from "../core/dedupe.mjs";
 
 // Safe localStorage wrapper: persists on the deployed app, silently no-ops in
 // sandboxed preview frames where storage access throws.
@@ -316,24 +317,9 @@ function RateCell({ r }) {
 }
 
 /* ----------------------------- import dedupe -------------------------- */
-// Broker/provider CSV exports commonly overlap a previous import (a wider
-// date-range re-export is the normal case, not an edge case) — without this,
-// re-pasting or re-uploading the same file silently doubled every affected
-// transaction, income entry, or pension cashflow. `keyFn` reduces a row to a
-// comparable string; anything matching a key already in `existing`, or a
-// repeat within the same batch, is dropped rather than appended twice.
-function dedupeAgainstExisting(newRows, existing, keyFn) {
-  const seen = new Set(existing.map(keyFn));
-  const rows = [];
-  let skipped = 0;
-  for (const row of newRows) {
-    const k = keyFn(row);
-    if (seen.has(k)) { skipped++; continue; }
-    seen.add(k);
-    rows.push(row);
-  }
-  return { rows, skipped };
-}
+// Logic moved to core/dedupe.mjs (pure, node-tested) — re-exported here
+// under the same name so every existing caller in this file is unaffected.
+const dedupeAgainstExisting = _dedupeAgainstExisting;
 
 /* ------------------------- sortable table headers -------------------- */
 // Generic click-to-sort support shared by every data table in the app

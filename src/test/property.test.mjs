@@ -135,11 +135,33 @@ test("householdNetWorth: private holding valuations (EIS/SEIS/LP) add straight i
   assert.equal(out.netWorth, 145000);
 });
 
+test("householdNetWorth: credit card debt is subtracted like other liabilities, alongside them", () => {
+  const out = householdNetWorth({
+    investedTotal: 100000,
+    otherLiabilities: [{ balance: 5000 }],
+    creditCardDebt: 3200,
+  });
+  assert.equal(out.creditCardDebt, 3200);
+  assert.equal(out.otherLiabilities, 5000);
+  assert.equal(out.totalLiabilities, 8200);
+  assert.equal(out.netWorth, 100000 - 5000 - 3200);
+});
+
+test("householdNetWorth: creditCardDebt defaults to 0 and never fabricates a non-finite value", () => {
+  const out = householdNetWorth({ investedTotal: 1000 });
+  assert.equal(out.creditCardDebt, 0);
+  assert.equal(householdNetWorth({ investedTotal: 1000, creditCardDebt: NaN }).creditCardDebt, 0);
+});
+
 /* -------------------------------- regions --------------------------------- */
 
 test("regionLabel: known slug resolves, unknown falls back to the slug itself", () => {
   assert.equal(regionLabel("london"), "London");
   assert.equal(regionLabel("nowhere"), "nowhere");
+});
+
+test("regionLabel: the 'foreign' pseudo-region resolves to a readable label, not a raw slug", () => {
+  assert.equal(regionLabel("foreign"), "Foreign");
 });
 
 /* --------------------------- foreign currency ----------------------------- */

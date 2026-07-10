@@ -1,9 +1,10 @@
 import React, { useState, useMemo, useCallback, useRef } from "react";
-import { AlertCircle, PieChart, Banknote, AlertTriangle } from "lucide-react";
+import { AlertCircle, PieChart, Banknote, AlertTriangle, CreditCard } from "lucide-react";
 import { WRAPPERS } from "../core/portfolio.mjs";
 import {
   cashAccountsByWrapper, totalCashAccounts, weightedAverageRate, accountsMaturingSoon,
 } from "../core/cash.mjs";
+import { totalCreditCardDebt } from "../core/credit-cards.mjs";
 import LivePricesPanel from "../ui/LivePricesPanel.jsx";
 import {
   gbp, gbp0, WrapperChip, num, CurrencyInput, KIND_LABEL, ALLOC_COLORS, AllocBar, pct, Stat, Empty,
@@ -14,14 +15,16 @@ const ACCOUNT_BLANK = () => ({
   id: uid(), wrapper: "GIA", label: "", institution: "", balance: "",
   rate: "", rateType: "variable", maturityDate: "", notes: "",
 });
+const CARD_BLANK = () => ({ id: uid(), label: "", issuer: "", balance: "", notes: "" });
 
-function WealthTab({ model, cash, setCash, cashAccounts = [], setCashAccounts, prices, setPrices, avKey, setAvKey, avMeta, setAvMeta, priceMeta, setPriceMeta, txns, secMeta, dmoReportDate, setDmoReportDate }) {
+function WealthTab({ model, cash, setCash, cashAccounts = [], setCashAccounts, creditCards = [], setCreditCards, prices, setPrices, avKey, setAvKey, avMeta, setAvMeta, priceMeta, setPriceMeta, txns, secMeta, dmoReportDate, setDmoReportDate }) {
   // Hooks must run in the same order every render regardless of whether
   // `model` is null this time round, so anything stateful lives above both
   // early-return guards below (this file previously had no hooks at all,
   // which is why those guards used to sit at the very top safely).
   const [acctForm, setAcctForm] = useState(ACCOUNT_BLANK());
   const [acctSort, toggleAcctSort] = useSort("wrapper", "asc");
+  const [cardForm, setCardForm] = useState(CARD_BLANK());
 
   if (!model) return <Empty msg="Couldn't build the portfolio model — check the Transactions tab for ledger errors." />;
   const { positions, byWrapper, total, income } = model;
@@ -41,6 +44,17 @@ function WealthTab({ model, cash, setCash, cashAccounts = [], setCashAccounts, p
   };
   const updateAccount = (id, patch) => setCashAccounts((p) => p.map((a) => (a.id === id ? { ...a, ...patch } : a)));
   const removeAccount = (id) => setCashAccounts((p) => p.filter((a) => a.id !== id));
+
+  // ---- credit cards (named, subtracted from net worth) ----
+  const addCard = () => {
+    if (!(+cardForm.balance >= 0)) return;
+    setCreditCards((p) => [...p, { ...cardForm, balance: +cardForm.balance }]);
+    setCardForm(CARD_BLANK());
+  };
+  const updateCard = (id, patch) => setCreditCards((p) => p.map((c) => (c.id === id ? { ...c, ...patch } : c)));
+  const removeCard = (id) => setCreditCards((p) => p.filter((c) => c.id !== id));
+  const cardsTotal = totalCreditCardDebt(creditCards);
+
   const acctRows = sortRows(cashAccounts, acctSort, {
     wrapper: (a) => a.wrapper, label: (a) => a.label || "", institution: (a) => a.institution || "",
     balance: (a) => a.balance, rate: (a) => a.rate, maturityDate: (a) => a.maturityDate || null,
@@ -207,6 +221,55 @@ function WealthTab({ model, cash, setCash, cashAccounts = [], setCashAccounts, p
           </div>
           <p className="text-xs text-[var(--muted)] leading-relaxed">
             Additive on top of the manual "Cash" figure per wrapper above — a wrapper's true cash total is the manual/unallocated amount PLUS everything entered here, same principle as the LISA cash/fund-table split on the Pension tab. No compounding or reinvestment is projected: balances and rates are what you last entered, not a forecast.
+          </p>
+        </div>
+      </div>
+
+      {/* credit cards — named revolving-debt balances, subtracted from net worth */}
+      <div className="space-y-2">
+        <h3 className="text-sm font-semibold flex items-center gap-2"><CreditCard size={15} className="text-[var(--accent)]" /> Credit cards</h3>
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+          <Stat label="Total card debt" value={gbp0(cardsTotal)} sub={`${creditCards.length} card${creditCards.length === 1 ? "" : "s"}`} tone={cardsTotal > 0 ? "loss" : undefined} />
+        </div>
+
+        {creditCards.length > 0 && (
+          <div className="rounded-xl border border-[var(--border)] overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-[var(--panel2)] text-[var(--muted)] text-xs uppercase tracking-wide">
+                <tr>
+                  <th className="px-3 py-2 font-medium text-left">Card</th>
+                  <th className="px-3 py-2 font-medium text-left">Issuer</th>
+                  <th className="px-3 py-2 font-medium text-right">Balance</th>
+                  <th className="px-3 py-2 font-medium text-left">Notes</th>
+                  <th className="px-3 py-2"></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[var(--border)] bg-[var(--panel)]">
+                {creditCards.map((c) => (
+                  <tr key={c.id} className="hover:bg-[var(--panel2)]">
+                    <td className="px-3 py-2"><input className="input text-xs py-1 w-28" value={c.label || ""} onChange={(e) => updateCard(c.id, { label: e.target.value })} /></td>
+                    <td className="px-3 py-2"><input className="input text-xs py-1 w-28" value={c.issuer || ""} onChange={(e) => updateCard(c.id, { issuer: e.target.value })} /></td>
+                    <td className="px-3 py-2 text-right"><input type="number" className="input num text-xs py-1 w-28 text-right" value={c.balance} onChange={(e) => updateCard(c.id, { balance: +e.target.value || 0 })} /></td>
+                    <td className="px-3 py-2"><input className="input text-xs py-1 w-36" value={c.notes || ""} onChange={(e) => updateCard(c.id, { notes: e.target.value })} /></td>
+                    <td className="px-3 py-2 text-right"><TwoStepDelete onConfirm={() => removeCard(c.id)} label="Remove card" /></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 space-y-2">
+          <div className="text-sm font-medium">Add a credit card</div>
+          <div className="flex flex-wrap gap-2 items-end">
+            <Field label="Card"><input className="input w-32" placeholder="Everyday Amex" value={cardForm.label} onChange={(e) => setCardForm({ ...cardForm, label: e.target.value })} /></Field>
+            <Field label="Issuer"><input className="input w-32" placeholder="Amex" value={cardForm.issuer} onChange={(e) => setCardForm({ ...cardForm, issuer: e.target.value })} /></Field>
+            <Field label="Balance owed (£)"><CurrencyInput value={cardForm.balance === "" ? 0 : cardForm.balance} onChange={(v) => setCardForm({ ...cardForm, balance: v })} className="w-32" /></Field>
+            <Field label="Notes"><input className="input w-36" placeholder="optional" value={cardForm.notes} onChange={(e) => setCardForm({ ...cardForm, notes: e.target.value })} /></Field>
+            <button onClick={addCard} className="btn-accent">Add card</button>
+          </div>
+          <p className="text-xs text-[var(--muted)] leading-relaxed">
+            Balances here are subtracted from net worth on the Home tab, same as property mortgages and other liabilities. No interest/APR modelling — a balance is what you last entered, not a forecast; update it as statements come in.
           </p>
         </div>
       </div>

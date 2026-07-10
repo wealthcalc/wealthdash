@@ -38,6 +38,28 @@ test("flex: GBP BUY nets proceeds + commission + taxes", () => {
   assert.equal(t.wrapper, "GIA");
 });
 
+/* ------------------------------ ibkrId (dedupe) ---------------------------- */
+
+test("flex: TradeID column, when present, is carried through as the hidden ibkrId field", () => {
+  const header = FLEX_HEADER + ",TradeID";
+  const csv = header + "\n20240501,VOD,GB00BH4HKS39,BUY,10,-1000,-5,0,GBP,1,STK,55512345";
+  const { trades } = parseIBKR(csv);
+  assert.equal(trades[0].ibkrId, "55512345");
+});
+
+test("flex: no TradeID column -> ibkrId is null, not fabricated", () => {
+  const csv = FLEX_HEADER + "\n20240501,VOD,GB00BH4HKS39,BUY,10,-1000,-5,0,GBP,1,STK";
+  const { trades } = parseIBKR(csv);
+  assert.equal(trades[0].ibkrId, null);
+});
+
+test("flex: cash transaction TransactionID is carried through as ibkrId too", () => {
+  const header = "Type,Amount,SettleDate,CurrencyPrimary,TransactionID";
+  const csv = header + "\nDividends,42.10,20240601,GBP,99988877";
+  const { income } = parseIBKR(csv);
+  assert.equal(income[0].ibkrId, "99988877");
+});
+
 test("flex: negative quantity implies SELL when Buy/Sell is blank", () => {
   const csv = FLEX_HEADER + "\n2024-05-02,VOD,GB00BH4HKS39,,-10,2000,-5,0,GBP,1,STK";
   const { trades } = parseIBKR(csv);

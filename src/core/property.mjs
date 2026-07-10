@@ -30,7 +30,12 @@ export const HPI_REGIONS = [
   { slug: "northern-ireland", label: "Northern Ireland" },
   { slug: "united-kingdom", label: "United Kingdom" },
 ];
-export const regionLabel = (slug) => HPI_REGIONS.find((r) => r.slug === slug)?.label || slug || "—";
+// "foreign" is a deliberate pseudo-region, not a Land Registry slug — kept
+// out of HPI_REGIONS itself so it's never sent to the real HPI API (see
+// api/hpi.mjs), but still resolves to a readable label anywhere a
+// property's region is displayed, for a non-GBP property whose region is
+// meaningless for UK HPI purposes.
+export const regionLabel = (slug) => (slug === "foreign" ? "Foreign" : HPI_REGIONS.find((r) => r.slug === slug)?.label || slug || "—");
 
 /* ------------------------------ currency / FX --------------------------- */
 // Foreign (non-GBP) properties and mortgages carry `currency` plus a cached
@@ -168,15 +173,17 @@ export function mortgagesEndingSoon(mortgages = [], today, withinDays = 180) {
 // core/private-investments.mjs; no leverage concept there, so it's added
 // straight in, not netted against a debt figure) plus held RSU shares'
 // current value (core/rsu.mjs — same "added straight in" treatment, no
-// leverage concept), minus any other, non-mortgage debts = true household
-// net worth. `privateValue`/`rsuValue` default to 0 so every existing call
-// site (and every existing test) is unaffected until a caller actually has
-// that kind of holding to pass in.
-export function householdNetWorth({ investedTotal = 0, properties = [], mortgages = [], otherLiabilities = [], privateValue = 0, rsuValue = 0 } = {}) {
+// leverage concept), minus any other, non-mortgage debts (including credit
+// card balances — see core/credit-cards.mjs) = true household net worth.
+// `privateValue`/`rsuValue`/`creditCardDebt` default to 0 so every existing
+// call site (and every existing test) is unaffected until a caller
+// actually has that kind of holding/debt to pass in.
+export function householdNetWorth({ investedTotal = 0, properties = [], mortgages = [], otherLiabilities = [], privateValue = 0, rsuValue = 0, creditCardDebt = 0 } = {}) {
   const prop = netPropertyWorth(properties, mortgages);
   const otherDebt = totalOtherLiabilities(otherLiabilities);
   const pv = Number.isFinite(+privateValue) ? +privateValue : 0;
   const rv = Number.isFinite(+rsuValue) ? +rsuValue : 0;
+  const ccDebt = Number.isFinite(+creditCardDebt) ? +creditCardDebt : 0;
   return {
     investedTotal,
     propertyValue: prop.value,
@@ -185,7 +192,8 @@ export function householdNetWorth({ investedTotal = 0, properties = [], mortgage
     privateValue: pv,
     rsuValue: rv,
     otherLiabilities: otherDebt,
-    totalLiabilities: prop.debt + otherDebt,
-    netWorth: investedTotal + prop.equity + pv + rv - otherDebt,
+    creditCardDebt: ccDebt,
+    totalLiabilities: prop.debt + otherDebt + ccDebt,
+    netWorth: investedTotal + prop.equity + pv + rv - otherDebt - ccDebt,
   };
 }

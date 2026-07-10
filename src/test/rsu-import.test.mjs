@@ -4,17 +4,20 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import Papa from "papaparse";
-import { parseUkDate, parseQty, guessTickerFromFilename, mapRsuCsvRow, buildRsuImport } from "../core/rsu-import.mjs";
+import {
+  parseUkDate, parseQty, guessTickerFromFilename, mapRsuCsvRow, buildRsuImport,
+  detectRsuCsvFormat, mapRsuScheduleRow, buildRsuScheduleImport, buildRsuReleaseImport,
+} from "../core/rsu-import.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-// Synthetic fixtures matching the real Wells Fargo/Shareworks export shape
-// this parser was built against (same headers, UK date format, comma
-// thousands, decimal share counts, BOM prefix, and the "one plan label
-// reused across multiple grant dates" / "one grant date reused across
-// multiple plan labels" quirks that make the grouping key need both
-// fields) — fabricated numbers, no personal financial data ships with the repo.
+// Synthetic fixtures matching the real Wells Fargo/Shareworks export shapes
+// these parsers were built against (same headers, UK date format, comma
+// thousands, decimal share counts, BOM prefix, and the real-file quirks
+// documented alongside each builder below) — fabricated numbers, no
+// personal financial data ships with the repo.
 const unitsCsv = readFileSync(join(__dirname, "rsu-units-fixture.csv"), "utf8");
 const awardsCsv = readFileSync(join(__dirname, "rsu-awards-fixture.csv"), "utf8");
+const scheduleCsv = readFileSync(join(__dirname, "rsu-schedule-fixture.csv"), "utf8");
 const parseRows = (csv) => Papa.parse(csv.trim(), { header: true, skipEmptyLines: true }).data;
 
 /* -------------------------------- parseUkDate -------------------------------- */
@@ -145,4 +148,114 @@ test("buildRsuImport: empty input doesn't throw and produces no grants/events", 
   const r = buildRsuImport([], { ticker: "WFC" });
   assert.deepEqual(r.grants, []);
   assert.deepEqual(r.events, []);
+});
+
+/* ------------------------------ detectRsuCsvFormat ------------------------------ */
+
+test("detectRsuCsvFormat: recognises the release-history and vesting-schedule shapes", () => {
+  assert.equal(detectRsuCsvFormat(parseRows(unitsCsv)), "release");
+  assert.equal(detectRsuCsvFormat(parseRows(awardsCsv)), "release");
+  assert.equal(detectRsuCsvFormat(parseRows(scheduleCsv)), "schedule");
+});
+
+test("detectRsuCsvFormat: unrecognised or empty input returns null rather than guessing", () => {
+  assert.equal(detectRsuCsvFormat([]), null);
+  assert.equal(detectRsuCsvFormat([{ "Some Other Column": "x" }]), null);
+  assert.equal(detectRsuCsvFormat(null), null);
+});
+
+/* ------------------------------ mapRsuScheduleRow ------------------------------ */
+
+test("mapRsuScheduleRow: maps an Award row, carrying the raw Grant Date through as-is", () => {
+  const row = { "Plan Description": "1/10/2023 RSU Award", "Contribution type": "Award", "Grant Date": "10 Jan 2023", "Available from": "15 Jan 2027", "Quantity": "100.00000", "Estimated value": "5000.00" };
+  const r = mapRsuScheduleRow(row);
+  assert.deepEqual(r, { planLabel: "1/10/2023 RSU Award", contributionType: "Award", grantDateRaw: "2023-01-10", vestDate: "2027-01-15", quantity: 100, estimatedValueGBP: 5000 });
+});
+
+test("mapRsuScheduleRow: 4-letter month abbreviations (e.g. 'Sept') still parse", () => {
+  const row = { "Plan Description": "X", "Contribution type": "Notional dividend", "Grant Date": "1 Sept 2025", "Available from": "20 Jan 2028", "Quantity": "0.3", "Estimated value": "15" };
+  assert.equal(mapRsuScheduleRow(row).grantDateRaw, "2025-09-01");
+});
+
+test("mapRsuScheduleRow: missing plan label, available-from date, or quantity -> null", () => {
+  assert.equal(mapRsuScheduleRow({ "Contribution type": "Award", "Available from": "15 Jan 2027", "Quantity": "100" }), null);
+  assert.equal(mapRsuScheduleRow({ "Plan Description": "X", "Contribution type": "Award", "Quantity": "100" }), null);
+  assert.equal(mapRsuScheduleRow({ "Plan Description": "X", "Contribution type": "Award", "Available from": "15 Jan 2027" }), null);
+});
+
+/* ------------------------------ buildRsuScheduleImport ------------------------------ */
+
+test("buildRsuScheduleImport: resolves the true grant date from a plan's Award row, not its Notional dividend rows", () => {
+  const rows = parseRows(scheduleCsv);
+  const r = buildRsuScheduleImport(rows, { ticker: "wfc" });
+  const g = r.grants.find((g) => g.note === "1/10/2023 RSU Award");
+  assert.equal(g.grantDate, "2023-01-10"); // from the Award row, NOT "2026-06-01" off the dividend row
+  assert.equal(g.ticker, "WFC");
+});
+
+test("buildRsuScheduleImport: multiple Award tranches under one plan label share one grant, each its own vest event", () => {
+  const rows = parseRows(scheduleCsv);
+  const r = buildRsuScheduleImport(rows, { ticker: "WFC" });
+  const grants = r.grants.filter((g) => g.note === "1/15/2024 Stock Award");
+  assert.equal(grants.length, 1); // one grant...
+  const vests = r.events.filter((e) => e.grantKey === grants[0].key);
+  assert.equal(vests.length, 3); // ...two Award tranches + one Notional dividend, all under it
+  assert.deepEqual(vests.map((e) => e.date).sort(), ["2027-01-20", "2028-01-20", "2028-01-20"].sort());
+});
+
+test("buildRsuScheduleImport: every vest event uses the real 'Available from' date, not the grant date", () => {
+  const rows = parseRows(scheduleCsv);
+  const r = buildRsuScheduleImport(rows, { ticker: "WFC" });
+  const firstGrantEvents = r.events.filter((e) => e.grantKey.startsWith("1/10/2023 RSU Award"));
+  assert.ok(firstGrantEvents.every((e) => e.date === "2027-01-15")); // "Available from", not "2023-01-10"
+});
+
+test("buildRsuScheduleImport: no fabricated price — priceNative/fxRate stay null, estimated value is only a note", () => {
+  const rows = parseRows(scheduleCsv);
+  const r = buildRsuScheduleImport(rows, { ticker: "WFC" });
+  assert.ok(r.events.every((e) => e.priceNative === null && e.fxRate === null));
+  assert.ok(r.events.some((e) => /estimated value £5000/i.test(e.note)));
+});
+
+test("buildRsuScheduleImport: a plan with only Notional dividend rows (no Award row) falls back to its own date and warns", () => {
+  const rows = parseRows(scheduleCsv);
+  const r = buildRsuScheduleImport(rows, { ticker: "WFC" });
+  const g = r.grants.find((g) => g.note === "Orphan Dividend Plan");
+  assert.equal(g.grantDate, "2026-03-01"); // best-effort: the row's own (dividend) date
+  assert.ok(r.warnings.some((w) => /couldn't be confirmed from an "Award" row/i.test(w)));
+});
+
+test("buildRsuScheduleImport: warns that estimated values are report-date projections, not actual vest-date FMV", () => {
+  const rows = parseRows(scheduleCsv);
+  const r = buildRsuScheduleImport(rows, { ticker: "WFC" });
+  assert.ok(r.warnings.some((w) => /not the actual FMV at vest/i.test(w)));
+});
+
+test("buildRsuScheduleImport: empty input doesn't throw", () => {
+  const r = buildRsuScheduleImport([], { ticker: "WFC" });
+  assert.deepEqual(r.grants, []);
+  assert.deepEqual(r.events, []);
+});
+
+/* ------------------------------ dispatcher (buildRsuImport) ------------------------------ */
+
+test("buildRsuImport: auto-detects the vesting-schedule format and delegates to buildRsuScheduleImport", () => {
+  const rows = parseRows(scheduleCsv);
+  const r = buildRsuImport(rows, { ticker: "WFC" });
+  const g = r.grants.find((g) => g.note === "1/10/2023 RSU Award");
+  assert.equal(g.grantDate, "2023-01-10");
+  assert.ok(r.events.every((e) => e.priceNative === null));
+});
+
+test("buildRsuImport: still auto-detects the release-history format exactly as before (dispatcher is a no-op regression)", () => {
+  const rows = parseRows(unitsCsv);
+  const viaDispatcher = buildRsuImport(rows, { ticker: "WFC" });
+  const direct = buildRsuReleaseImport(rows, { ticker: "WFC" });
+  assert.deepEqual(viaDispatcher, direct);
+});
+
+test("buildRsuImport: unrecognised header set falls back to the release parser, which reports everything skipped rather than throwing", () => {
+  const r = buildRsuImport([{ "Some Other Column": "x" }], { ticker: "WFC" });
+  assert.deepEqual(r.grants, []);
+  assert.ok(r.warnings.some((w) => /1 row\(s\) skipped/i.test(w)));
 });

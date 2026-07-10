@@ -6,7 +6,7 @@ import { WRAPPERS, isWrapperTaxable, normWrapper } from "../core/portfolio.mjs";
 import { investmentIncomeTax } from "../core/uk-tax.mjs";
 import { addMonthsISO } from "../core/ishares-eri.mjs";
 import { summariseBySource } from "../core/income-calendar.mjs";
-import { store, unitsHeldAt, gbp, SubTabs, num, uid, todayISO, fxToGBP, Field, Empty, useSort, sortRows, SortTh } from "../ui/shared.jsx";
+import { store, unitsHeldAt, gbp, SubTabs, num, uid, todayISO, fxToGBP, Field, Empty, useSort, sortRows, SortTh, CurrencyInput } from "../ui/shared.jsx";
 
 // Fixed wrapper → colour mapping so the same wrapper reads as the same
 // colour everywhere this chart appears — unlike AllocBar's index-based
@@ -16,6 +16,30 @@ import { store, unitsHeldAt, gbp, SubTabs, num, uid, todayISO, fxToGBP, Field, E
 // (the --m-* variables are otherwise used for CGT matching-rule badges).
 const WRAPPER_COLOR = { GIA: "var(--accent)", ISA: "var(--gain)", SIPP: "var(--m-same)", LISA: "var(--m-pool)", VCT: "var(--m-bb)" };
 const wrapperColor = (w) => WRAPPER_COLOR[w] || "var(--muted)";
+
+// Custom tooltip for the stacked income charts — recharts' built-in
+// Tooltip only lists each series' own value; hovering a bar naturally also
+// wants "what did this year/month add up to across every wrapper", so this
+// sums the visible payload (whatever segments are actually stacked in that
+// bar) and appends it as a bold total row rather than requiring a separate
+// invisible "total" series just to get a number into the tooltip.
+function StackedTotalTooltip({ active, payload, label, labelPrefix = "" }) {
+  if (!active || !payload || !payload.length) return null;
+  const total = payload.reduce((s, p) => s + (+p.value || 0), 0);
+  return (
+    <div style={{ background: "var(--panel)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 12, padding: "8px 10px", minWidth: 140 }}>
+      <div style={{ fontWeight: 600, marginBottom: 4 }}>{labelPrefix}{label}</div>
+      {payload.map((p, i) => (
+        <div key={i} style={{ display: "flex", justifyContent: "space-between", gap: 16 }}>
+          <span style={{ color: p.color }}>{p.name}</span><span className="num">{gbp(p.value)}</span>
+        </div>
+      ))}
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 16, borderTop: "1px solid var(--border)", marginTop: 4, paddingTop: 4, fontWeight: 600 }}>
+        <span>Total</span><span className="num">{gbp(total)}</span>
+      </div>
+    </div>
+  );
+}
 
 /* ----------------------------- Income tab --------------------------- */
 const DIV_BLANK = () => ({ id: uid(), date: todayISO(), ticker: "", kind: "dividend", amount: "", wrapper: "GIA" });
@@ -60,6 +84,28 @@ function IncomeTab({ incomeEntries, setIncomeEntries, eriEntries, setEriEntries,
       return row;
     });
   }, [allYears, presentWrappers, incomeAllWrappers]);
+  // Income by calendar month — same stacked-by-wrapper shape as the
+  // year-on-year chart above, but at monthly granularity so payment
+  // seasonality (e.g. quarterly dividend clusters) is visible, not just the
+  // tax-year total. Capped to the most recent 24 months so the chart stays
+  // readable rather than compressing into unreadable bars as history grows.
+  const monthlyChartData = useMemo(() => {
+    const map = new Map();
+    for (const e of incomeEntries) {
+      if (!e.date || !e.amount) continue;
+      const m = e.date.slice(0, 7);
+      if (!map.has(m)) map.set(m, { month: m });
+      const row = map.get(m);
+      const w = normWrapper(e.wrapper);
+      row[w] = Math.round(((row[w] || 0) + (+e.amount || 0)) * 100) / 100;
+    }
+    return [...map.values()].sort((a, b) => (a.month < b.month ? -1 : 1)).slice(-24);
+  }, [incomeEntries]);
+  const monthWrappers = useMemo(() => {
+    const set = new Set();
+    for (const row of monthlyChartData) for (const k of Object.keys(row)) if (k !== "month") set.add(k);
+    return WRAPPERS.filter((w) => set.has(w));
+  }, [monthlyChartData]);
   const [incWrapper, setIncWrapper] = useState(() => store.get("cgt.income.wrapper", "GIA"));
   React.useEffect(() => store.set("cgt.income.wrapper", incWrapper), [incWrapper]);
   React.useEffect(() => { if (presentWrappers.length && !presentWrappers.includes(incWrapper)) setIncWrapper(presentWrappers[0]); }, [presentWrappers]);
@@ -83,7 +129,7 @@ function IncomeTab({ incomeEntries, setIncomeEntries, eriEntries, setEriEntries,
   return (
     <div className="space-y-5">
       <div className="flex items-end gap-3 flex-wrap">
-        <Field label="Employment / other income (£)"><input type="number" value={income} onChange={(e) => setIncome(+e.target.value || 0)} className="input num w-48" /></Field>
+        <Field label="Employment / other income (£)"><CurrencyInput value={income} onChange={setIncome} className="w-48" /></Field>
         <p className="text-xs text-[var(--muted)] pb-2 max-w-md">Dividends and interest are stacked on top of this income for the tax calculation. The tax table counts only taxable (GIA) income; the all-wrapper overview shows your full income including tax-free ISA/SIPP/LISA/VCT.</p>
       </div>
 
@@ -104,11 +150,7 @@ function IncomeTab({ incomeEntries, setIncomeEntries, eriEntries, setEriEntries,
                     <CartesianGrid stroke="var(--border)" vertical={false} />
                     <XAxis dataKey="year" tick={{ fontSize: 11, fill: "var(--muted)" }} tickLine={false} axisLine={{ stroke: "var(--border)" }} />
                     <YAxis tickFormatter={(v) => gbp(v)} tick={{ fontSize: 11, fill: "var(--muted)" }} tickLine={false} axisLine={false} width={64} />
-                    <Tooltip
-                      formatter={(v, n) => [gbp(v), n]}
-                      labelFormatter={(y) => `Tax year ${y}`}
-                      contentStyle={{ background: "var(--panel)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 12 }}
-                    />
+                    <Tooltip content={<StackedTotalTooltip labelPrefix="Tax year " />} />
                     {presentWrappers.map((w) => (
                       <Bar key={w} dataKey={w} stackId="income" fill={wrapperColor(w)} name={w} radius={presentWrappers[presentWrappers.length - 1] === w ? [3, 3, 0, 0] : undefined} />
                     ))}
@@ -123,6 +165,34 @@ function IncomeTab({ incomeEntries, setIncomeEntries, eriEntries, setEriEntries,
                 </div>
               </div>
               <p className="text-xs text-[var(--muted)]">Dividends + interest combined, gross of tax, by tax year and wrapper. ISA/SIPP/LISA income is tax-free; VCT dividends are exempt; only GIA feeds the tax table below.</p>
+            </div>
+          ) : null}
+
+          {/* Income by calendar month — same stacked-by-wrapper shape, monthly granularity */}
+          {monthlyChartData.length ? (
+            <div className="space-y-2">
+              <h3 className="font-semibold text-sm">Income by month</h3>
+              <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3">
+                <ResponsiveContainer width="100%" height={280}>
+                  <BarChart data={monthlyChartData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                    <CartesianGrid stroke="var(--border)" vertical={false} />
+                    <XAxis dataKey="month" tick={{ fontSize: 10, fill: "var(--muted)" }} tickLine={false} axisLine={{ stroke: "var(--border)" }} interval="preserveStartEnd" />
+                    <YAxis tickFormatter={(v) => gbp(v)} tick={{ fontSize: 11, fill: "var(--muted)" }} tickLine={false} axisLine={false} width={64} />
+                    <Tooltip content={<StackedTotalTooltip />} />
+                    {monthWrappers.map((w) => (
+                      <Bar key={w} dataKey={w} stackId="income" fill={wrapperColor(w)} name={w} radius={monthWrappers[monthWrappers.length - 1] === w ? [3, 3, 0, 0] : undefined} />
+                    ))}
+                  </BarChart>
+                </ResponsiveContainer>
+                <div className="flex flex-wrap gap-3 mt-2">
+                  {monthWrappers.map((w) => (
+                    <span key={w} className="inline-flex items-center gap-1.5 text-xs text-[var(--muted)]">
+                      <span className="w-2 h-2 rounded-full inline-block" style={{ background: wrapperColor(w) }} />{w}
+                    </span>
+                  ))}
+                </div>
+              </div>
+              <p className="text-xs text-[var(--muted)]">Same dividends + interest by wrapper as above, at monthly granularity — last 24 months, so quarterly/annual payment clusters are visible rather than smoothed into a single tax-year bar. Hover a bar for the month's total across every wrapper.</p>
             </div>
           ) : null}
 
@@ -166,7 +236,7 @@ function IncomeTab({ incomeEntries, setIncomeEntries, eriEntries, setEriEntries,
           {/* Per-year income tax (taxable only) */}
           {years.length ? (
             <div className="space-y-2">
-              <h3 className="font-semibold text-sm">Taxable investment income tax by year <span className="font-normal text-[var(--muted)]">(GIA only)</span></h3>
+              <h3 className="font-semibold text-sm">Taxable investment income tax by year <span className="font-normal text-[var(--muted)]">(GIA only, includes ERI)</span></h3>
               <div className="rounded-xl border border-[var(--border)] overflow-hidden">
                 <table className="w-full text-sm">
                   <thead className="bg-[var(--panel2)] text-[var(--muted)]">
@@ -189,7 +259,7 @@ function IncomeTab({ incomeEntries, setIncomeEntries, eriEntries, setEriEntries,
                   </tbody>
                 </table>
               </div>
-              <p className="text-xs text-[var(--muted)]">Dividend allowance and Personal Savings Allowance are applied automatically by year and band. Figures marked * use assumed (latest) rates for years not in the table.</p>
+              <p className="text-xs text-[var(--muted)]">Dividend allowance and Personal Savings Allowance are applied automatically by year and band. Figures marked * use assumed (latest) rates for years not in the table. "Dividends" here includes excess reportable income (ERI) from offshore reporting funds — a non-cash distribution taxed on the fund's distribution date under UK offshore-fund rules, folded in alongside cash dividends actually received, not a separate line.</p>
             </div>
           ) : <Empty msg="No dividends, interest or ERI recorded yet. Add them on the Dividends & Interest or ERI tab to see the income-tax position." />}
         </div>
@@ -328,22 +398,26 @@ const SOURCE_LABELS = {
   "cash-maturity": "Cash maturity",
 };
 
-// Tax-treatment badge for a calendar row — wrapper name + taxed/tax-free,
-// e.g. "GIA/taxed", "ISA/tax-free", "VCT/tax-free" (VCT dividends are
-// exempt under ITA 2007 Part 6, same rule as the byyear table above).
-// Redemptions and cash maturities return null: they're capital coming
-// back (individual gilts are CGT-exempt; a maturing balance is principal),
-// not income, so an income-tax label doesn't apply. Un-attributed interest
-// (no ticker, so no reliable wrapper on record) reads "Interest/taxed"
-// rather than guessing a wrapper — interest defaults to taxed unless it's
-// known to sit in a sheltered account.
+// Tax-treatment badge for a calendar row — wrapper name + taxed/tax-free/
+// tax-exempt, e.g. "GIA (taxed)", "ISA (tax-free)", "VCT (tax-exempt)" (VCT
+// dividends are exempt under ITA 2007 Part 6, a different statutory basis
+// than an ISA/SIPP/LISA's tax-free wrapper status, hence the distinct
+// wording, same rule as the byyear table above). Redemptions and cash
+// maturities return null: they're capital coming back (individual gilts are
+// CGT-exempt; a maturing balance is principal), not income, so an
+// income-tax label doesn't apply. Un-attributed interest (no ticker, so no
+// reliable wrapper on record) reads "Interest (taxed)" rather than guessing
+// a wrapper — interest defaults to taxed unless it's known to sit in a
+// sheltered account.
 function taxTag(e) {
   if (e.source === "gilt-redemption" || e.source === "cash-maturity") return null;
   const taxed = isWrapperTaxable(e.wrapper);
+  const wrapperNorm = normWrapper(e.wrapper);
   // "Interest" with no ticker attached (un-attributed cash interest) has no
   // reliable wrapper on record — label it by kind rather than guessing GIA.
-  if (e.source === "interest" && e.label === "Interest") return { text: `Interest/${taxed ? "taxed" : "tax-free"}`, taxed };
-  return { text: `${normWrapper(e.wrapper)}/${taxed ? "taxed" : "tax-free"}`, taxed };
+  const label = (e.source === "interest" && e.label === "Interest") ? "Interest" : wrapperNorm;
+  const status = taxed ? "taxed" : (wrapperNorm === "VCT" ? "tax-exempt" : "tax-free");
+  return { text: `${label} (${status})`, taxed };
 }
 
 function IncomeCalendarView({ events }) {

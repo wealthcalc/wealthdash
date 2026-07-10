@@ -79,6 +79,15 @@ test("shapeFlexPull: end-to-end XML -> shaped trades, matching the CSV importer'
   assert.equal(sell.nativeAmount, 999);
 });
 
+test("shapeFlexPull: a live pull carries IBKR's own tradeID/transactionID through as the hidden ibkrId field", () => {
+  const raw = rawFromXml(SAMPLE_STATEMENT);
+  const r = shapeFlexPull(raw);
+  const buy = r.trades.find((t) => t.side === "BUY");
+  assert.equal(buy.ibkrId, "1001"); // tradeID="1001" on that <Trade> in SAMPLE_STATEMENT
+  const div = r.income.find((i) => i.kind === "dividend");
+  assert.equal(div.ibkrId, null); // SAMPLE_STATEMENT's CashTransaction rows carry no transactionID — null, not fabricated
+});
+
 test("shapeFlexPull: cash transactions become dividend/interest income, withholding tax rows are dropped", () => {
   const raw = rawFromXml(SAMPLE_STATEMENT);
   const r = shapeFlexPull(raw);

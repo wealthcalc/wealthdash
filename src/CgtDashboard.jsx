@@ -7,6 +7,7 @@ import { giltAnalytics } from "./core/gilts.mjs";
 import { allocateCostByValueWeight } from "./core/pension-import.mjs";
 import { liabilityForYear, liabilityAllYears } from "./core/uk-tax.mjs";
 import { householdNetWorth } from "./core/property.mjs";
+import { totalCreditCardDebt } from "./core/credit-cards.mjs";
 import { privateTotals } from "./core/private-investments.mjs";
 import { rsuTotals } from "./core/rsu.mjs";
 import { effectiveCashByWrapper } from "./core/cash.mjs";
@@ -51,6 +52,7 @@ export default function App() {
     privateHoldings, setPrivateHoldings, privateEvents, setPrivateEvents,
     rsuGrants, setRsuGrants, rsuEvents, setRsuEvents,
     ibkrQueryId, setIbkrQueryId, ibkrToken, setIbkrToken,
+    creditCards, setCreditCards,
   } = useAppStore();
   // Shared by the Pension tab (one-off add) and the Import tab (bulk CSV) —
   // one allocation function, not two copies that could drift. Accepts an
@@ -156,12 +158,14 @@ export default function App() {
 
   // Phase 2: true household net worth = investments + cash (the existing
   // wealth model) + property equity + private-holding valuations + held RSU
-  // value − other (non-mortgage) liabilities. Mortgages are netted off
-  // inside property equity, not subtracted again.
+  // value − other (non-mortgage) liabilities − credit card balances.
+  // Mortgages are netted off inside property equity, not subtracted again.
+  const creditCardDebt = useMemo(() => totalCreditCardDebt(creditCards), [creditCards]);
   const netWorth = useMemo(() => householdNetWorth({
     investedTotal: wealthModel ? wealthModel.total.total : 0,
     properties, mortgages, otherLiabilities, privateValue: privateSummary.currentValue, rsuValue: rsuSummary.currentValueGBP,
-  }), [wealthModel, properties, mortgages, otherLiabilities, privateSummary, rsuSummary]);
+    creditCardDebt,
+  }), [wealthModel, properties, mortgages, otherLiabilities, privateSummary, rsuSummary, creditCardDebt]);
 
   // Gilt ladder analytics (build step 4) — driven by secMeta kind: "gilt".
   const giltData = useMemo(() => {
@@ -264,12 +268,12 @@ export default function App() {
 
   const exportJSON = async () => {
     const backup = {
-      __cgtBackup: true, version: 11, exportedAt: new Date().toISOString(),
+      __cgtBackup: true, version: 12, exportedAt: new Date().toISOString(),
       txns, incomeEntries, eriEntries, income, carried, cash, valuations,
       prices, priceMeta, avKey, avMeta, secMeta, pensionCashflows,
       properties, mortgages, otherLiabilities, cashAccounts, allowanceOverrides,
       planInputs, privateHoldings, privateEvents, rsuGrants, rsuEvents,
-      ibkrQueryId, ibkrToken,
+      ibkrQueryId, ibkrToken, creditCards,
     };
     const text = JSON.stringify(backup, null, 2);
     let downloaded = false;
@@ -323,7 +327,8 @@ export default function App() {
           if (Array.isArray(d.rsuEvents)) setRsuEvents(d.rsuEvents.map((x) => ({ ...x, id: x.id || uid() })));
           if (typeof d.ibkrQueryId === "string") setIbkrQueryId(d.ibkrQueryId);
           if (typeof d.ibkrToken === "string") setIbkrToken(d.ibkrToken);
-          flash(`Restored: ${n(d.txns)} transactions, ${n(d.incomeEntries)} dividend/interest entries, ${n(d.eriEntries)} ERI entries, ${n(d.pensionCashflows)} pension cashflows, ${n(d.properties)} properties, ${n(d.mortgages)} mortgages, ${n(d.cashAccounts)} cash accounts, ${n(d.privateHoldings)} private holdings, ${n(d.rsuGrants)} RSU grants, plus prices, allowance overrides, retirement plan inputs and settings.`);
+          if (Array.isArray(d.creditCards)) setCreditCards(d.creditCards.map((x) => ({ ...x, id: x.id || uid() })));
+          flash(`Restored: ${n(d.txns)} transactions, ${n(d.incomeEntries)} dividend/interest entries, ${n(d.eriEntries)} ERI entries, ${n(d.pensionCashflows)} pension cashflows, ${n(d.properties)} properties, ${n(d.mortgages)} mortgages, ${n(d.cashAccounts)} cash accounts, ${n(d.privateHoldings)} private holdings, ${n(d.rsuGrants)} RSU grants, ${n(d.creditCards)} credit cards, plus prices, allowance overrides, retirement plan inputs and settings.`);
         } else {
           setError("That file isn't a recognised backup — expected a transaction array or a full backup file exported from this app.");
         }
@@ -418,9 +423,9 @@ export default function App() {
                 // "other net worth" figure, kept OUT of the investable pots
                 // above so it's never treated as liquid, growing, drawdown-
                 // eligible wealth by the projection engine.
-                liveOtherNetWorth: netWorth ? netWorth.propertyEquity - netWorth.otherLiabilities : null,
+                liveOtherNetWorth: netWorth ? netWorth.propertyEquity - netWorth.otherLiabilities - netWorth.creditCardDebt : null,
               }} />}
-              {tab === "wealth" && <WealthTab {...{ model: wealthModel, cash, setCash, cashAccounts, setCashAccounts, prices, setPrices, avKey, setAvKey, avMeta, setAvMeta, priceMeta, setPriceMeta, txns, secMeta, setSecMeta, dmoReportDate, setDmoReportDate }} />}
+              {tab === "wealth" && <WealthTab {...{ model: wealthModel, cash, setCash, cashAccounts, setCashAccounts, creditCards, setCreditCards, prices, setPrices, avKey, setAvKey, avMeta, setAvMeta, priceMeta, setPriceMeta, txns, secMeta, setSecMeta, dmoReportDate, setDmoReportDate }} />}
               {tab === "returns" && <ReturnsTab {...{ returns, valuations, pensionCashflows, secMeta, setSecMeta, txns }} />}
               {tab === "gilts" && <GiltsTab {...{ data: giltData, secMeta, setSecMeta, prices, setPrices, dmoReportDate, setDmoReportDate }} />}
               {tab === "pension" && <PensionTab {...{ txns, setTxns, cash, setCash, secMeta, setSecMeta, prices, setPrices, pensionCashflows, setPensionCashflows, recomputeProviderCost }} />}

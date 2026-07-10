@@ -6,7 +6,7 @@ import { guessPensionColumns, mapPensionRow } from "../core/pension-import.mjs";
 import { parseIBKR } from "../core/ibkr-import.mjs";
 import { shapeFlexPull, shapeCashReport } from "../core/ibkr-flex.mjs";
 import { parseISharesWorkbook } from "../core/ishares-eri.mjs";
-import { buildRsuImport, guessTickerFromFilename } from "../core/rsu-import.mjs";
+import { buildRsuImport, guessTickerFromFilename, detectRsuCsvFormat } from "../core/rsu-import.mjs";
 import { gbp, num, uid, todayISO, fxHistorical, Field, Empty, SubTabs, round2, dedupeAgainstExisting } from "../ui/shared.jsx";
 
 const FIELDS = ["date", "ticker", "side", "quantity", "nativeCurrency", "nativeAmount", "fxRate", "gbpAmount"];
@@ -51,6 +51,14 @@ const txnKey = (t) => `${t.date}|${(t.ticker || "").toUpperCase()}|${t.side}|${n
 const incomeKey = (e) => `${e.date}|${(e.ticker || "").toUpperCase()}|${e.kind}|${normWrapper(e.wrapper)}|${round2(e.amount)}`;
 const pensionKey = (c) => `${c.provider}|${c.date}|${c.type}|${round2(c.nativeAmount)}`;
 const eriKey = (e) => `${(e.ticker || "").toUpperCase()}|${e.periodEnd}|${e.distributionDate}`;
+// IBKR's own tradeID/transactionID, when a row carries one — an exact
+// identity match, immune to a value rounding slightly differently between
+// two pulls of the same trade (the failure mode the content-based keys
+// above are otherwise exposed to). null on a row with no id (anything
+// imported before this field existed, or from a CSV export that didn't
+// include the id column) so it never collides with another id-less row —
+// dedupeAgainstExisting() falls back to the content key in that case.
+const ibkrIdKey = (t) => (t.ibkrId ? `ibkr:${t.ibkrId}` : null);
 
 function ImportTab({
   setTxns, setTab, setIncomeEntries, setEriEntries, secMeta, setPensionCashflows, pensionCashflows = [], recomputeProviderCost,
@@ -115,11 +123,13 @@ function ImportTab({
     const trades = ib.trades.map((t) => ({ ...t })), income = ib.income.map((t) => ({ ...t }));
     for (const t of trades) await resolve(t, "gbpAmount");
     for (const t of income) await resolve(t, "amount");
-    const newTxns = trades.filter((t) => t.gbpAmount != null).map((t) => ({ id: uid(), date: t.date, ticker: t.ticker, isin: t.isin, side: t.side, quantity: t.quantity, nativeCurrency: t.nativeCurrency, nativeAmount: t.nativeAmount, fxRate: t.fxRate || 1, gbpAmount: t.gbpAmount, wrapper: t.wrapper, note: "IBKR import" }));
-    const newIncome = income.filter((t) => t.amount != null).map((t) => ({ id: uid(), date: t.date, ticker: t.ticker, kind: t.kind, amount: t.amount, wrapper: t.wrapper, note: "IBKR import" }));
+    const newTxns = trades.filter((t) => t.gbpAmount != null).map((t) => ({ id: uid(), date: t.date, ticker: t.ticker, isin: t.isin, side: t.side, quantity: t.quantity, nativeCurrency: t.nativeCurrency, nativeAmount: t.nativeAmount, fxRate: t.fxRate || 1, gbpAmount: t.gbpAmount, wrapper: t.wrapper, note: "IBKR import", ibkrId: t.ibkrId || null }));
+    const newIncome = income.filter((t) => t.amount != null).map((t) => ({ id: uid(), date: t.date, ticker: t.ticker, kind: t.kind, amount: t.amount, wrapper: t.wrapper, note: "IBKR import", ibkrId: t.ibkrId || null }));
     const fxSkipped = (trades.length - newTxns.length) + (income.length - newIncome.length);
-    const dedTxns = dedupeAgainstExisting(newTxns, txns, txnKey);
-    const dedIncome = dedupeAgainstExisting(newIncome, incomeEntries, incomeKey);
+    // Prefer an exact IBKR tradeID/transactionID match over the
+    // content-based key when a row carries one — see ibkrIdKey's comment.
+    const dedTxns = dedupeAgainstExisting(newTxns, txns, [ibkrIdKey, txnKey]);
+    const dedIncome = dedupeAgainstExisting(newIncome, incomeEntries, [ibkrIdKey, incomeKey]);
     const dupSkipped = dedTxns.skipped + dedIncome.skipped;
     setTxns((p) => [...p, ...dedTxns.rows]);
     if (dedIncome.rows.length) setIncomeEntries((p) => [...p, ...dedIncome.rows]);
@@ -131,14 +141,19 @@ function ImportTab({
     else setTab(dedTxns.rows.length ? "ledger" : "income");
   };
 
-  // Preview-time duplicate detection, reusing the same content keys
-  // doImportIb's own dedupeAgainstExisting() call will apply at import time —
-  // this just surfaces it earlier so a "dup" badge is visible before the
-  // user commits, rather than only learning about skipped rows afterwards.
+  // Preview-time duplicate detection, reusing the same keys doImportIb's
+  // own dedupeAgainstExisting() call will apply at import time (id-based
+  // first, content-based fallback — see ibkrIdKey's comment) — this just
+  // surfaces it earlier so a "dup" badge is visible before the user
+  // commits, rather than only learning about skipped rows afterwards.
   const existingTxnKeys = useMemo(() => new Set(txns.map(txnKey)), [txns]);
   const existingIncomeKeys = useMemo(() => new Set(incomeEntries.map(incomeKey)), [incomeEntries]);
-  const ibDupTrades = ib ? ib.trades.filter((t) => existingTxnKeys.has(txnKey(t))).length : 0;
-  const ibDupIncome = ib ? ib.income.filter((e) => existingIncomeKeys.has(incomeKey(e))).length : 0;
+  const existingTxnIds = useMemo(() => new Set(txns.map(ibkrIdKey).filter((k) => k != null)), [txns]);
+  const existingIncomeIds = useMemo(() => new Set(incomeEntries.map(ibkrIdKey).filter((k) => k != null)), [incomeEntries]);
+  const isDupTrade = (t) => existingTxnIds.has(ibkrIdKey(t)) || existingTxnKeys.has(txnKey(t));
+  const isDupIncome = (e) => existingIncomeIds.has(ibkrIdKey(e)) || existingIncomeKeys.has(incomeKey(e));
+  const ibDupTrades = ib ? ib.trades.filter(isDupTrade).length : 0;
+  const ibDupIncome = ib ? ib.income.filter(isDupIncome).length : 0;
   const removeIbTrade = (i) => setIb((r) => ({ ...r, trades: r.trades.filter((_, idx) => idx !== i) }));
   const removeIbIncome = (i) => setIb((r) => ({ ...r, income: r.income.filter((_, idx) => idx !== i) }));
 
@@ -311,6 +326,7 @@ function ImportTab({
     if (fn) setRsuFileName(fn);
     if (!rsuTicker) { const guess = guessTickerFromFilename(fn || rsuFileName); if (guess) setRsuTicker(guess); }
   };
+  const rsuFormat = useMemo(() => (rsuRows ? detectRsuCsvFormat(rsuRows) : null), [rsuRows]);
   const rsuBuilt = useMemo(() => (rsuRows ? buildRsuImport(rsuRows, { ticker: rsuTicker }) : null), [rsuRows, rsuTicker]);
   const rsuResolved = useMemo(() => {
     if (!rsuBuilt) return null;
@@ -435,7 +451,7 @@ function ImportTab({
                     <thead className="text-[var(--muted)]"><tr>{["date", "ticker", "side", "qty", "ccy", "native", "GBP", "", ""].map((h, i) => <th key={i} className="px-2 py-1 text-left">{h}</th>)}</tr></thead>
                     <tbody className="num">
                       {ib.trades.map((t, i) => {
-                        const dup = existingTxnKeys.has(txnKey(t));
+                        const dup = isDupTrade(t);
                         return (
                           <tr key={i} className="border-t border-[var(--border)]">
                             <td className="px-2 py-1">{t.date}</td><td className="px-2 py-1">{t.ticker}</td><td className="px-2 py-1">{t.side}</td>
@@ -456,7 +472,7 @@ function ImportTab({
                     <thead className="text-[var(--muted)]"><tr>{["date", "ticker", "kind", "GBP", "", ""].map((h, i) => <th key={i} className="px-2 py-1 text-left">{h}</th>)}</tr></thead>
                     <tbody className="num">
                       {ib.income.map((e, i) => {
-                        const dup = existingIncomeKeys.has(incomeKey(e));
+                        const dup = isDupIncome(e);
                         return (
                           <tr key={i} className="border-t border-[var(--border)]">
                             <td className="px-2 py-1">{e.date}</td><td className="px-2 py-1">{e.ticker || "—"}</td><td className="px-2 py-1 capitalize">{e.kind}</td>
@@ -713,8 +729,15 @@ function ImportTab({
         <>
           <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 space-y-3">
             <p className="text-sm text-[var(--muted)]">
-              Paste (or upload) a Wells Fargo/Shareworks-style <strong>"restricted stock units"</strong> or <strong>"restricted stock awards"</strong> vest-release export. Rows sharing a plan label and grant date are grouped into one grant, each becoming a vest event; shares automatically withheld to cover tax are recorded as a same-date sale so held totals aren't overstated. This export has no ticker or per-tranche vest-date column, so set the ticker below (guessed from the filename if possible) and check dates on the RSU tab afterwards if you know the real vest dates.
+              Paste (or upload) a Wells Fargo/Shareworks-style RSU export — either a <strong>release history</strong> ("Allocation quantity"/"Quantity to cover tax" columns) or a <strong>vesting schedule</strong> ("Contribution type"/"Available from" columns, including notional-dividend accruals on unvested tranches). The format is auto-detected from the file's columns; neither has a ticker column, so set it below (guessed from the filename if possible).
             </p>
+            {rsuFormat && (
+              <p className="text-xs text-[var(--muted)]">
+                {rsuFormat === "release"
+                  ? "Detected: release history. Rows sharing a plan label and grant date are grouped into one grant, each becoming a vest event; shares automatically withheld to cover tax are recorded as a same-date sale so held totals aren't overstated. This export has no per-tranche vest date, only the grant date, so every vest event is dated on the grant date — check dates on the RSU tab afterwards if you know the real ones."
+                  : "Detected: vesting schedule. Each Award/Notional-dividend row becomes a vest event dated on its real \"Available from\" date. This export's \"Grant Date\" column means something different for Notional dividend rows (a dividend date, not the grant date), so the true grant date is resolved from each plan's Award row instead. Estimated values are report-date projections, not actual vest-date FMV, so price is left blank."}
+              </p>
+            )}
             <Field label="Ticker (e.g. WFC)"><input value={rsuTicker} onChange={(e) => setRsuTicker(e.target.value.toUpperCase())} placeholder="WFC" className="input w-32 font-mono text-xs" /></Field>
             <textarea value={rsuRaw} onChange={(e) => setRsuRaw(e.target.value)} rows={7} placeholder={'"Plan Description","Instrument","Grant Date","Allocation quantity","Released quantity","Quantity to cover tax","Net quantity","Archive status"\n"11 Jan 2023 RSU Award","Restricted Stock Units","11 Jan 2023","383","383","161.00000","222.00000","Released"'} className="input num w-full font-mono text-xs" />
             <div className="flex items-center gap-2">
@@ -734,7 +757,8 @@ function ImportTab({
                 <span className="font-semibold">{rsuRows.length} row{rsuRows.length === 1 ? "" : "s"} parsed</span>
                 <span className="num">{rsuResolved.grants.length} grant{rsuResolved.grants.length === 1 ? "" : "s"}</span>
                 <span className="num">{rsuResolved.events.filter((e) => e.type === "vest").length} vest events</span>
-                <span className="num">{rsuResolved.events.filter((e) => e.type === "sale").length} tax-cover sales</span>
+                {rsuFormat === "release" && <span className="num">{rsuResolved.events.filter((e) => e.type === "sale").length} tax-cover sales</span>}
+                {rsuFormat === "schedule" && <span className="num">{rsuResolved.events.filter((e) => /^Notional dividend/.test(e.note || "")).length} notional dividend rows</span>}
                 {rsuDupCount > 0 && <span className="text-[var(--muted)]">{rsuDupCount} look{rsuDupCount === 1 ? "s" : ""} like duplicate{rsuDupCount === 1 ? "" : "s"} already recorded — flagged "dup", skipped automatically on import.</span>}
               </div>
               {rsuResolved.warnings.map((w, i) => (
@@ -743,19 +767,32 @@ function ImportTab({
               {rsuRows.length > 0 && (
                 <div className="overflow-x-auto max-h-72 overflow-y-auto">
                   <table className="w-full text-xs">
-                    <thead className="text-[var(--muted)]"><tr>{["plan", "grant date", "allocation", "tax cover", "net", "", ""].map((h, i) => <th key={i} className="px-2 py-1 text-left">{h}</th>)}</tr></thead>
+                    <thead className="text-[var(--muted)]">
+                      <tr>{(rsuFormat === "schedule" ? ["plan", "type", "vest date", "quantity", "est. value", "", ""] : ["plan", "grant date", "allocation", "tax cover", "net", "", ""]).map((h, i) => <th key={i} className="px-2 py-1 text-left">{h}</th>)}</tr>
+                    </thead>
                     <tbody className="num">
                       {rsuRows.map((row, i) => {
-                        const m = rsuBuilt?.events?.find((e) => e.sourceRow === i && e.type === "vest");
-                        const resolved = rsuResolved.events.find((e) => e.sourceRow === i && e.type === "vest");
+                        const m = rsuBuilt?.events?.find((e) => e.sourceRow === i);
+                        const resolved = rsuResolved.events.find((e) => e.sourceRow === i);
                         const dup = resolved?.dup;
                         return (
                           <tr key={i} className="border-t border-[var(--border)]">
                             <td className="px-2 py-1 max-w-[12rem] truncate" title={row["Plan Description"] || row["Plan"]}>{row["Plan Description"] || row["Plan"] || "—"}</td>
-                            <td className="px-2 py-1">{row["Grant Date"] || "—"}</td>
-                            <td className="px-2 py-1">{row["Allocation quantity"] || "—"}</td>
-                            <td className="px-2 py-1">{row["Quantity to cover tax"] || "—"}</td>
-                            <td className="px-2 py-1">{row["Net quantity"] || "—"}</td>
+                            {rsuFormat === "schedule" ? (
+                              <>
+                                <td className="px-2 py-1">{row["Contribution type"] || "—"}</td>
+                                <td className="px-2 py-1">{row["Available from"] || "—"}</td>
+                                <td className="px-2 py-1">{row["Quantity"] || "—"}</td>
+                                <td className="px-2 py-1">{row["Estimated value"] ? `£${row["Estimated value"]}` : "—"}</td>
+                              </>
+                            ) : (
+                              <>
+                                <td className="px-2 py-1">{row["Grant Date"] || "—"}</td>
+                                <td className="px-2 py-1">{row["Allocation quantity"] || "—"}</td>
+                                <td className="px-2 py-1">{row["Quantity to cover tax"] || "—"}</td>
+                                <td className="px-2 py-1">{row["Net quantity"] || "—"}</td>
+                              </>
+                            )}
                             <td className="px-2 py-1">{m == null ? <span className="text-[var(--loss)]">unparsed</span> : dup && <span className="text-[10px] uppercase font-semibold px-1.5 py-0.5 rounded-full text-[var(--muted)] border border-[var(--border)]">dup</span>}</td>
                             <td className="px-2 py-1"><button onClick={() => removeRsuRow(i)} title="Remove this row" className="text-[var(--muted)] hover:text-[var(--loss)]"><Trash2 size={13} /></button></td>
                           </tr>

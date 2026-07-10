@@ -90,6 +90,10 @@ const useAppStore = create((set) => {
     // server-side (api/ibkr-flex.mjs never writes it anywhere), not this.
     ibkrQueryId: ls.get("cgt.ibkrqueryid", ""), setIbkrQueryId: upd("ibkrQueryId"),
     ibkrToken: ls.get("cgt.ibkrtoken", ""), setIbkrToken: upd("ibkrToken"),
+    // Credit cards (Wealth tab) — named revolving-debt balances subtracted
+    // from net worth, same "own array, own setter" shape as cashAccounts.
+    // See core/credit-cards.mjs. [{id, label, issuer, balance, notes}]
+    creditCards: ls.get("cgt.creditcards", []), setCreditCards: upd("creditCards"),
   };
 });
 

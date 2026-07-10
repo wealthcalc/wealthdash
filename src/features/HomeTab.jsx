@@ -238,7 +238,7 @@ export default function HomeTab({
   // which case netWorth.netWorth === total.total exactly (zero property
   // equity, zero other liabilities) — the breakdown line only earns its
   // place once there's something to break down.
-  const hasBalanceSheetExtras = !!netWorth && (netWorth.propertyValue > 0 || netWorth.otherLiabilities > 0 || netWorth.privateValue > 0 || netWorth.rsuValue > 0);
+  const hasBalanceSheetExtras = !!netWorth && (netWorth.propertyValue > 0 || netWorth.otherLiabilities > 0 || netWorth.privateValue > 0 || netWorth.rsuValue > 0 || netWorth.creditCardDebt > 0);
   const headlineValue = netWorth ? netWorth.netWorth : total.total;
 
   // Truly nothing entered anywhere (investments, cash, property/liabilities)
@@ -267,6 +267,7 @@ export default function HomeTab({
               {netWorth.privateValue > 0 && <span>Private holdings <span className="font-medium text-[var(--fg)]">{gbp0(netWorth.privateValue)}</span></span>}
               {netWorth.rsuValue > 0 && <span>RSU holdings <span className="font-medium text-[var(--fg)]">{gbp0(netWorth.rsuValue)}</span></span>}
               {netWorth.otherLiabilities > 0 && <span>Other liabilities <span className="font-medium text-[var(--loss)]">−{gbp0(netWorth.otherLiabilities)}</span></span>}
+              {netWorth.creditCardDebt > 0 && <span>Credit cards <span className="font-medium text-[var(--loss)]">−{gbp0(netWorth.creditCardDebt)}</span></span>}
             </div>
           )}
           {total.unpriced > 0 && (

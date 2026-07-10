@@ -47,7 +47,16 @@ function _ibTrade(get, defaultWrapper, baseCurrency, warnings) {
   if (currency === "GBP") { gbpAmount = native; fxRate = 1; }
   else if (baseCurrency === "GBP" && fxToBase) { gbpAmount = native * fxToBase; fxRate = fxToBase; }
   else needsFx = true;
-  return { date, ticker: symbol, isin, side, quantity, nativeCurrency: currency, nativeAmount: native, fxRate, gbpAmount: gbpAmount == null ? null : Math.round(gbpAmount * 100) / 100, needsFx, wrapper: defaultWrapper };
+  // IBKR's own unique row id, when the export carries one (Flex Statement
+  // XML always does — tradeID attribute on every <Trade>; a Flex Query CSV
+  // only has it if the user's query includes that field; an Activity
+  // Statement CSV generally doesn't). Kept as a hidden field, never shown
+  // in the ledger UI — its only job is giving the dedupe key an exact
+  // match to prefer over the content-based one, so re-pulling/re-pasting
+  // overlapping history is immune to a value rounding slightly differently
+  // between two pulls of the same trade. null (not fabricated) when absent.
+  const ibkrId = get("tradeid", "transactionid") || null;
+  return { date, ticker: symbol, isin, side, quantity, nativeCurrency: currency, nativeAmount: native, fxRate, gbpAmount: gbpAmount == null ? null : Math.round(gbpAmount * 100) / 100, needsFx, wrapper: defaultWrapper, ibkrId };
 }
 function _ibCash(get, defaultWrapper, baseCurrency) {
   const typ = _ibnorm(get("type", "activitydescription", "description") || "");
@@ -65,7 +74,10 @@ function _ibCash(get, defaultWrapper, baseCurrency) {
   if (currency === "GBP") { gbp = amount; fxRate = 1; }
   else if (baseCurrency === "GBP" && fxToBase) { gbp = amount * fxToBase; fxRate = fxToBase; }
   else needsFx = true;
-  return { date, ticker: symbol, isin, kind, nativeCurrency: currency, nativeAmount: amount, fxRate, amount: gbp == null ? null : Math.round(gbp * 100) / 100, needsFx, wrapper: defaultWrapper };
+  // Same hidden-id purpose as ibkrId on a trade (see _ibTrade) — a Flex
+  // Statement CashTransaction row carries its own unique transactionID.
+  const ibkrId = get("transactionid", "tradeid") || null;
+  return { date, ticker: symbol, isin, kind, nativeCurrency: currency, nativeAmount: amount, fxRate, amount: gbp == null ? null : Math.round(gbp * 100) / 100, needsFx, wrapper: defaultWrapper, ibkrId };
 }
 function _ibFlex(rows, defaultWrapper, baseCurrency, warnings) {
   const header = rows[0].map(_ibnorm); const headerIndex = {}; header.forEach((h, i) => { if (!(h in headerIndex)) headerIndex[h] = i; });
@@ -99,7 +111,8 @@ function _ibActivity(rows, defaultWrapper, baseCurrency, warnings) {
       const date = _ibdate(get("date", "settledate", "reportdate")); if (!date) continue;
       const currency = (get("currency", "currencyprimary") || "GBP").trim().toUpperCase();
       let gbp = null, needsFx = false; if (currency === "GBP") gbp = amount; else needsFx = true;
-      income.push({ date, ticker: symM ? symM[1].toUpperCase() : "", isin: isinM ? isinM[1] : "", kind, nativeCurrency: currency, nativeAmount: amount, fxRate: currency === "GBP" ? 1 : null, amount: gbp == null ? null : Math.round(gbp * 100) / 100, needsFx, wrapper: defaultWrapper }); } }
+      const ibkrId = get("transactionid") || null;
+      income.push({ date, ticker: symM ? symM[1].toUpperCase() : "", isin: isinM ? isinM[1] : "", kind, nativeCurrency: currency, nativeAmount: amount, fxRate: currency === "GBP" ? 1 : null, amount: gbp == null ? null : Math.round(gbp * 100) / 100, needsFx, wrapper: defaultWrapper, ibkrId }); } }
   return { trades, income };
 }
 // Exported under plain names for reuse by core/ibkr-flex.mjs (the live
