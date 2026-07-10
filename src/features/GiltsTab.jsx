@@ -1,11 +1,13 @@
 import React, { useState, useMemo, useCallback, useRef } from "react";
 import { Landmark } from "lucide-react";
 import { gbp, WrapperChip, dmoDateToIso, fetchDmoGiltPrices, num, NumberInput, uid, todayISO, Field, Stat, Empty, useSort, sortRows, SortTh } from "../ui/shared.jsx";
+import { buildGiltLadder } from "../core/gilt-ladder.mjs";
 
 function GiltsTab({ data, secMeta, setSecMeta, prices, setPrices, dmoReportDate, setDmoReportDate }) {
   const [form, setForm] = React.useState({ ticker: "", name: "", coupon: "", maturity: "", isin: "" });
   const [dmoState, setDmoState] = React.useState({ status: "idle", message: "" }); // idle | loading | done | error
   const [sort, toggleSort] = useSort("maturity", "asc");
+  const [targetAnnual, setTargetAnnual] = useState(0);
   const registered = Object.entries(secMeta).filter(([, m]) => m && m.kind === "gilt");
   const registerGilt = () => {
     const tk = form.ticker.toUpperCase().trim();
@@ -45,6 +47,16 @@ function GiltsTab({ data, secMeta, setSecMeta, prices, setPrices, dmoReportDate,
       setDmoState({ status: "error", message: e.message || "Fetch failed." });
     }
   };
+
+  // Ladder-vs-need matching: groups every projected gilt cashflow (coupons
+  // + redemptions, already computed by giltAnalytics()) by calendar year
+  // and checks it against a flat target income need the user types in —
+  // see gilt-ladder.mjs's header for why this only covers gilts already
+  // held, not a browsable universe of gilts to buy.
+  const ladder = useMemo(
+    () => buildGiltLadder({ cashflows: data?.cashflows || [], targetAnnual: +targetAnnual || 0 }),
+    [data, targetAnnual]
+  );
 
   if (!data) return <Empty msg="Couldn't compute gilt analytics — check the Transactions tab for ledger errors." />;
   const liveBase = data.holdings.filter((h) => h.nominal > 1e-9).sort((a, b) => a.ticker.localeCompare(b.ticker));
@@ -140,6 +152,57 @@ function GiltsTab({ data, secMeta, setSecMeta, prices, setPrices, dmoReportDate,
                 </div>
               ))}
             </div>
+          </div>
+
+          {/* ladder vs income need */}
+          <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 space-y-2">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div className="text-sm font-medium flex items-center gap-2"><Landmark size={15} className="text-[var(--accent)]" /> Ladder coverage vs. an income need</div>
+              <label className="flex items-center gap-2 text-xs text-[var(--muted)]">
+                Target income
+                <input type="number" step="500" min="0" value={targetAnnual || ""} placeholder="£/yr"
+                  onChange={(e) => setTargetAnnual(e.target.value === "" ? 0 : +e.target.value)}
+                  className="input num w-28 text-right py-1" />
+                £/yr
+              </label>
+            </div>
+            {targetAnnual > 0 ? (
+              <>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <Stat label="Years fully covered" value={`${ladder.yearsFullyCovered} / ${ladder.totalYears}`} sub={`${ladder.fromYear}–${ladder.toYear}`} />
+                  <Stat label="First gap year" value={ladder.firstGapYear ?? "none"} sub={ladder.fullyCovered ? "ladder covers every year to final maturity" : "target exceeds gilt income from here"} />
+                  <Stat label="Total shortfall" value={gbp(ladder.totalShortfall)} sub="summed across every uncovered year" />
+                  <Stat label="Total gilt income" value={gbp(ladder.totalGiltIncome)} sub={`${ladder.fromYear}–${ladder.toYear}`} />
+                </div>
+                <div className="rounded-lg border border-[var(--border)] overflow-x-auto max-h-64 overflow-y-auto">
+                  <table className="w-full text-sm">
+                    <thead className="bg-[var(--panel2)] text-[var(--muted)] text-xs uppercase tracking-wide sticky top-0">
+                      <tr>
+                        <th className="text-left px-3 py-1.5 font-medium">Year</th>
+                        <th className="text-right px-3 py-1.5 font-medium">Gilt income</th>
+                        <th className="text-right px-3 py-1.5 font-medium">Target</th>
+                        <th className="text-right px-3 py-1.5 font-medium">Surplus / shortfall</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[var(--border)]">
+                      {ladder.rows.map((r) => (
+                        <tr key={r.year} className={r.covered ? "" : "bg-[color:color-mix(in_srgb,var(--loss)_8%,transparent)]"}>
+                          <td className="px-3 py-1.5 num">{r.year}</td>
+                          <td className="px-3 py-1.5 num text-right">{gbp(r.giltIncome)}</td>
+                          <td className="px-3 py-1.5 num text-right text-[var(--muted)]">{gbp(r.target)}</td>
+                          <td className={"px-3 py-1.5 num text-right font-medium " + (r.covered ? "text-[var(--gain)]" : "text-[var(--loss)]")}>{r.surplus >= 0 ? "+" : "−"}{gbp(Math.abs(r.surplus))}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <p className="text-xs text-[var(--muted)] leading-relaxed">
+                  Nominal, fixed-coupon cash compared against a flat (not inflation-uprated) target — the honest like-for-like, since the ladder itself doesn't grow with inflation. Only covers gilts you already hold: there's no browsable universe of every UK gilt in this app to suggest new purchases from (DMO's daily price report only covers ISINs you've registered above), so a gap here means either buying more gilts maturing in that year or funding it from elsewhere.
+                </p>
+              </>
+            ) : (
+              <p className="text-xs text-[var(--muted)]">Enter a target annual income need to see which years your existing ladder covers and where the gaps are.</p>
+            )}
           </div>
 
           {/* AIS */}

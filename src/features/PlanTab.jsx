@@ -14,6 +14,9 @@ import { taxRUK, taxScot, employeeNI } from "../core/uk-income-tax.mjs";
 import {
   lifeExpectancy, effInflation, btlYearly, replayDecum, STRATEGY_LABELS, buildProjection,
 } from "../core/drawdown.mjs";
+import { solveSWR } from "../core/swr.mjs";
+import { runGuytonKlinger } from "../core/guyton-klinger.mjs";
+import { rollingStressTest } from "../core/sequence-risk.mjs";
 
 /* ------------------------------------------------------------------ */
 /*  Design tokens — resolved via CSS variables so the theme can swap    */
@@ -1641,6 +1644,11 @@ function HistoricalReplay({ p, det }) {
     replay: replay.path[i] ? replay.path[i].real : 0,
   }));
   const baseDepletes = det.depletionAge;
+  // Aggregate across EVERY offset of every sequence (30 historical entry
+  // points, not just the 3 the picker below lets you view one at a time) —
+  // the picker is for "show me 2008 specifically"; this is "how exposed is
+  // this plan to sequence risk overall".
+  const rolling = useMemo(() => rollingStressTest(p, det), [p, det]);
   return (
     <Card style={{ marginTop: 14 }}>
       <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 10, marginBottom: 10 }}>
@@ -1651,6 +1659,21 @@ function HistoricalReplay({ p, det }) {
           </p>
         </div>
       </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px,1fr))", gap: 12, marginBottom: 14 }}>
+        <Card style={{ background: rolling.survivalRate >= 0.85 ? T.greenSoft : rolling.survivalRate >= 0.6 ? T.amberSoft : T.redSoft, border: "none" }}>
+          <Stat label="Survives across all 30 entry points" value={pct(rolling.survivalRate, 0)} sub="every offset of 2008 / dot-com / 1970s" tone={rolling.survivalRate >= 0.85 ? "green" : rolling.survivalRate >= 0.6 ? "amber" : "red"} />
+        </Card>
+        <Card style={{ background: T.paper, border: "none" }}>
+          <Stat label="Worst-case depletion" value={rolling.worstDepletionAge ? `age ${rolling.worstDepletionAge}` : "never"} sub={rolling.worstCase ? `${rolling.worstCase.label}, hitting ${rolling.worstCase.offset === 0 ? "at retirement" : `+${rolling.worstCase.offset}yr`}` : "no failing entry point"} tone={rolling.worstDepletionAge ? "red" : "green"} />
+        </Card>
+        {Object.entries(rolling.bySequence).map(([k, s]) => (
+          <Card key={k} style={{ background: T.paper, border: "none" }}>
+            <Stat label={s.label} value={pct(s.survivalRate, 0)} sub={s.worstDepletion ? `worst: age ${s.worstDepletion}` : "survives every entry point"} tone={s.survivalRate === 1 ? "green" : s.survivalRate >= 0.5 ? "amber" : "red"} />
+          </Card>
+        ))}
+      </div>
+
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 14 }}>
         <Segmented
           value={key}
@@ -1718,6 +1741,32 @@ function AdequacyTab({ p, mc, mcB, progress = 0, compareKey = "none", setCompare
   const compareOptions = [{ value: "none", label: "None" }, ...SCENARIOS.filter((s) => s.key !== "base").map((s) => ({ value: s.key, label: s.label }))];
   const compareLabel = compareOptions.find((o) => o.value === compareKey)?.label || "comparison";
   const mergedFan = useMemo(() => mergeFans(mc ? mc.fan : [], mcB ? mcB.fan : []), [mc, mcB]);
+
+  // Safe withdrawal rate + Guyton-Klinger — both cheap enough (a few hundred
+  // thousand simulated steps, sub-100ms) to compute synchronously on every
+  // render, unlike the 1,000-run headline Monte Carlo above which needs the
+  // Web Worker. Both intentionally look at the PORTFOLIO in isolation
+  // (starting pot at retirement, growth/vol/inflation assumptions) rather
+  // than this plan's specific state-pension/DB/BTL/spend-profile mix — see
+  // swr.mjs's header for why that's a deliberate, different question than
+  // the plan-specific Monte Carlo success rate above.
+  const decYears = Math.max(1, p.planAge - p.retireAge);
+  const swr = useMemo(
+    () => solveSWR({
+      startWealth: det.wealthAtRetire, years: decYears,
+      growthPost: p.growthPost, vol: p.vol, inflation: p.inflation, fee: p.fee,
+      targetSuccess: 0.9, runs: 300, seed: 42,
+    }),
+    [det.wealthAtRetire, decYears, p.growthPost, p.vol, p.inflation, p.fee]
+  );
+  const impliedRate = det.wealthAtRetire > 0 ? (det.firstYearPensionDraw + det.firstYearBridgeDraw) / det.wealthAtRetire : 0;
+  const gk = useMemo(
+    () => runGuytonKlinger({
+      startWealth: det.wealthAtRetire, years: decYears, initialRate: impliedRate > 0 ? impliedRate : 0.04,
+      growthPost: p.growthPost, vol: p.vol, inflation: p.inflation, runs: 300, seed: 42,
+    }),
+    [det.wealthAtRetire, decYears, impliedRate, p.growthPost, p.vol, p.inflation]
+  );
   return (
     <div>
       <Card style={{ marginBottom: 14 }}>
@@ -1851,6 +1900,50 @@ function AdequacyTab({ p, mc, mcB, progress = 0, compareKey = "none", setCompare
           </Note>
         </>
       )}
+
+      <Card style={{ marginTop: 14 }}>
+        <h3 style={{ margin: "0 0 2px", fontSize: 15, fontWeight: 700 }}>Safe withdrawal rate (textbook cross-check)</h3>
+        <p style={{ margin: "0 0 12px", fontSize: 12.5, color: T.muted, maxWidth: 620 }}>
+          A different question to the Monte Carlo above: ignoring state pension, DB income, BTL and your spend profile — just this pot, growing at your assumed {p.growthPost}%/{p.vol}% return/volatility — what flat, inflation-adjusted % has a 90% chance of lasting {decYears} years?
+        </p>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px,1fr))", gap: 12 }}>
+          <Card style={{ background: T.paper, border: "none" }}>
+            <Stat label="Max sustainable rate (90% confidence)" value={pct(swr.rate, 1)} sub={`≈ ${gbp(swr.annualAmount)}/yr on ${gbpK(det.wealthAtRetire)} at retirement`} tone="green" />
+          </Card>
+          <Card style={{ background: T.paper, border: "none" }}>
+            <Stat label="Your plan's initial rate" value={pct(impliedRate, 1)} sub="pension + bridge draw, year 1 of retirement" tone={impliedRate <= swr.rate ? "green" : "amber"} />
+          </Card>
+          <Card style={{ background: T.paper, border: "none" }}>
+            <Stat label={impliedRate <= swr.rate ? "Headroom vs. textbook rate" : "Over the textbook rate by"} value={pct(Math.abs(swr.rate - impliedRate), 1)} sub={impliedRate <= swr.rate ? "your plan draws more conservatively" : "worth checking Monte Carlo above holds up"} tone={impliedRate <= swr.rate ? "green" : "amber"} />
+          </Card>
+        </div>
+        {swr.atCeiling && <p style={{ margin: "10px 0 0", fontSize: 11.5, color: T.muted }}>Even the top of the search range (12%/yr) still clears 90% confidence — an unusually strong return/vol assumption, or a very short {decYears}-year horizon.</p>}
+        {swr.atFloor && <p style={{ margin: "10px 0 0", fontSize: 11.5, color: T.amber }}>Even the bottom of the search range (0.5%/yr) can't clear 90% confidence at these assumptions — check your growth/volatility inputs.</p>}
+      </Card>
+
+      <Card style={{ marginTop: 14 }}>
+        <h3 style={{ margin: "0 0 2px", fontSize: 15, fontWeight: 700 }}>Guyton-Klinger dynamic guardrails</h3>
+        <p style={{ margin: "0 0 12px", fontSize: 12.5, color: T.muted, maxWidth: 620 }}>
+          Same starting pot and initial rate as your plan (year-1 pension + bridge draw, {pct(impliedRate, 1)}), but instead of a fixed inflation-linked withdrawal every year, spending is cut 10% after a bad run pushes the withdrawal rate 20% above where it started, raised 10% after a good run pushes it 20% below, and skips that year's inflation rise after any losing year. Compared against a rigid fixed-real withdrawal at the identical rate, on the identical random market paths.
+        </p>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px,1fr))", gap: 12 }}>
+          <Card style={{ background: gk.successDelta > 0.001 ? T.greenSoft : T.paper, border: "none" }}>
+            <Stat label="Success rate, with guardrails" value={pct(gk.successRate, 0)} sub={`vs ${pct(gk.fixedSuccessRate, 0)} fixed-real at the same rate`} tone={gk.successDelta > 0.001 ? "green" : "ink"} />
+          </Card>
+          <Card style={{ background: T.paper, border: "none" }}>
+            <Stat label="Avg. spending cuts" value={gk.avgCutsPerPath.toFixed(1)} sub={`per ${decYears}-year retirement, across ${gk.runs} runs`} tone="amber" />
+          </Card>
+          <Card style={{ background: T.paper, border: "none" }}>
+            <Stat label="Avg. spending raises" value={gk.avgRaisesPerPath.toFixed(1)} sub={`per ${decYears}-year retirement`} tone="green" />
+          </Card>
+          <Card style={{ background: T.paper, border: "none" }}>
+            <Stat label="Median final wealth" value={gbpK(gk.medianFinalWealth)} sub="real terms, guardrails path" />
+          </Card>
+        </div>
+        <p style={{ margin: "10px 0 0", fontSize: 11.5, color: T.muted, lineHeight: 1.5 }}>
+          The trade-off guardrails make explicit: a {gk.successDelta > 0 ? `${Math.round(gk.successDelta * 100)}pp higher` : "similar"} success rate comes at the cost of {gk.avgCutsPerPath >= 1 ? "occasionally living on less than planned" : "rarely needing to flex"} — this doesn't model the 4th "portfolio management" GK rule (asset-allocation shifts after guardrail triggers), which this app has no dynamic-allocation engine to represent.
+        </p>
+      </Card>
     </div>
   );
 }
