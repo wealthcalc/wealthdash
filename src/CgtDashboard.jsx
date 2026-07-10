@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useCallback, useRef, lazy, Suspense } from "react";
-import { Download, Upload, Moon, Sun, Receipt, AlertTriangle, Menu } from "lucide-react";
+import { Download, Upload, Moon, Sun, Receipt, AlertTriangle, Menu, ArrowLeft, LayoutGrid } from "lucide-react";
 import { matchPortfolio, ukTaxYear } from "./core/cgt-engine.mjs";
 import { buildWealthModel, classifyInstrument, normWrapper } from "./core/portfolio.mjs";
 import { computeReturns } from "./core/returns.mjs";
@@ -15,6 +15,8 @@ import { buildIncomeCalendar } from "./core/income-calendar.mjs";
 import { taxYearEndChecklist } from "./core/tax-year-end.mjs";
 import { unitsHeldAt, uid, todayISO, IconBtn } from "./ui/shared.jsx";
 import { DesktopSidebar, MobileDrawer } from "./ui/Sidebar.jsx";
+import { useIsMobile } from "./ui/useIsMobile.js";
+import PlanHealthCard from "./ui/PlanHealthCard.jsx";
 import useAppStore from "./state/appStore.js";
 
 // Feature sections are lazy-loaded so the initial bundle carries only the
@@ -85,6 +87,16 @@ export default function App() {
   }, [pensionCashflows, secMeta, txns, prices]);
   const [error, setError] = useState(null);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  // Read-only mobile layer (Phase 3.4): on a phone-sized viewport, the
+  // default view is a single-scroll, glanceable summary — not the full
+  // editing UI reflowed into one column. `mobileFullApp` is an explicit,
+  // session-only escape hatch (never persisted — every fresh mobile visit
+  // starts back on the summary, which is the point) for anyone who does
+  // need to edit something from their phone; the summary itself can't
+  // mutate the ledger (same guarantee HomeTab.jsx already documents for
+  // itself, since the summary is built on top of it).
+  const isMobile = useIsMobile();
+  const [mobileFullApp, setMobileFullApp] = useState(false);
   // (persistence moved into the store — one subscription, only changed keys)
 
   // Only unsheltered (GIA) holdings are within scope for CGT and income tax;
@@ -338,6 +350,15 @@ export default function App() {
     e.target.value = ""; // allow re-selecting the same file
   };
 
+  // Shared by the normal "home" tab render AND the read-only mobile summary
+  // below — one object, so the two call sites can never quietly drift.
+  const homeTabProps = {
+    model: wealthModel, valuations, returns, priceMeta, setTab, netWorth, mortgages,
+    txns, secMeta, avKey, avMeta, setPrices, setPriceMeta, dmoReportDate, setDmoReportDate,
+    taxYearEnd,
+  };
+  const mobileSummaryMode = isMobile && !mobileFullApp;
+
   return (
     <div className={dark ? "dark" : ""}>
       <style>{`
@@ -366,34 +387,48 @@ export default function App() {
         Skip to main content
       </a>
       <div className="root min-h-screen bg-[var(--bg)] text-[var(--fg)] flex" style={{ fontFamily: "ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif" }}>
-        <DesktopSidebar tab={tab} setTab={setTab} />
-        <MobileDrawer tab={tab} setTab={setTab} open={mobileNavOpen} onClose={() => setMobileNavOpen(false)} />
+        {!mobileSummaryMode && <DesktopSidebar tab={tab} setTab={setTab} />}
+        {!mobileSummaryMode && <MobileDrawer tab={tab} setTab={setTab} open={mobileNavOpen} onClose={() => setMobileNavOpen(false)} />}
         <main id="main-content" tabIndex={-1} className="flex-1 min-w-0">
           <div className="max-w-5xl mx-auto px-4 sm:px-6 py-6">
             {/* header */}
             <div className="flex items-center justify-between gap-3 flex-wrap">
               <div className="flex items-center gap-2">
-                <button onClick={() => setMobileNavOpen(true)} title="Menu" aria-label="Open menu" aria-expanded={mobileNavOpen}
-                  className="sm:hidden inline-flex items-center justify-center w-9 h-9 rounded-lg border border-[var(--border)] bg-[var(--panel)] text-[var(--fg)] shrink-0">
-                  <Menu size={16} aria-hidden="true" />
-                </button>
+                {!mobileSummaryMode && (
+                  <button onClick={() => setMobileNavOpen(true)} title="Menu" aria-label="Open menu" aria-expanded={mobileNavOpen}
+                    className="sm:hidden inline-flex items-center justify-center w-9 h-9 rounded-lg border border-[var(--border)] bg-[var(--panel)] text-[var(--fg)] shrink-0">
+                    <Menu size={16} aria-hidden="true" />
+                  </button>
+                )}
                 <div>
                   <h1 className="text-xl font-semibold tracking-tight flex items-center gap-2">
                     <Receipt size={20} className="text-[var(--accent)] sm:hidden" aria-hidden="true" /> Wealth Dashboard
                   </h1>
-                  <p className="text-sm text-[var(--muted)] mt-0.5">Total wealth across GIA · ISA · SIPP · LISA · VCT. All figures GBP.</p>
+                  <p className="text-sm text-[var(--muted)] mt-0.5">
+                    {mobileSummaryMode ? "Read-only summary" : "Total wealth across GIA · ISA · SIPP · LISA · VCT. All figures GBP."}
+                  </p>
                 </div>
               </div>
               <div className="flex items-center gap-2">
+                {isMobile && mobileFullApp && (
+                  <button onClick={() => setMobileFullApp(false)} title="Back to the read-only summary"
+                    className="inline-flex items-center gap-1.5 text-sm font-medium px-3 h-9 rounded-lg border border-[var(--border)] bg-[var(--panel)] hover:bg-[var(--panel2)] text-[var(--fg)]">
+                    <ArrowLeft size={16} aria-hidden="true" /> Summary
+                  </button>
+                )}
                 {status && <span role="status" className="text-xs text-[var(--muted)] mr-1 max-w-[220px] text-right leading-tight">{status}</span>}
-                <button onClick={exportJSON} title="Full backup: transactions, dividends/interest, ERI, prices and settings (downloads a file; if you've set an Alpha Vantage key it's included in plain text). Also copies to clipboard as a fallback."
-                  className="inline-flex items-center gap-1.5 text-sm font-medium px-3 h-9 rounded-lg border border-[var(--border)] bg-[var(--panel)] hover:bg-[var(--panel2)] text-[var(--fg)]">
-                  <Download size={16} aria-hidden="true" /> Save
-                </button>
-                <button onClick={() => fileRef.current && fileRef.current.click()} title="Restore from a full backup file (or import a legacy transactions-only JSON)"
-                  className="inline-flex items-center gap-1.5 text-sm font-medium px-3 h-9 rounded-lg border border-[var(--border)] bg-[var(--panel)] hover:bg-[var(--panel2)] text-[var(--fg)]">
-                  <Upload size={16} aria-hidden="true" /> Load
-                </button>
+                {!mobileSummaryMode && (
+                  <>
+                    <button onClick={exportJSON} title="Full backup: transactions, dividends/interest, ERI, prices and settings (downloads a file; if you've set an Alpha Vantage key it's included in plain text). Also copies to clipboard as a fallback."
+                      className="inline-flex items-center gap-1.5 text-sm font-medium px-3 h-9 rounded-lg border border-[var(--border)] bg-[var(--panel)] hover:bg-[var(--panel2)] text-[var(--fg)]">
+                      <Download size={16} aria-hidden="true" /> Save
+                    </button>
+                    <button onClick={() => fileRef.current && fileRef.current.click()} title="Restore from a full backup file (or import a legacy transactions-only JSON)"
+                      className="inline-flex items-center gap-1.5 text-sm font-medium px-3 h-9 rounded-lg border border-[var(--border)] bg-[var(--panel)] hover:bg-[var(--panel2)] text-[var(--fg)]">
+                      <Upload size={16} aria-hidden="true" /> Load
+                    </button>
+                  </>
+                )}
                 <input ref={fileRef} type="file" accept="application/json,.json" className="hidden" onChange={importJSON} aria-label="Choose backup file to restore" />
                 <IconBtn onClick={() => setDark((d) => !d)} title={dark ? "Switch to light theme" : "Switch to dark theme"}>{dark ? <Sun size={16} aria-hidden="true" /> : <Moon size={16} aria-hidden="true" />}</IconBtn>
               </div>
@@ -406,13 +441,24 @@ export default function App() {
               </div>
             )}
 
+            {mobileSummaryMode ? (
+              <div className="mt-5 space-y-4">
+                <Suspense fallback={<div className="text-sm text-[var(--muted)] py-6">Loading…</div>}>
+                  <PlanHealthCard planInputs={planInputs} onOpenPlan={() => { setTab("plan"); setMobileFullApp(true); }} />
+                  <HomeTab {...homeTabProps} />
+                </Suspense>
+                <button onClick={() => setMobileFullApp(true)}
+                  className="w-full inline-flex items-center justify-center gap-2 text-sm font-medium px-4 h-11 rounded-lg border border-[var(--border)] bg-[var(--panel)] hover:bg-[var(--panel2)] text-[var(--fg)]">
+                  <LayoutGrid size={16} aria-hidden="true" /> Open full app — add, edit, and explore every tab
+                </button>
+                <p className="text-xs text-[var(--muted)] leading-relaxed">
+                  This summary is read-only by design — nothing here can change your data. Tap "Open full app" any time to reach every tab (imports, ledger edits, tax tools, retirement planner) exactly as on desktop.
+                </p>
+              </div>
+            ) : (
             <div className="mt-5">
             <Suspense fallback={<div className="text-sm text-[var(--muted)] py-6">Loading…</div>}>
-              {tab === "home" && <HomeTab {...{
-                model: wealthModel, valuations, returns, priceMeta, setTab, netWorth, mortgages,
-                txns, secMeta, avKey, avMeta, setPrices, setPriceMeta, dmoReportDate, setDmoReportDate,
-                taxYearEnd,
-              }} />}
+              {tab === "home" && <HomeTab {...homeTabProps} />}
               {tab === "plan" && <PlanTab {...{
                 dark,
                 planInputs, setPlanInputs,
@@ -447,6 +493,7 @@ export default function App() {
               {tab === "import" && <ImportTab {...{ setTxns, setTab, setIncomeEntries, setEriEntries, secMeta, setPensionCashflows, pensionCashflows, recomputeProviderCost, txns, incomeEntries, eriEntries, ibkrQueryId, setIbkrQueryId, ibkrToken, setIbkrToken, rsuGrants, setRsuGrants, rsuEvents, setRsuEvents }} />}
             </Suspense>
             </div>
+            )}
 
             <p className="text-xs text-[var(--muted)] mt-8 leading-relaxed">
               Figures are an estimate to support your own filing, not tax advice. Verify before submitting to HMRC.
