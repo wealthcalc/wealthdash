@@ -9,8 +9,11 @@
 // This function is stateless: it exists purely to get around the browser
 // CORS restriction, not to hold IBKR credentials.
 //
-// GET /api/ibkr-flex?token=...&queryId=...
+// POST /api/ibkr-flex  body: { "token": "...", "queryId": "..." }
 //   -> { accountId, trades: [...], cashTransactions: [...], cashReport: [...], openPositions: [...] }
+//   POST (not GET) so the token travels in the request body: GET put it in
+//   the query string, which Vercel's request logs record verbatim — the one
+//   place this "stateless proxy" was accidentally persisting a credential.
 //   Every array element is a plain { normalisedAttrName: value } object —
 //   shaping into the app's trade/income record format happens client-side,
 //   in src/core/ibkr-flex.mjs (reusing the exact same row-mapping rules as
@@ -21,6 +24,7 @@
 // so this retries with a short backoff before giving up.
 
 import { extractElements, parseFlexStatementResponse, isFlexStatement, extractStatementInfo } from "./_lib/ibkr-flex-xml.mjs";
+import { guard } from "./_lib/guard.mjs";
 
 const SEND_URL = (token, queryId) =>
   `https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService/SendRequest?t=${encodeURIComponent(token)}&q=${encodeURIComponent(queryId)}&v=3`;
@@ -32,10 +36,20 @@ const IBKR_HEADERS = { "User-Agent": "WealthDashboard/1.0", Accept: "application
 const MAX_ATTEMPTS = 5;
 
 export default async function handler(req, res) {
-  const token = (req.query?.token ?? "").toString().trim();
-  const queryId = (req.query?.queryId ?? "").toString().trim();
+  // Credential-bearing endpoint: stricter rate limit than the price proxies.
+  if (!guard(req, res, { perMinute: 6, burst: 4 })) return;
+  if (req.method !== "POST") {
+    // Reject GET outright rather than accepting both: a token in a query
+    // string ends up in request logs, and back-compat would keep that
+    // leak alive forever. The client switched in the same commit.
+    res.status(405).json({ error: "Use POST with a JSON body: { token, queryId }." });
+    return;
+  }
+  const body = req.body && typeof req.body === "object" ? req.body : {};
+  const token = (body.token ?? "").toString().trim();
+  const queryId = (body.queryId ?? "").toString().trim();
   if (!token || !queryId) {
-    res.status(400).json({ error: "Pass ?token=... and ?queryId=... (from IBKR's Flex Web Service Configuration page and your Flex Query's ID)." });
+    res.status(400).json({ error: "POST a JSON body with token and queryId (from IBKR's Flex Web Service Configuration page and your Flex Query's ID)." });
     return;
   }
 

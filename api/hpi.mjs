@@ -58,7 +58,10 @@ function parseCsv(text) {
   });
 }
 
+import { guard } from "./_lib/guard.mjs";
+
 export default async function handler(req, res) {
+  if (!guard(req, res)) return;
   const region = (req.query?.region ?? "").toString().trim().toLowerCase();
   const from = (req.query?.from ?? "").toString().trim(); // YYYY-MM
 

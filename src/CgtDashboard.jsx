@@ -279,13 +279,19 @@ export default function App() {
   const flash = (msg) => { setStatus(msg); setTimeout(() => setStatus(""), 3500); };
 
   const exportJSON = async () => {
+    // v13: secrets (Alpha Vantage key, IBKR Flex token) are deliberately NOT
+    // exported — a backup file lands in Downloads/cloud folders/email, and a
+    // plaintext credential inside it outlives every other secret-handling
+    // decision the app makes. They're cheap to re-enter on a new machine.
+    // Restore still ACCEPTS them from v12-and-earlier files, so old backups
+    // lose nothing. (ibkrQueryId stays: useless without its token.)
     const backup = {
-      __cgtBackup: true, version: 12, exportedAt: new Date().toISOString(),
+      __cgtBackup: true, version: 13, exportedAt: new Date().toISOString(),
       txns, incomeEntries, eriEntries, income, carried, cash, valuations,
-      prices, priceMeta, avKey, avMeta, secMeta, pensionCashflows,
+      prices, priceMeta, avMeta, secMeta, pensionCashflows,
       properties, mortgages, otherLiabilities, cashAccounts, allowanceOverrides,
       planInputs, privateHoldings, privateEvents, rsuGrants, rsuEvents,
-      ibkrQueryId, ibkrToken, creditCards,
+      ibkrQueryId, creditCards,
     };
     const text = JSON.stringify(backup, null, 2);
     let downloaded = false;
@@ -419,7 +425,7 @@ export default function App() {
                 {status && <span role="status" className="text-xs text-[var(--muted)] mr-1 max-w-[220px] text-right leading-tight">{status}</span>}
                 {!mobileSummaryMode && (
                   <>
-                    <button onClick={exportJSON} title="Full backup: transactions, dividends/interest, ERI, prices and settings (downloads a file; if you've set an Alpha Vantage key it's included in plain text). Also copies to clipboard as a fallback."
+                    <button onClick={exportJSON} title="Full backup: transactions, dividends/interest, ERI, prices and settings. API keys and the IBKR token are NOT included — re-enter those on a new machine. Also copies to clipboard as a fallback."
                       className="inline-flex items-center gap-1.5 text-sm font-medium px-3 h-9 rounded-lg border border-[var(--border)] bg-[var(--panel)] hover:bg-[var(--panel2)] text-[var(--fg)]">
                       <Download size={16} aria-hidden="true" /> Save
                     </button>

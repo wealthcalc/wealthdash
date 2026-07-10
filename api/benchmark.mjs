@@ -21,10 +21,12 @@
 // as api/quotes.mjs.
 
 import YahooFinance from "yahoo-finance2";
+import { guard } from "./_lib/guard.mjs";
 
 const yf = new YahooFinance({ suppressNotices: ["yahooSurvey"] });
 
 export default async function handler(req, res) {
+  if (!guard(req, res)) return;
   const symbol = (req.query?.symbol ?? "").toString().trim();
   const from = (req.query?.from ?? "").toString().trim();
   const to = (req.query?.to ?? "").toString().trim() || new Date().toISOString().slice(0, 10);

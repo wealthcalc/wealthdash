@@ -99,8 +99,13 @@ function ImportTab({
     if (!ibkrQueryId.trim() || !ibkrToken.trim()) { setFlexError("Enter both your Flex Query ID and token first."); return; }
     setFlexBusy(true); setFlexError(""); setNote(""); setCashReport(null);
     try {
-      const url = `/api/ibkr-flex?token=${encodeURIComponent(ibkrToken.trim())}&queryId=${encodeURIComponent(ibkrQueryId.trim())}`;
-      const r = await fetch(url);
+      // POST body, not query string — a GET query puts the Flex token in
+      // Vercel's request logs (api/ibkr-flex.mjs rejects GET for this reason).
+      const r = await fetch("/api/ibkr-flex", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: ibkrToken.trim(), queryId: ibkrQueryId.trim() }),
+      });
       const j = await r.json();
       if (!r.ok) { setFlexError(j.error || `IBKR pull failed (${r.status}).`); setFlexBusy(false); return; }
       setIb(shapeFlexPull(j, { defaultWrapper: wrapper }));

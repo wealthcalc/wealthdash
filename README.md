@@ -1255,9 +1255,57 @@ A new "Inheritance tax" sub-tab on the Plan tab — `core/iht.mjs`, a from-scrat
 - Deliberately doesn't model the £3,000/year annual gift exemption (a conservative simplification — real lifetime gifting shelters more than shown here, never less), trusts, or per-asset BPR/APR eligibility tests — stated once in the module's header rather than scattered across the UI.
 - 22 new node tests, including HMRC's exact taper-relief percentages, RNRB taper arithmetic, chronological multi-gift NRB allocation, and the pension-in-estate date boundary.
 
+## Security hardening (backups, IBKR token, API guard, CSP)
+Product-review Phase 1, step 1 — three related fixes, no feature changes:
+
+- **Secrets out of backups (backup v13).** `exportJSON` no longer includes
+  `avKey` (Alpha Vantage) or `ibkrToken` — a backup file lands in Downloads/
+  cloud-sync folders, and a plaintext credential inside it outlives every
+  other secret-handling decision the app makes. Both are cheap to re-enter
+  on a new machine; `ibkrQueryId` stays (useless without its token). Restore
+  still ACCEPTS both fields from v12-and-earlier files, so nothing is lost
+  restoring an old backup. The Save button's tooltip now says keys are
+  excluded rather than warning they're included.
+- **IBKR Flex token moved from GET query to POST body.** The old
+  `GET /api/ibkr-flex?token=...` put the credential in the query string,
+  which Vercel's request logs record verbatim — the one place this
+  "stateless proxy" was accidentally persisting a secret. The endpoint now
+  rejects GET outright (405) rather than supporting both, so the leak can't
+  quietly come back; `ImportTab.jsx` switched in the same commit.
+- **`api/_lib/guard.mjs` (new, node-tested, 14 tests)** — every serverless
+  function now runs a shared guard first: (1) same-origin enforcement via
+  `Sec-Fetch-Site` (unforgeable from page JS in evergreen browsers), falling
+  back to Origin/Referer host matching — these proxies exist solely for this
+  app's own client, and were previously an open relay anyone could hotlink;
+  (2) a per-IP token-bucket rate limit (default 30/min, burst 15; the
+  credential-bearing `ibkr-flex` gets a stricter 6/min). Honest scope stated
+  in the header: the bucket Map is per warm lambda instance, not global —
+  it caps sustained abuse without new infra, it is not a hard distributed
+  quota (that would need KV/Upstash). Header-less clients (curl, uptime
+  checks) pass the origin check by design — a scripted caller can fake any
+  header, so the rate limit is what actually caps them. All API responses
+  now send `Cache-Control: no-store`.
+- **CSP + security headers (`vercel.json`).** A strict Content-Security-
+  Policy fitted to what the app actually does: `script-src 'self'` (no
+  inline scripts anywhere — verified), `style-src` needs `'unsafe-inline'`
+  (the theming `<style>` block in `CgtDashboard.jsx` + inline style attrs),
+  `img-src data:` (the select-arrow SVG in `shared.jsx`), `connect-src`
+  allows only the app's own `/api` plus the two upstreams the CLIENT calls
+  directly (alphavantage.co, api.frankfurter.dev), `worker-src 'self'` (the
+  Monte Carlo worker is a bundled module), `object-src 'none'`,
+  `frame-ancestors 'self'`. Plus `X-Content-Type-Options: nosniff`,
+  `Referrer-Policy: strict-origin-when-cross-origin`, and a denying
+  `Permissions-Policy`. If a future change adds a new client-side fetch
+  host, `connect-src` must be extended or the fetch dies silently in
+  production — the console will show the CSP violation.
+
+Still deliberately NOT done here (Phase 2 material): encrypting `avKey`/
+`ibkrToken` at rest in localStorage (needs a passphrase UX decision), and a
+session-only "don't persist my token" option.
+
 ## Tests
 ```
-npm test        # node --test: 450 tests across the core modules + the DMO parser
+npm test        # node --test: 464 tests across the core modules + the DMO parser + the API guard
 ```
 
 ## Deploy (recommended: Git → new Vercel project)

@@ -12,10 +12,12 @@
 // The .mjs extension forces ESM regardless of your package.json "type".
 
 import YahooFinance from "yahoo-finance2";
+import { guard } from "./_lib/guard.mjs";
 
 const yf = new YahooFinance({ suppressNotices: ["yahooSurvey"] });
 
 export default async function handler(req, res) {
+  if (!guard(req, res)) return;
   const raw = (req.query?.symbols ?? "").toString();
   const symbols = raw.split(",").map((s) => s.trim()).filter(Boolean).slice(0, 50);
   if (!symbols.length) {
