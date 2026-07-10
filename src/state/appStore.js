@@ -16,11 +16,21 @@ import { store as ls, SAMPLE, SECURITY_SEED, todayISO } from "../ui/shared.jsx";
 // shared with the IndexedDB mirror, so new keys can't silently miss it).
 import { PERSIST_KEYS, saveDurable, saveDailySnapshot } from "./durable.js";
 
+// First-run theme follows the OS (prefers-color-scheme) instead of a
+// hardcoded dark default. Only the DEFAULT changes: anyone who has ever
+// toggled the theme has `cgt.dark` in localStorage (the persistence
+// subscription writes it on first change) and keeps their choice; anyone
+// who hasn't keeps following the OS on every load, because the computed
+// default is never written back until they express a preference.
+const prefersDark = typeof window !== "undefined" && typeof window.matchMedia === "function"
+  ? window.matchMedia("(prefers-color-scheme: dark)").matches
+  : true;
+
 const useAppStore = create((set) => {
   // setState-compatible setter: accepts a value or an updater function.
   const upd = (key) => (v) => set((s) => ({ [key]: typeof v === "function" ? v(s[key]) : v }));
   return {
-    dark: ls.get("cgt.dark", true), setDark: upd("dark"),
+    dark: ls.get("cgt.dark", prefersDark), setDark: upd("dark"),
     txns: ls.get("cgt.txns", SAMPLE), setTxns: upd("txns"),
     tab: ls.get("cgt.tab", "home"), setTab: upd("tab"),
     income: ls.get("cgt.income", 200000), setIncome: upd("income"),

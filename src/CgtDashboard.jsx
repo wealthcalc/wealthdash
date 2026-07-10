@@ -16,6 +16,7 @@ import { buildNetWorthSnapshot, upsertDailySnapshot } from "./core/net-worth-ser
 import { taxYearEndChecklist } from "./core/tax-year-end.mjs";
 import { isaSubscriptionsByYear, realisedForYear } from "./core/allowances.mjs";
 import { aeaForYear } from "./core/uk-tax.mjs";
+import { concentration } from "./core/exposure.mjs";
 import { unitsHeldAt, uid, todayISO, IconBtn } from "./ui/shared.jsx";
 import { DesktopSidebar, MobileDrawer } from "./ui/Sidebar.jsx";
 import { useIsMobile } from "./ui/useIsMobile.js";
@@ -251,6 +252,25 @@ export default function App() {
     today: todayISO(),
   }), [txns, pensionCashflows, incomeEntries, eriTxns, taxableDisposals, income]);
 
+  // Single-company concentration across the WHOLE household position:
+  // ledger positions at live prices plus RSU-held employer shares (valued
+  // by the RSU module, outside `positions`), merged per ticker inside
+  // core/exposure.mjs — employer stock split across two tabs is still one
+  // company risk. Feeds the Home action queue and the Wealth tab's
+  // exposure panel.
+  const exposureConcentration = useMemo(() => {
+    const rsuByTicker = {};
+    for (const r of rsuSummary.rows || []) {
+      const tk = r.grant?.ticker;
+      if (!tk || !r.priced || !(r.currentValueGBP > 0)) continue;
+      rsuByTicker[tk] = (rsuByTicker[tk] || 0) + r.currentValueGBP;
+    }
+    return concentration({
+      positions: wealthModel ? wealthModel.positions : [],
+      extras: Object.entries(rsuByTicker).map(([ticker, value]) => ({ ticker, value, kind: "equity", label: "RSU held shares" })),
+    });
+  }, [wealthModel, rsuSummary]);
+
   // Aggregates for the Home action queue (core/action-queue.mjs) — each
   // figure from the module that owns it: ISA subscriptions from the ledger
   // (allowances.mjs), AEA headroom from this year's taxable disposals
@@ -404,6 +424,7 @@ export default function App() {
     setTab: (t) => { setTab(t); if (mobileSummaryMode) setMobileFullApp(true); },
     txns, secMeta, avKey, avMeta, setPrices, setPriceMeta, dmoReportDate, setDmoReportDate,
     taxYearEnd, cashAccounts, actionData, incomeCalendar, planInputs,
+    concentration: exposureConcentration,
   };
 
   return (
@@ -511,6 +532,10 @@ export default function App() {
               {tab === "plan" && <PlanTab {...{
                 dark,
                 planInputs, setPlanInputs,
+                // Gilt cashflows (coupons + redemptions of gilts held today,
+                // from giltAnalytics) — the Income floor sub-tab stacks them
+                // under State Pension/DB/annuity as contractual income.
+                giltCashflows: giltData ? giltData.cashflows : [],
                 // wrapper totals (holdings + cash) for one-click plan prefill
                 livePots: wealthModel ? Object.fromEntries(["SIPP", "ISA", "GIA", "LISA"].map((w) => [w, wealthModel.byWrapper[w]?.total ?? null])) : null,
                 liveSalary: income,
@@ -533,7 +558,7 @@ export default function App() {
                   creditCardDebt: netWorth.creditCardDebt,
                 } : null,
               }} />}
-              {tab === "wealth" && <WealthTab {...{ model: wealthModel, cash, setCash, cashAccounts, setCashAccounts, creditCards, setCreditCards, prices, setPrices, avKey, setAvKey, avMeta, setAvMeta, priceMeta, setPriceMeta, txns, secMeta, setSecMeta, dmoReportDate, setDmoReportDate }} />}
+              {tab === "wealth" && <WealthTab {...{ model: wealthModel, cash, setCash, cashAccounts, setCashAccounts, creditCards, setCreditCards, prices, setPrices, avKey, setAvKey, avMeta, setAvMeta, priceMeta, setPriceMeta, txns, secMeta, setSecMeta, dmoReportDate, setDmoReportDate, concentration: exposureConcentration }} />}
               {tab === "returns" && <ReturnsTab {...{ returns, valuations, pensionCashflows, secMeta, setSecMeta, txns }} />}
               {tab === "gilts" && <GiltsTab {...{ data: giltData, secMeta, setSecMeta, prices, setPrices, dmoReportDate, setDmoReportDate }} />}
               {tab === "pension" && <PensionTab {...{ txns, setTxns, cash, setCash, secMeta, setSecMeta, prices, setPrices, pensionCashflows, setPensionCashflows, recomputeProviderCost }} />}

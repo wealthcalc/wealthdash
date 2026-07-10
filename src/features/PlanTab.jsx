@@ -8,7 +8,7 @@ import { useMonteCarloWorker } from "../ui/useMonteCarloWorker.js";
 import {
   Settings2, TrendingUp, TrendingDown, ShieldAlert, Activity,
   Gauge, ChevronDown, ChevronUp, Info, RefreshCw, Building2, Coins, HeartPulse,
-  Layers, Landmark, Plus, Trash2,
+  Layers, Landmark, Plus, Trash2, Umbrella,
 } from "lucide-react";
 import { taxRUK, taxScot, employeeNI } from "../core/uk-income-tax.mjs";
 import {
@@ -18,6 +18,8 @@ import { solveSWR } from "../core/swr.mjs";
 import { runGuytonKlinger } from "../core/guyton-klinger.mjs";
 import { rollingStressTest } from "../core/sequence-risk.mjs";
 import { projectIHT, pensionsInEstate, PENSIONS_IN_ESTATE_FROM } from "../core/iht.mjs";
+import { buildIncomeFloor } from "../core/income-floor.mjs";
+import { giltIncomeByYear } from "../core/gilt-ladder.mjs";
 
 /* ------------------------------------------------------------------ */
 /*  Design tokens — resolved via CSS variables so the theme can swap    */
@@ -391,6 +393,9 @@ const DEFAULTS = {
   targetMode: "ratio",
   replacementRatio: 67,
   targetAbsolute: 35000,
+  // essential ("needs, not wants") share of target spending — what the
+  // Income floor tab tests guaranteed income against
+  essentialPct: 65,
   // tax-free cash treatment
   tfcMode: "ufpls", // 'ufpls' | 'pcls'
   // phased/part-time retirement: a DC contribution that continues into the
@@ -461,7 +466,7 @@ const DEFAULTS = {
 
 export default function PlanTab({
   dark = true, planInputs = null, setPlanInputs = null, livePots = null, liveSalary = null, liveOtherNetWorth = null,
-  liveEstate = null,
+  liveEstate = null, giltCashflows = [],
 }) {
   // `planInputs` is null until the user changes something for the first
   // time (nothing to persist yet) — DEFAULTS covers that first render.
@@ -799,6 +804,8 @@ export default function PlanTab({
                 {p.spendProfile === "decline" && "Real spending drifts down ~1%/yr (the 'reality retirement' pattern)."}
                 {p.spendProfile === "custom" && "Set your own go-go / slow-go / no-go levels."}
               </div>
+              <Field label="Essential share of spending" value={p.essentialPct ?? 65} min={0} max={100} step={5} suffix="%"
+                onChange={(v) => set("essentialPct", v)} hint="The 'needs, not wants' part of the target — what the Income floor tab tests guaranteed income against" />
               {p.spendProfile === "custom" && (
                 <>
                   <Field label="Go-go until age" value={p.goGoUntil} min={p.retireAge + 1} max={90} onChange={(v) => set("goGoUntil", v)} />
@@ -862,6 +869,7 @@ export default function PlanTab({
               { k: "overview", label: "Overview", icon: Gauge },
               { k: "accum", label: "Accumulation", icon: TrendingUp },
               { k: "decum", label: "Decumulation", icon: TrendingDown },
+              { k: "floor", label: "Income floor", icon: Umbrella },
               { k: "drawdown", label: "Sequencing", icon: Layers },
               { k: "btl", label: "Buy-to-let", icon: Building2 },
               { k: "stress", label: "Scenarios & stress", icon: ShieldAlert },
@@ -1014,6 +1022,11 @@ export default function PlanTab({
           {/* ===== DECUMULATION ===== */}
           {tab === "decum" && (
             <DecumulationTab p={p} det={det} retireRow={retireRow} />
+          )}
+
+          {/* ===== INCOME FLOOR ===== */}
+          {tab === "floor" && (
+            <FloorTab p={p} det={det} set={set} giltCashflows={giltCashflows} />
           )}
 
           {/* ===== BUY-TO-LET ===== */}
@@ -1317,6 +1330,89 @@ function DecumulationTab({ p, det, retireRow }) {
 }
 
 /* ---- Drawdown sequencing optimiser ---- */
+/* ===================== INCOME FLOOR ===================== */
+// Guaranteed income (State Pension + DB + annuity + the gilt ladder's
+// contractual cashflows) stacked against the essential share of target
+// spending, per retirement year — core/income-floor.mjs. A different
+// question to Monte Carlo's "will the pot last?": this asks "if markets
+// fell apart, what still gets paid?". BTL rent is deliberately excluded
+// (voids/arrears make it contingent — see the module header); gilt
+// cashflows are only the gilts held TODAY, so the ladder visibly runs out
+// rather than being smoothed away.
+function FloorTab({ p, det, set, giltCashflows = [] }) {
+  const currentYear = new Date().getFullYear();
+  const giltNominalByYear = useMemo(() => giltIncomeByYear(giltCashflows), [giltCashflows]);
+  const floor = useMemo(
+    () => buildIncomeFloor({ det, p, giltNominalByYear, currentYear, essentialPct: p.essentialPct ?? 65 }),
+    [det, p, giltNominalByYear, currentYear]
+  );
+  const s = floor.summary;
+  if (!s) {
+    return (
+      <Note tone="amber">
+        The income floor needs a retirement phase to analyse — check that retirement age is above current age on the panel.
+      </Note>
+    );
+  }
+
+  const spaRow = floor.rows.find((r) => r.age >= p.spaAge) || null;
+  const hasGilts = Object.keys(giltNominalByYear).length > 0;
+  const fmtCover = (c) => (c == null ? "n/a" : pct(Math.min(9.99, c), 0));
+
+  return (
+    <div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 12, marginBottom: 16 }}>
+        <Card><Stat label={`Essentials covered from`} value={s.permanentFromAge ? `age ${s.permanentFromAge}` : "never"} sub={s.permanentFromAge ? "every year from here is covered" : `guaranteed income never reaches ${Math.round(s.essentialPct)}% of spend`} tone={s.permanentFromAge ? "green" : "red"} /></Card>
+        <Card><Stat label="Years fully covered" value={`${s.coveredYears} / ${s.totalYears}`} sub={`essential = ${Math.round(s.essentialPct)}% of target spend`} tone={s.coveredYears === s.totalYears ? "green" : "ink"} /></Card>
+        <Card><Stat label="Thinnest year" value={fmtCover(s.worstCoverage)} sub={s.worstAge ? `of essentials at age ${s.worstAge}` : ""} tone={s.worstCoverage != null && s.worstCoverage < 1 ? "red" : "green"} /></Card>
+        <Card><Stat label={`At State Pension age (${p.spaAge})`} value={spaRow ? gbp(spaRow.guaranteed) : "—"} sub={spaRow ? `guaranteed vs ${gbp(spaRow.essential)} essential` : "outside plan range"} tone={spaRow && spaRow.covered ? "green" : "ink"} /></Card>
+      </div>
+
+      <Card>
+        <div style={{ fontSize: 13, fontWeight: 600, color: T.ink, marginBottom: 8 }}>
+          Guaranteed income vs essential spending — today's £, age {floor.rows[0].age} to {floor.rows[floor.rows.length - 1].age}
+        </div>
+        <ResponsiveContainer width="100%" height={320}>
+          <ComposedChart data={floor.rows} margin={{ top: 10, right: 8, left: 8, bottom: 0 }}>
+            <CartesianGrid stroke={T.lineSoft} vertical={false} />
+            <XAxis dataKey="age" tick={{ fontSize: 11, fill: T.muted }} tickLine={false} axisLine={{ stroke: T.line }} />
+            <YAxis tickFormatter={gbpK} tick={{ fontSize: 11, fill: T.muted }} tickLine={false} axisLine={false} width={52} />
+            <Tooltip contentStyle={tooltipStyle()} formatter={(v, n) => [gbp(v), { state: "State Pension", db: "DB pension", annuity: "Annuity", gilt: "Gilt ladder cashflow", essential: "Essential spend", spend: "Target spend" }[n] || n]} labelFormatter={(a) => `Age ${a}`} />
+            <Area type="stepAfter" dataKey="state" stackId="floor" stroke="none" fill={T.blue} fillOpacity={0.75} name="state" />
+            <Area type="stepAfter" dataKey="db" stackId="floor" stroke="none" fill={T.green} fillOpacity={0.7} name="db" />
+            <Area type="stepAfter" dataKey="annuity" stackId="floor" stroke="none" fill={T.gold} fillOpacity={0.7} name="annuity" />
+            <Area type="stepAfter" dataKey="gilt" stackId="floor" stroke="none" fill={T.ink2} fillOpacity={0.55} name="gilt" />
+            <Line type="monotone" dataKey="essential" stroke={T.red} strokeWidth={2} dot={false} name="essential" />
+            <Line type="monotone" dataKey="spend" stroke={T.muted} strokeWidth={1.2} strokeDasharray="5 4" dot={false} name="spend" />
+            {p.includeState && <ReferenceLine x={p.spaAge} stroke={T.blue} strokeDasharray="2 3" label={{ value: "State Pension", position: "top", fontSize: 10, fill: T.blue }} />}
+          </ComposedChart>
+        </ResponsiveContainer>
+        <Legendlet items={[
+          { c: T.blue, t: "State Pension" },
+          ...(p.dbEnabled ? [{ c: T.green, t: "DB pension" }] : []),
+          ...(p.annuityEnabled ? [{ c: T.gold, t: "Annuity" }] : []),
+          ...(hasGilts ? [{ c: T.ink2, t: "Gilt ladder (coupons + maturities)" }] : []),
+          { c: T.red, t: "Essential spend" },
+          { c: T.muted, t: "Target spend", dash: true },
+        ]} />
+      </Card>
+
+      <div style={{ marginTop: 12 }}>
+        <Note tone="blue">
+          A different question to the Monte Carlo tab: not "will the portfolio last?" but "if markets fell apart, what still gets paid?".
+          Everything here is contractual or state-backed and shown in today's £.
+          Deliberately excluded: portfolio withdrawals (the thing being stress-screened out) and buy-to-let rent (voids and arrears make it contingent — it stays on the Buy-to-let tab).
+          {hasGilts
+            ? ` The gilt ladder counts coupons AND maturing principal from gilts you hold today (${s.giltYearsCounted} year${s.giltYearsCounted === 1 ? "" : "s"} of cashflow) — it runs out when the last gilt matures, and the chart shows that cliff on purpose; no reinvestment is assumed.`
+            : " No gilts are held (or none have prices) — a gilt ladder bought over the next few years is the classic way to raise the floor across any gap before the State Pension starts."}
+          {" "}Raise the floor with more DB/annuity/gilts; lower the essential share on the panel if {Math.round(s.essentialPct)}% overstates your true needs.
+          {!s.permanentFromAge && p.annuityEnabled === false && " An annuity (panel, optional) is the bluntest fix for a floor that never closes."}
+        </Note>
+      </div>
+    </div>
+  );
+}
+
 function DrawdownTab({ p, det, set }) {
   const strategies = Object.keys(STRATEGY_LABELS);
   const runs = useMemo(

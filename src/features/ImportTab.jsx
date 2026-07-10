@@ -462,7 +462,7 @@ function ImportTab({
                             <td className="px-2 py-1">{t.date}</td><td className="px-2 py-1">{t.ticker}</td><td className="px-2 py-1">{t.side}</td>
                             <td className="px-2 py-1">{num(t.quantity, t.quantity % 1 ? 4 : 0)}</td><td className="px-2 py-1">{t.nativeCurrency}</td>
                             <td className="px-2 py-1">{num(t.nativeAmount)}</td><td className="px-2 py-1">{t.gbpAmount == null ? "FX on import" : gbp(t.gbpAmount)}</td>
-                            <td className="px-2 py-1">{dup && <span className="text-[10px] uppercase font-semibold px-1.5 py-0.5 rounded-full text-[var(--muted)] border border-[var(--border)]">dup</span>}</td>
+                            <td className="px-2 py-1">{dup && <span className="text-[11px] uppercase font-semibold px-1.5 py-0.5 rounded-full text-[var(--muted)] border border-[var(--border)]">dup</span>}</td>
                             <td className="px-2 py-1"><button onClick={() => removeIbTrade(i)} title="Remove this row" className="text-[var(--muted)] hover:text-[var(--loss)]"><Trash2 size={13} /></button></td>
                           </tr>
                         );
@@ -482,7 +482,7 @@ function ImportTab({
                           <tr key={i} className="border-t border-[var(--border)]">
                             <td className="px-2 py-1">{e.date}</td><td className="px-2 py-1">{e.ticker || "—"}</td><td className="px-2 py-1 capitalize">{e.kind}</td>
                             <td className="px-2 py-1">{e.amount == null ? "FX on import" : gbp(e.amount)}</td>
-                            <td className="px-2 py-1">{dup && <span className="text-[10px] uppercase font-semibold px-1.5 py-0.5 rounded-full text-[var(--muted)] border border-[var(--border)]">dup</span>}</td>
+                            <td className="px-2 py-1">{dup && <span className="text-[11px] uppercase font-semibold px-1.5 py-0.5 rounded-full text-[var(--muted)] border border-[var(--border)]">dup</span>}</td>
                             <td className="px-2 py-1"><button onClick={() => removeIbIncome(i)} title="Remove this row" className="text-[var(--muted)] hover:text-[var(--loss)]"><Trash2 size={13} /></button></td>
                           </tr>
                         );
@@ -798,7 +798,7 @@ function ImportTab({
                                 <td className="px-2 py-1">{row["Net quantity"] || "—"}</td>
                               </>
                             )}
-                            <td className="px-2 py-1">{m == null ? <span className="text-[var(--loss)]">unparsed</span> : dup && <span className="text-[10px] uppercase font-semibold px-1.5 py-0.5 rounded-full text-[var(--muted)] border border-[var(--border)]">dup</span>}</td>
+                            <td className="px-2 py-1">{m == null ? <span className="text-[var(--loss)]">unparsed</span> : dup && <span className="text-[11px] uppercase font-semibold px-1.5 py-0.5 rounded-full text-[var(--muted)] border border-[var(--border)]">dup</span>}</td>
                             <td className="px-2 py-1"><button onClick={() => removeRsuRow(i)} title="Remove this row" className="text-[var(--muted)] hover:text-[var(--loss)]"><Trash2 size={13} /></button></td>
                           </tr>
                         );

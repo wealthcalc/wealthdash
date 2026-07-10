@@ -9,6 +9,10 @@ function HoldingsTab({ positions, prices, setPrices, avKey, setAvKey, avMeta, se
   if (!open.length) return <Empty msg="No open holdings yet. Add buy transactions (any wrapper) to see your positions and unrealised gains." />;
 
   const setISIN = (tk, v) => setSecMeta((m) => ({ ...m, [tk]: { ...m[tk], isin: v.toUpperCase().trim() } }));
+  // Region/sector tags — look-through v0, read by the Wealth tab's
+  // exposure bars (core/exposure.mjs). Free text with suggestions;
+  // whatever the user types is their own claim about what a fund holds.
+  const setTag = (tk, field, v) => setSecMeta((m) => ({ ...m, [tk]: { ...m[tk], [field]: v } }));
 
   // Sorted by ticker first so that when the user's chosen sort key ties
   // (e.g. every row shares a wrapper), the stable sort below keeps a
@@ -58,6 +62,8 @@ function HoldingsTab({ positions, prices, setPrices, avKey, setAvKey, avMeta, se
               <SortTh id="wrapper" label="Wrapper" sort={sort} onSort={toggleSort} className="px-3 py-2 font-medium" />
               <SortTh id="tk" label="Ticker" sort={sort} onSort={toggleSort} className="px-3 py-2 font-medium" />
               <th className="px-3 py-2 font-medium text-left">ISIN</th>
+              <th className="px-3 py-2 font-medium text-left" title="Where the holding's underlying exposure actually is — your judgement, powers the Wealth tab's region bar">Region</th>
+              <th className="px-3 py-2 font-medium text-left" title="Sector of the underlying exposure — 'Diversified' is the honest tag for a broad fund">Sector</th>
               <SortTh id="qty" label="Quantity" sort={sort} onSort={toggleSort} align="right" className="px-3 py-2 font-medium" />
               <SortTh id="avg" label="Avg cost" sort={sort} onSort={toggleSort} align="right" className="px-3 py-2 font-medium" />
               <SortTh id="cost" label="Pool cost" sort={sort} onSort={toggleSort} align="right" className="px-3 py-2 font-medium" />
@@ -73,10 +79,16 @@ function HoldingsTab({ positions, prices, setPrices, avKey, setAvKey, avMeta, se
                 <td className="px-3 py-2"><WrapperChip wrapper={r.wrapper} /></td>
                 <td className="px-3 py-2 font-medium">
                   {r.tk}
-                  {r.sec.eri === true && <span title="Offshore reporting fund — generates excess reportable income (ERI) while held unsheltered" className="ml-1.5 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-[color:color-mix(in_srgb,var(--m-bb)_18%,transparent)] text-[var(--m-bb)] align-middle">ERI</span>}
+                  {r.sec.eri === true && <span title="Offshore reporting fund — generates excess reportable income (ERI) while held unsheltered" className="ml-1.5 text-[11px] font-semibold px-1.5 py-0.5 rounded bg-[color:color-mix(in_srgb,var(--m-bb)_18%,transparent)] text-[var(--m-bb)] align-middle">ERI</span>}
                 </td>
                 <td className="px-3 py-2">
                   <input value={r.sec.isin || ""} onChange={(e) => setISIN(r.tk, e.target.value)} placeholder="IE00…" className="input font-mono text-xs w-36 py-1" />
+                </td>
+                <td className="px-3 py-2">
+                  <input list="holdings-region-tags" value={r.sec.region || ""} onChange={(e) => setTag(r.tk, "region", e.target.value)} placeholder="—" className="input text-xs w-24 py-1" aria-label={`Region tag for ${r.tk}`} />
+                </td>
+                <td className="px-3 py-2">
+                  <input list="holdings-sector-tags" value={r.sec.sector || ""} onChange={(e) => setTag(r.tk, "sector", e.target.value)} placeholder="—" className="input text-xs w-24 py-1" aria-label={`Sector tag for ${r.tk}`} />
                 </td>
                 <td className="px-3 py-2 num text-right">{num(r.qty, r.qty % 1 ? 2 : 0)}</td>
                 <td className="px-3 py-2 num text-right text-[var(--muted)]">{gbp(r.avg)}</td>
@@ -99,7 +111,14 @@ function HoldingsTab({ positions, prices, setPrices, avKey, setAvKey, avMeta, se
         Unrealised gain = current value − Section 104 pool cost; it's an indicator, not a taxable event. Only <span className="font-semibold">GIA</span> holdings are subject to CGT — ISA/SIPP/LISA/VCT are sheltered.
         {missingIsin > 0 && ` ISIN is set for ${rows.length - missingIsin}/${rows.length} rows — it's the join key for matching issuer ERI reports, so fill in the rest when you get the chance.`}
         {" "}The <span className="text-[var(--m-bb)] font-semibold">ERI</span> badge flags offshore reporting funds.
+        {" "}Region/Sector are YOUR look-through tags (a ticker's tags apply wherever it's held) — they feed the Wealth tab's exposure bars, so a world ETF tagged "Global" stops reporting as Irish. Tag a broad fund's sector "Diversified".
       </p>
+      <datalist id="holdings-region-tags">
+        {["Global", "UK", "US", "Europe ex-UK", "Japan", "Asia ex-Japan", "Emerging markets", "Global ex-US"].map((v) => <option key={v} value={v} />)}
+      </datalist>
+      <datalist id="holdings-sector-tags">
+        {["Diversified", "Technology", "Financials", "Healthcare", "Energy", "Consumer", "Industrials", "Utilities", "Materials", "Telecoms", "Property", "Government bonds"].map((v) => <option key={v} value={v} />)}
+      </datalist>
     </div>
   );
 }

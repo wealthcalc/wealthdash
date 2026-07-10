@@ -196,7 +196,7 @@ function RsuTab({
                       <input type="number" placeholder="FX→GBP" value={ef.fxRate} onChange={(e) => setEventForm(g.id, { fxRate: e.target.value })} className="input num text-xs py-1 w-20" disabled={ef.priceNative === ""} />
                       <button onClick={() => addEvent(g.id)} className="btn-accent !h-auto !py-1 text-xs"><PlusCircle size={13} /> Add</button>
                     </div>
-                    <p className="text-[11px] text-[var(--muted)]">Price/FX are optional for a future-dated vest (no FMV exists yet) — leave them blank and the schedule still shows the date and share count; fill them in once the shares actually vest, for a cost basis.</p>
+                    <p className="text-xs text-[var(--muted)]">Price/FX are optional for a future-dated vest (no FMV exists yet) — leave them blank and the schedule still shows the date and share count; fill them in once the shares actually vest, for a cost basis.</p>
                   </div>
                 )}
               </div>

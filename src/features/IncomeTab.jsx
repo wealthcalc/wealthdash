@@ -545,7 +545,7 @@ function EriCoverage({ txns, eriEntries, secMeta, setSecMeta }) {
               <tr key={r.ticker}>
                 <td className="py-2 px-3 font-medium">{r.ticker}</td>
                 <td className="py-2 px-3">
-                  <input value={r.sec?.isin || ""} onChange={(e) => setISIN(r.ticker, e.target.value)} placeholder="IE00… (unknown)" className="input font-mono text-[10px] w-32 py-1" />
+                  <input value={r.sec?.isin || ""} onChange={(e) => setISIN(r.ticker, e.target.value)} placeholder="IE00… (unknown)" className="input font-mono text-[11px] w-32 py-1" />
                 </td>
                 <td className="py-2 px-3 num text-[var(--muted)]">{r.firstBuy} → {r.open ? "now" : r.endDate}</td>
                 <td className="py-2 px-3 num text-[var(--muted)]">{r.eriYears.length ? r.eriYears.join(", ") : "none"}</td>

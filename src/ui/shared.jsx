@@ -72,7 +72,7 @@ const WRAPPER_CHIP_CLASS = {
   VCT: "bg-[color:color-mix(in_srgb,var(--m-same)_18%,transparent)] text-[var(--m-same)]",
 };
 const wrapperChipClass = (w) => WRAPPER_CHIP_CLASS[w] || "bg-[color:color-mix(in_srgb,var(--m-bb)_18%,transparent)] text-[var(--m-bb)]";
-const WrapperChip = ({ wrapper }) => <span className={"text-[10px] font-semibold px-1.5 py-0.5 rounded " + wrapperChipClass(wrapper)}>{wrapper}</span>;
+const WrapperChip = ({ wrapper }) => <span className={"text-[11px] font-semibold px-1.5 py-0.5 rounded " + wrapperChipClass(wrapper)}>{wrapper}</span>;
 
 // Shared sub-tab bar, used inside the CGT and Income mega-tabs so related
 // tools live under one top-level tab instead of cluttering the main nav.

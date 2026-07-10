@@ -26,7 +26,7 @@ const TYPE_CHIP = {
   other: "text-[var(--muted)] border-[var(--border)]",
 };
 function TypeChip({ type }) {
-  return <span className={"text-[10px] font-semibold px-1.5 py-0.5 rounded-full border " + (TYPE_CHIP[type] || TYPE_CHIP.other)}>{TYPE_LABEL[type] || type}</span>;
+  return <span className={"text-[11px] font-semibold px-1.5 py-0.5 rounded-full border " + (TYPE_CHIP[type] || TYPE_CHIP.other)}>{TYPE_LABEL[type] || type}</span>;
 }
 
 const EVENT_LABEL = { call: "Capital call / investment", distribution_capital: "Distribution — capital", distribution_income: "Distribution — income", write_off: "Write-off" };
@@ -142,7 +142,7 @@ function PrivateTab({ holdings = [], setHoldings, events = [], setEvents }) {
 
                 {/* EIS/SEIS-only status */}
                 {(h.type === "EIS" || h.type === "SEIS") && (
-                  <div className="flex flex-wrap gap-1.5 text-[11px]">
+                  <div className="flex flex-wrap gap-1.5 text-xs">
                     <span className={"px-1.5 py-0.5 rounded-full border " + (cgt.exempt ? "border-[var(--gain)] text-[var(--gain)]" : "border-[var(--border)] text-[var(--muted)]")} title={cgt.reason || (cgt.exempt ? "Gains exempt from CGT (assuming relief wasn't withdrawn)" : `Exempt from ${cgt.exemptFrom}`)}>
                       {cgt.exempt ? "CGT-exempt" : cgt.exemptFrom ? `CGT-exempt from ${cgt.exemptFrom}` : "No share issue date set"}
                     </span>

@@ -42,7 +42,7 @@ function Gauge({ label, used, limit, sub, warnOver = true }) {
       <div className={"mt-1.5 text-xs num " + (over ? "text-[var(--loss)] font-semibold" : "text-[var(--muted)]")}>
         {over ? <>Over by {gbp0(used - limit)} — check the figures below</> : <>{gbp0(left)} remaining</>}
       </div>
-      {sub && <div className="mt-1 text-[11px] text-[var(--muted)] leading-snug">{sub}</div>}
+      {sub && <div className="mt-1 text-xs text-[var(--muted)] leading-snug">{sub}</div>}
     </div>
   );
 }
@@ -160,7 +160,7 @@ export default function AllowancesTab({
             </tr>
           </tbody>
         </table>
-        <p className="text-[11px] text-[var(--muted)] mt-2 leading-snug flex items-start gap-1">
+        <p className="text-xs text-[var(--muted)] mt-2 leading-snug flex items-start gap-1">
           <Info size={12} className="mt-0.5 shrink-0" />
           Carry-forward requires membership of a registered scheme in the year carried from (usually true), is used earliest-year-first, and each year's taper is tested against that year's adjusted income — shown here using the current income figure as a proxy for all years. Contributions must also not exceed relevant UK earnings for personal tax relief.
         </p>
@@ -187,7 +187,7 @@ export default function AllowancesTab({
         </div>
       </div>
 
-      <p className="text-[11px] text-[var(--muted)] leading-relaxed flex items-start gap-1">
+      <p className="text-xs text-[var(--muted)] leading-relaxed flex items-start gap-1">
         <AlertTriangle size={12} className="mt-0.5 shrink-0" />
         Estimates to support your own planning, not tax advice. Allowance figures are the app&apos;s configured {year} parameters — verify against current HMRC guidance, especially after a Budget.
       </p>

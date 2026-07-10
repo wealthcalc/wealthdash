@@ -5,6 +5,7 @@ import {
   cashAccountsByWrapper, totalCashAccounts, weightedAverageRate, accountsMaturingSoon,
 } from "../core/cash.mjs";
 import { totalCreditCardDebt } from "../core/credit-cards.mjs";
+import { exposureByTag } from "../core/exposure.mjs";
 import LivePricesPanel from "../ui/LivePricesPanel.jsx";
 import {
   gbp, gbp0, WrapperChip, num, CurrencyInput, KIND_LABEL, ALLOC_COLORS, AllocBar, pct, Stat, Empty,
@@ -17,7 +18,7 @@ const ACCOUNT_BLANK = () => ({
 });
 const CARD_BLANK = () => ({ id: uid(), label: "", issuer: "", balance: "", notes: "" });
 
-function WealthTab({ model, cash, setCash, cashAccounts = [], setCashAccounts, creditCards = [], setCreditCards, prices, setPrices, avKey, setAvKey, avMeta, setAvMeta, priceMeta, setPriceMeta, txns, secMeta, dmoReportDate, setDmoReportDate }) {
+function WealthTab({ model, cash, setCash, cashAccounts = [], setCashAccounts, creditCards = [], setCreditCards, prices, setPrices, avKey, setAvKey, avMeta, setAvMeta, priceMeta, setPriceMeta, txns, secMeta, dmoReportDate, setDmoReportDate, concentration = null }) {
   // Hooks must run in the same order every render regardless of whether
   // `model` is null this time round, so anything stateful lives above both
   // early-return guards below (this file previously had no hooks at all,
@@ -25,6 +26,17 @@ function WealthTab({ model, cash, setCash, cashAccounts = [], setCashAccounts, c
   const [acctForm, setAcctForm] = useState(ACCOUNT_BLANK());
   const [acctSort, toggleAcctSort] = useSort("wrapper", "asc");
   const [cardForm, setCardForm] = useState(CARD_BLANK());
+  // Hand-tagged look-through v0 (core/exposure.mjs) — rolls priced value
+  // up by the region/sector tags set on the Holdings tab; untagged value
+  // stays visible as its own bucket rather than being hidden.
+  const regionExposure = useMemo(
+    () => exposureByTag({ positions: model?.positions || [], secMeta, field: "region" }),
+    [model, secMeta]
+  );
+  const sectorExposure = useMemo(
+    () => exposureByTag({ positions: model?.positions || [], secMeta, field: "sector" }),
+    [model, secMeta]
+  );
 
   if (!model) return <Empty msg="Couldn't build the portfolio model — check the Transactions tab for ledger errors." />;
   const { positions, byWrapper, total, income } = model;
@@ -111,7 +123,7 @@ function WealthTab({ model, cash, setCash, cashAccounts = [], setCashAccounts, c
                 <tr key={w} className="hover:bg-[var(--panel2)]">
                   <td className="px-3 py-2">
                     <span className="font-medium">{w}</span>
-                    <span className={"ml-2 text-[10px] font-semibold px-1.5 py-0.5 rounded " + (a.taxable ? "bg-[var(--chip)] text-[var(--fg)]" : "bg-[color:color-mix(in_srgb,var(--gain)_18%,transparent)] text-[var(--gain)]")}>{a.taxable ? "taxable" : "sheltered"}</span>
+                    <span className={"ml-2 text-[11px] font-semibold px-1.5 py-0.5 rounded " + (a.taxable ? "bg-[var(--chip)] text-[var(--fg)]" : "bg-[color:color-mix(in_srgb,var(--gain)_18%,transparent)] text-[var(--gain)]")}>{a.taxable ? "taxable" : "sheltered"}</span>
                   </td>
                   <td className="px-3 py-2 num text-right">{a.positions}{a.unpriced ? <span className="text-[var(--m-bb)]" title={`${a.unpriced} unpriced`}> *</span> : null}</td>
                   <td className="px-3 py-2 num text-right text-[var(--muted)]">{gbp(a.bookCost)}</td>
@@ -119,7 +131,7 @@ function WealthTab({ model, cash, setCash, cashAccounts = [], setCashAccounts, c
                   <td className={"px-3 py-2 num text-right " + (a.priced ? (a.unrealised >= 0 ? "text-[var(--gain)]" : "text-[var(--loss)]") : "text-[var(--muted)]")}>{a.priced ? gbp(a.unrealised) : "—"}</td>
                   <td className="px-3 py-2 text-right">
                     <CurrencyInput value={cash[w] ?? 0} onChange={(v) => setWrapperCash(w, v)} className="w-32 ml-auto" />
-                    {acctByWrapper[w] > 0 && <div className="text-[10px] text-[var(--muted)] mt-0.5">+ {gbp(acctByWrapper[w])} in named accounts</div>}
+                    {acctByWrapper[w] > 0 && <div className="text-[11px] text-[var(--muted)] mt-0.5">+ {gbp(acctByWrapper[w])} in named accounts</div>}
                   </td>
                   <td className="px-3 py-2 num text-right font-medium">{gbp(a.total)}</td>
                 </tr>
@@ -274,15 +286,41 @@ function WealthTab({ model, cash, setCash, cashAccounts = [], setCashAccounts, c
         </div>
       </div>
 
-      {/* allocation */}
+      {/* allocation & exposure */}
       <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 space-y-4">
-        <div className="text-sm font-medium flex items-center gap-2"><PieChart size={15} className="text-[var(--accent)]" /> Allocation <span className="text-xs font-normal text-[var(--muted)]">— by priced market value; unpriced holdings excluded</span></div>
+        <div className="text-sm font-medium flex items-center gap-2"><PieChart size={15} className="text-[var(--accent)]" /> Allocation &amp; exposure <span className="text-xs font-normal text-[var(--muted)]">— by priced market value; unpriced holdings excluded</span></div>
+
+        {/* concentration (core/exposure.mjs — includes RSU-held employer shares) */}
+        {concentration && concentration.total > 0 && (
+          <div>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+              <Stat label="Top holding" value={`${pct(concentration.top1.weight)}`} sub={concentration.top1.ticker} />
+              <Stat label="Top 5 holdings" value={pct(concentration.top5Weight)} sub={`of ${gbp0(concentration.total)} priced (incl. RSU shares)`} />
+              <Stat label="Effective holdings" value={num(concentration.effectiveN, 1)}
+                sub="1 ÷ HHI — what the weights behave like" />
+            </div>
+            {concentration.alerts.length > 0 && (
+              <p className="text-xs mt-2 text-[var(--m-bb)]">
+                <AlertTriangle size={12} className="inline mr-1 -mt-0.5" aria-hidden="true" />
+                Single-company risk: {concentration.alerts.map((a) => `${a.ticker} is ${pct(a.weight)} (${gbp0(a.value)})`).join(", ")} — diversified funds are exempt from this flag; one company isn't.
+              </p>
+            )}
+          </div>
+        )}
+
         <AllocBar title="By wrapper" buckets={model.allocation.wrapper} />
         <AllocBar title="By asset class" buckets={model.allocation.assetClass} labelOf={(k) => KIND_LABEL[k] || k} />
         <AllocBar title="By native currency" buckets={model.allocation.currency} />
         <AllocBar title="By fund domicile" buckets={model.allocation.geography} labelOf={(k) => (k === "unknown" ? "Unset" : k)} />
+        {regionExposure.total > 0 && regionExposure.untaggedPct < 1 && (
+          <AllocBar title="By region (your tags)" buckets={regionExposure.buckets} labelOf={(k) => (k === "untagged" ? "Untagged" : k)} />
+        )}
+        {sectorExposure.total > 0 && sectorExposure.untaggedPct < 1 && (
+          <AllocBar title="By sector (your tags)" buckets={sectorExposure.buckets} labelOf={(k) => (k === "untagged" ? "Untagged" : k)} />
+        )}
         <p className="text-xs text-[var(--muted)] leading-relaxed">
-          Currency is each line's native trading currency (a proxy for listing, not look-through exposure — a USD-quoted S&amp;P 500 ETF and a GBP-quoted one hold the same underlying). Domicile comes from the ISIN registry (IE = Irish-domiciled fund, GB = UK). Look-through asset/geography exposure would need fund-holdings data — out of scope for now.
+          Currency is each line's native trading currency (a proxy for listing, not look-through exposure — a USD-quoted S&amp;P 500 ETF and a GBP-quoted one hold the same underlying). Domicile comes from the ISIN registry (IE = Irish-domiciled fund, GB = UK).
+          {" "}Region/sector bars are look-through v0: they show YOUR tags from the Holdings tab (tag a world ETF "Global" and it stops pretending to be Irish){regionExposure.untaggedPct >= 1 ? " — nothing is tagged yet, so they're hidden until you tag a holding" : regionExposure.untaggedPct > 0 ? ` — ${pct(regionExposure.untaggedPct)} of value is still untagged` : ""}. Factsheet-driven exposure (real constituent data) is a planned Phase 2 feature.
         </p>
       </div>
 
@@ -303,7 +341,7 @@ function WealthTab({ model, cash, setCash, cashAccounts = [], setCashAccounts, c
                 <td className="px-3 py-2 font-medium">
                   <div className="flex items-center gap-1.5">
                     <span>{p.ticker}</span>
-                    {p.cgtExempt && <span title="CGT-exempt instrument (individual gilt, TCGA 1992 s115)" className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-[color:color-mix(in_srgb,var(--m-same)_18%,transparent)] text-[var(--m-same)] align-middle">CGT-free</span>}
+                    {p.cgtExempt && <span title="CGT-exempt instrument (individual gilt, TCGA 1992 s115)" className="text-[11px] font-semibold px-1.5 py-0.5 rounded bg-[color:color-mix(in_srgb,var(--m-same)_18%,transparent)] text-[var(--m-same)] align-middle">CGT-free</span>}
                   </div>
                   {p.name && <div className="text-xs font-normal text-[var(--muted)] truncate max-w-[220px]" title={p.name}>{p.name}</div>}
                 </td>

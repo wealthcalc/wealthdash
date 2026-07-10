@@ -42,6 +42,7 @@ export function buildActionQueue({
   targetsSumTo100 = false,    // drift only means something with real targets
   mortgagesSoon = [],         // mortgagesEndingSoon() output ({expired} flag)
   cashMaturing = [],          // accountsMaturingSoon() output ({matured} flag)
+  concentrationAlerts = [],   // concentration().alerts — single-equity risk
   taxYearEndActive = false,
   max = MAX_ITEMS,
 } = {}) {
@@ -91,6 +92,17 @@ export function buildActionQueue({
     items.push({
       id: "aea-harvest", tab: "cgt",
       amount: harvestNow, score: 15 + 50 * yearProgress, daysLeft, aeaLeft,
+    });
+  }
+
+  // -- Single-company concentration (core/exposure.mjs) — one company at
+  //    10%+ of priced wealth, RSU-held employer shares included. Scores
+  //    with the weight: 10% is a note, 25%+ rivals an expiring fix.
+  for (const c of concentrationAlerts) {
+    items.push({
+      id: "concentration", tab: "wealth",
+      amount: c.value, score: Math.min(78, 35 + (c.weight - 0.10) * 250),
+      ticker: c.ticker, weightPct: c.weight * 100,
     });
   }
 

@@ -141,7 +141,7 @@ function LivePricesPanel({ tickers, avKey, setAvKey, avMeta, setAvMeta, prices, 
                       </>)}
                       <td className="py-1 px-2"><button onClick={() => fetchOne(tk)} disabled={busy || isFund} className="text-[var(--accent)] disabled:opacity-40" title={isFund ? "No live source for pension funds" : "Fetch this one"}>&#8635;</button></td>
                       <td className="py-1 px-2 num text-[var(--muted)]">{pm ? `${num(pm.raw, 2)} ${pm.ccy}` : "-"}</td>
-                      <td className="py-1 px-2">{pm?.source ? <span className="text-[10px] px-1.5 py-0.5 rounded-full" style={{ color: pm.source === "Yahoo" ? "var(--m-pool)" : pm.source === "DMO" ? "var(--gain)" : "var(--m-bb)", background: "var(--chip)" }}>{pm.source}</span> : <span className="text-[var(--muted)]">-</span>}</td>
+                      <td className="py-1 px-2">{pm?.source ? <span className="text-[11px] px-1.5 py-0.5 rounded-full" style={{ color: pm.source === "Yahoo" ? "var(--m-pool)" : pm.source === "DMO" ? "var(--gain)" : "var(--m-bb)", background: "var(--chip)" }}>{pm.source}</span> : <span className="text-[var(--muted)]">-</span>}</td>
                       <td className="py-1 px-2 num text-[var(--muted)]">{pm ? new Date(pm.asOf).toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : "-"}</td>
                     </tr>
                   );

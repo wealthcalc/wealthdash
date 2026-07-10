@@ -98,6 +98,22 @@ test("drift needs real targets and the threshold", () => {
   assert.ok(Math.abs(DRIFT[0].driftPct) >= DRIFT_THRESHOLD_PP);
 });
 
+/* ----------------------------- concentration ---------------------------- */
+
+test("concentration alerts rank with weight and survive tax-year-end mode", () => {
+  const q = buildActionQueue({
+    today: TODAY, taxYearEndActive: true,
+    concentrationAlerts: [
+      { ticker: "WFC", value: 40000, weight: 0.28 },
+      { ticker: "AAPL", value: 12000, weight: 0.11 },
+    ],
+  });
+  assert.deepEqual(q.map((i) => [i.id, i.ticker]), [["concentration", "WFC"], ["concentration", "AAPL"]]);
+  assert.ok(q[0].score > q[1].score);
+  assert.equal(q[0].tab, "wealth");
+  assert.ok(Math.abs(q[0].weightPct - 28) < 1e-9);
+});
+
 /* --------------------------------- cap --------------------------------- */
 
 test("queue is capped", () => {

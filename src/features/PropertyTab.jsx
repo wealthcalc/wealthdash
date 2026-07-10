@@ -177,14 +177,14 @@ function PropertyTab({
               <div key={p.id} className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3 space-y-2">
                 <div className="flex items-start justify-between gap-2">
                   <div>
-                    <div className="font-medium flex items-center gap-1.5">{p.label}{foreign && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-[var(--chip)] text-[var(--muted)]">{v.currency}</span>}</div>
+                    <div className="font-medium flex items-center gap-1.5">{p.label}{foreign && <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded bg-[var(--chip)] text-[var(--muted)]">{v.currency}</span>}</div>
                     <div className="text-xs text-[var(--muted)]">{foreign ? "Foreign property" : regionLabel(p.region)} · bought {p.purchaseDate} for {symbol}{num(p.purchasePrice, 0)}</div>
                   </div>
                   <TwoStepDelete onConfirm={() => removeProperty(p.id)} label="Remove property" />
                 </div>
 
                 {foreign ? (
-                  <p className="text-[11px] text-[var(--muted)] leading-relaxed">Foreign properties are valued manually — HM Land Registry's HPI has no coverage outside the UK.</p>
+                  <p className="text-xs text-[var(--muted)] leading-relaxed">Foreign properties are valued manually — HM Land Registry's HPI has no coverage outside the UK.</p>
                 ) : (
                   <div className="flex items-center gap-2 text-xs">
                     <button onClick={() => updateProperty(p.id, { valuationMode: "manual" })}

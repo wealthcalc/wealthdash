@@ -1387,9 +1387,101 @@ or absent. Redesigned around a rule: "your money needs a decision" and
   Previously such taps changed hidden state behind the summary and looked
   like dead buttons.
 
+## Concentration metrics + hand-tagged region/sector exposure (look-through v0)
+Product-review Phase 1, step 4. The app's "geography" allocation is fund
+DOMICILE — honest, but nearly useless for diversification (an Irish-
+domiciled world ETF reports as Ireland). And nothing measured single-
+company risk at all, despite RSU employer stock being a first-class
+feature of this app.
+
+- **`core/exposure.mjs`** (new, node-tested, 7 tests) — two jobs. (1)
+  `concentration()`: top-holding/top-5 weights, HHI, and "effective
+  holdings" (1÷HHI — a 20-line portfolio where one line is 60% behaves
+  like ~2.6 holdings, and this number says so), plus single-stock alerts
+  at ≥10% of priced value. Individual equities only — a 40% position in a
+  world tracker is a choice, a 40% position in one company is a risk.
+  RSU-held employer shares are folded in via `extras` and MERGED with any
+  ledger position in the same ticker: employer stock split across the RSU
+  tab and a GIA holding is still one company risk. (2) `exposureByTag()`:
+  market value rolled up by hand-tagged secMeta `region`/`sector` fields,
+  untagged value kept visible as its own bucket, never redistributed.
+- **Holdings tab** — new Region/Sector tag inputs per ticker (free text
+  with datalist suggestions; "Diversified" is the honest sector tag for a
+  broad fund). A ticker's tags apply wherever it's held.
+- **Wealth tab** — the Allocation card is now "Allocation & exposure":
+  concentration stats + single-company warning line, and "By region/sector
+  (your tags)" bars that stay hidden until at least one holding is tagged,
+  with the untagged share stated in the caption. Native-currency and
+  domicile bars unchanged (currency was already there, correctly captioned
+  as a listing proxy). Factsheet-driven look-through (real constituent
+  data) remains a Phase 2 feature — these bars show the user's own claims,
+  clearly labelled as such.
+- **Home action queue** — new `concentration` item (id per ticker, links
+  to Wealth): "£X — 28% of invested wealth is WFC alone (RSU shares
+  included)". Scores with the weight (10% is a note, 25%+ rivals an
+  expiring mortgage fix) and is NOT suppressed by tax-year-end mode —
+  concentration risk doesn't care what month it is. Wired in the shell
+  from `wealthModel.positions` + per-ticker RSU values.
+
+## PWA install, system-preference theme, small-text pass
+Product-review Phase 1, step 5 — three small platform/polish items:
+
+- **Installable PWA** — `public/manifest.webmanifest` + generated icons
+  (192/512 + maskable + apple-touch-icon; indigo rounded square with the
+  Home chart's rising-line glyph) and `theme-color` metas for both colour
+  schemes. Deliberately NO service worker, stated in `index.html`: a
+  mis-cached SW can pin a finance app to a stale bundle indefinitely,
+  modern Chromium installs without one, and with all data in
+  localStorage/IndexedDB there's no offline story an SW would add beyond
+  asset caching. This closes the "no PWA work — separate, explicit
+  follow-up" note from the Phase 3.4 mobile layer.
+- **Theme follows the OS on first run** — `cgt.dark`'s DEFAULT is now
+  `prefers-color-scheme` instead of hardcoded dark. Only the default
+  changed: anyone who ever toggled the theme has `cgt.dark` persisted and
+  keeps their choice; anyone who hasn't keeps following the OS on every
+  load (the computed default is never written back until they express a
+  preference).
+- **Small-text floor lifted** — every `text-[10px]` → 11px and every
+  `text-[11px]` body-copy/caption → `text-xs` (12px), across all tabs.
+  Contrast was measured fine (muted-on-panel 5.8:1 light / 6.2:1 dark,
+  AA-passing); the sizes were the real readability problem. SVG chart
+  axis labels (`fontSize="11"` inside scaled viewBoxes) left as-is.
+
+## Income floor: guaranteed income vs essential spending (Plan tab)
+Product-review Phase 1, step 6 — the last Phase 1 item. The Monte Carlo
+tab answers "will the portfolio last?"; nothing answered the flooring
+question — "if markets fell apart, what still gets paid?" — even though
+every input existed somewhere in the app.
+
+- **`core/income-floor.mjs`** (new, node-tested, 6 tests) — for each
+  retirement year, stacks guaranteed income (State Pension + DB pension +
+  annuity + gilt-ladder cashflows) against the essential share of target
+  spending, all in TODAY'S £. State/DB/annuity come straight from the
+  deterministic projection's own timeline rows (`stateReal` etc., already
+  deflated), so this module can never disagree with the Decumulation tab;
+  gilt cashflows arrive nominal by calendar year (`giltIncomeByYear`) and
+  are deflated with the same effective inflation the projection used.
+  Honesty decisions in the module header: BTL rent is EXCLUDED (voids/
+  arrears make it contingent — exactly what a floor screens out); gilt
+  cashflows include maturing principal (in a ladder, redemptions ARE that
+  year's spending money) but count only gilts held today, no assumed
+  reinvestment — so the ladder visibly runs out. The summary's
+  "permanently covered from" age requires every LATER year covered too,
+  because a ladder can cover early years then quit (tested).
+- **New "Income floor" sub-tab on the Plan tab** — four verdict cards
+  (covered-from age, years covered, thinnest year, position at SPA), a
+  stacked chart (step-shaped areas — pension/DB/annuity start on cliff
+  dates, smoothing would lie) against essential + target spend lines, and
+  a Note explaining exclusions and how to raise the floor. Gilt data
+  flows from the shell's existing `giltAnalytics` via a new
+  `giltCashflows` prop — the gilt ladder finally connects to the Plan.
+- **New plan input `essentialPct`** (default 65% of target spend) on the
+  Spending profile panel. Existing saved plans get the default via the
+  usual `DEFAULTS` fallback; no migration needed.
+
 ## Tests
 ```
-npm test        # node --test: 486 tests across the core modules + the DMO parser + the API guard
+npm test        # node --test: 500 tests across the core modules + the DMO parser + the API guard
 ```
 
 ## Deploy (recommended: Git → new Vercel project)

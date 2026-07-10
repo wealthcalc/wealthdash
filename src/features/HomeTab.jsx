@@ -55,7 +55,7 @@ function FirstRunPanel({ setTab }) {
           </button>
         ))}
       </div>
-      <p className="text-[11px] text-[var(--muted)]">Everything is stored locally in this browser (plus an IndexedDB mirror) — nothing is sent anywhere except live price/FX/gilt/HPI lookups you trigger. Use the download icon above to back up any time.</p>
+      <p className="text-xs text-[var(--muted)]">Everything is stored locally in this browser (plus an IndexedDB mirror) — nothing is sent anywhere except live price/FX/gilt/HPI lookups you trigger. Use the download icon above to back up any time.</p>
     </div>
   );
 }
@@ -77,7 +77,7 @@ function TaxYearEndBanner({ taxYearEnd, setTab }) {
           </button>
         ))}
       </div>
-      <p className="text-[11px] text-[var(--muted)]">Use-it-or-lose-it allowances only — none of these carry forward past 5 April (except pension annual allowance, whose oldest carried year is what's shown expiring here).</p>
+      <p className="text-xs text-[var(--muted)]">Use-it-or-lose-it allowances only — none of these carry forward past 5 April (except pension annual allowance, whose oldest carried year is what's shown expiring here).</p>
     </div>
   );
 }
@@ -235,7 +235,7 @@ function TrendChart({ valuations, snapshots }) {
         <text x={PAD_L} y={H - 4} fontSize="11" fill="var(--muted)" className="num">{gbp0(lo)}</text>
       </svg>
       {showBench && (
-        <div className="text-[11px] text-[var(--muted)] mt-0.5">
+        <div className="text-xs text-[var(--muted)] mt-0.5">
           {bench?.error
             ? <>Couldn't load {benchSymbol}: {bench.error}</>
             : overlay.length >= 2
@@ -261,6 +261,7 @@ const ACTION_LABELS = {
   "isa-headroom": (i) => ({ head: gbp0(i.amount), rest: ` — ISA allowance still unused, ${i.daysLeft} days left this tax year. Sheltered beats taxable for the same holding.` }),
   "aea-harvest": (i) => ({ head: gbp0(i.amount), rest: ` — gains harvestable within this year's CGT allowance (${gbp0(i.aeaLeft)} AEA left). Mind the 30-day rule on rebuys.` }),
   "allocation-drift": (i) => ({ head: gbp0(i.amount), rest: ` — ${i.overweight ? "overweight" : "underweight"} ${i.bucket} (${i.driftPct > 0 ? "+" : ""}${i.driftPct.toFixed(1)}pp vs target). Rebalance tax-aware, not market-timed.` }),
+  "concentration": (i) => ({ head: gbp0(i.amount), rest: ` — ${i.weightPct.toFixed(0)}% of invested wealth is ${i.ticker} alone (RSU shares included). One company shouldn't be able to ruin the plan.` }),
 };
 // Items that land on a CGT sub-tab pre-select it.
 const ACTION_SUBTAB = { "aea-harvest": "planning", "allocation-drift": "rebalance" };
@@ -280,7 +281,7 @@ function ActionQueueCard({ queue, setTab, dataLine }) {
         const { head, rest } = (ACTION_LABELS[item.id] || (() => ({ head: gbp0(item.amount), rest: ` — ${item.id}` })))(item);
         const urgent = item.score >= 80;
         return (
-          <button key={item.id + (item.label || item.lender || "")}
+          <button key={item.id + (item.label || item.lender || item.ticker || "")}
             onClick={() => { if (ACTION_SUBTAB[item.id]) store.set("cgt.cgtsubtab", ACTION_SUBTAB[item.id]); setTab && setTab(item.tab); }}
             className="text-left text-xs rounded-lg border border-[var(--border)] bg-[var(--panel2)] px-3 py-2 hover:border-[var(--accent)]">
             <span className={"font-semibold num " + (urgent ? "text-[var(--loss)]" : "text-[var(--accent)]")}>{head}</span>
@@ -328,7 +329,7 @@ function IncomeStripCard({ incomeCalendar = [], setTab }) {
               <span className="num shrink-0">{e.certainty === "estimated" ? "≈" : ""}{gbp0(e.amount)}</span>
             </div>
           ))}
-          {events.length > 4 && <div className="text-[11px] text-[var(--muted)]">+ {events.length - 4} more on the Income tab</div>}
+          {events.length > 4 && <div className="text-xs text-[var(--muted)]">+ {events.length - 4} more on the Income tab</div>}
         </div>
       )}
     </div>
@@ -355,7 +356,7 @@ function DeltaChip({ label, from, to }) {
 export default function HomeTab({
   model, valuations = [], netWorthSnapshots = [], returns, priceMeta = {}, setTab,
   netWorth, mortgages = [], taxYearEnd = null,
-  cashAccounts = [], actionData = null, incomeCalendar = [], planInputs = null,
+  cashAccounts = [], actionData = null, incomeCalendar = [], planInputs = null, concentration = null,
   // price-refresh plumbing (same engine as the Wealth/Holdings panels)
   txns = [], secMeta = {}, avKey = "", avMeta = {},
   setPrices, setPriceMeta, dmoReportDate, setDmoReportDate,
@@ -407,8 +408,9 @@ export default function HomeTab({
     harvestable: actionData?.harvestable ?? 0,
     driftRows: drift.rows, targetsSumTo100: drift.targetsSumTo100,
     mortgagesSoon, cashMaturing,
+    concentrationAlerts: concentration?.alerts ?? [],
     taxYearEndActive: !!(taxYearEnd && taxYearEnd.active),
-  }), [model, actionData, drift, mortgagesSoon, cashMaturing, taxYearEnd]);
+  }), [model, actionData, drift, mortgagesSoon, cashMaturing, concentration, taxYearEnd]);
 
   if (!model) return <Empty msg="Couldn't build the portfolio model — check the Transactions tab for ledger errors." />;
   const { byWrapper, total } = model;
@@ -496,7 +498,7 @@ export default function HomeTab({
         <ActionQueueCard queue={queue} setTab={setTab} dataLine={
           <div className="mt-auto pt-2 border-t border-[var(--border)]">
             <div className="flex items-start justify-between gap-2">
-              <div className="text-[11px] text-[var(--muted)] leading-snug">
+              <div className="text-xs text-[var(--muted)] leading-snug">
                 {refreshMsg || (
                   <>
                     {staleTickers.length > 0 || total.unpriced > 0 ? (
@@ -513,7 +515,7 @@ export default function HomeTab({
               </div>
               {canRefresh && (
                 <button onClick={doRefresh} disabled={refreshing}
-                  className="shrink-0 inline-flex items-center gap-1 text-[11px] text-[var(--muted)] hover:text-[var(--fg)] disabled:opacity-50"
+                  className="shrink-0 inline-flex items-center gap-1 text-xs text-[var(--muted)] hover:text-[var(--fg)] disabled:opacity-50"
                   title="Fetch fresh prices for every open holding — DMO for gilts, Yahoo then Alpha Vantage for the rest (pension fund units stay manual)">
                   <RefreshCw size={11} className={refreshing ? "animate-spin" : ""} aria-hidden="true" /> Refresh
                 </button>
@@ -547,7 +549,7 @@ export default function HomeTab({
                 {r?.xirr && <span className="text-xs" title="Money-weighted return (XIRR), annualised"><RateCell r={r.xirr} /></span>}
               </div>
               <div className="text-lg font-semibold num mt-1.5">{gbp0(agg.total)}</div>
-              <div className="text-[11px] text-[var(--muted)] num">
+              <div className="text-xs text-[var(--muted)] num">
                 {agg.positions > 0 && <>{agg.positions} holding{agg.positions > 1 ? "s" : ""}</>}
                 {agg.cash > 0 && <>{agg.positions > 0 ? " · " : ""}cash {gbp0(agg.cash)}</>}
               </div>
@@ -557,13 +559,13 @@ export default function HomeTab({
                   {gain >= 0 ? "+" : ""}{gbp0(gain)}{agg.bookCostPriced > 0 && ` (${num((gain / agg.bookCostPriced) * 100, 1)}%)`}
                 </div>
               )}
-              {agg.unpriced > 0 && <div className="text-[11px] text-[var(--m-bb)]">{agg.unpriced} unpriced</div>}
+              {agg.unpriced > 0 && <div className="text-xs text-[var(--m-bb)]">{agg.unpriced} unpriced</div>}
             </div>
           );
         })}
       </div>
 
-      <p className="text-[11px] text-[var(--muted)]">
+      <p className="text-xs text-[var(--muted)]">
         Read-only overview as of {todayISO()}. Prices update from the Wealth tab; cash balances from Pension &amp; LISA / Wealth. The chart's "Net worth" series records daily from whatever you've entered (estimated days flagged); "Invested" is the exact securities-only series used for TWR.
       </p>
     </div>

@@ -119,7 +119,7 @@ function GiltsTab({ data, secMeta, setSecMeta, prices, setPrices, dmoReportDate,
                   <tr key={h.wrapper + h.ticker} className="hover:bg-[var(--panel2)]">
                     <td className="px-3 py-2 font-medium" title={`${h.name} · ${h.isin}`}>
                       {h.ticker}
-                      {h.exDiv && <span className="ml-1.5 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-[color:color-mix(in_srgb,var(--m-bb)_18%,transparent)] text-[var(--m-bb)] align-middle" title="In the ex-dividend window (7 business days before the coupon; bank holidays not modelled) — accrued is negative (rebate); the registered holder at ex-div gets the coupon">ex-div</span>}
+                      {h.exDiv && <span className="ml-1.5 text-[11px] font-semibold px-1.5 py-0.5 rounded bg-[color:color-mix(in_srgb,var(--m-bb)_18%,transparent)] text-[var(--m-bb)] align-middle" title="In the ex-dividend window (7 business days before the coupon; bank holidays not modelled) — accrued is negative (rebate); the registered holder at ex-div gets the coupon">ex-div</span>}
                     </td>
                     <td className="px-3 py-2"><WrapperChip wrapper={h.wrapper} /></td>
                     <td className="px-3 py-2 num text-[var(--muted)] whitespace-nowrap text-xs">{h.maturity}</td>
@@ -147,7 +147,7 @@ function GiltsTab({ data, secMeta, setSecMeta, prices, setPrices, dmoReportDate,
               {upcoming.map((f, i) => (
                 <div key={i} className="flex items-baseline justify-between text-sm border-b border-[var(--border)] last:border-0 py-1">
                   <span className="num text-[var(--muted)]">{f.date}</span>
-                  <span className="font-medium">{f.ticker}<span className={"ml-1.5 text-[10px] px-1 py-0.5 rounded " + (f.type === "redemption" ? "bg-[color:color-mix(in_srgb,var(--accent)_18%,transparent)] text-[var(--accent)]" : "bg-[var(--chip)] text-[var(--muted)]")}>{f.type}</span></span>
+                  <span className="font-medium">{f.ticker}<span className={"ml-1.5 text-[11px] px-1 py-0.5 rounded " + (f.type === "redemption" ? "bg-[color:color-mix(in_srgb,var(--accent)_18%,transparent)] text-[var(--accent)]" : "bg-[var(--chip)] text-[var(--muted)]")}>{f.type}</span></span>
                   <span className="num">{gbp(f.amount)}</span>
                 </div>
               ))}

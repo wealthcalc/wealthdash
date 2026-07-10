@@ -56,7 +56,7 @@ function NavSections({ tab, onSelect }) {
     <div className="px-2 py-3 space-y-4">
       {NAV_SECTIONS.map((sec) => (
         <div key={sec.title}>
-          <div className="px-2.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--muted)] mb-1">{sec.title}</div>
+          <div className="px-2.5 text-[11px] font-semibold uppercase tracking-wider text-[var(--muted)] mb-1">{sec.title}</div>
           <div className="space-y-0.5">
             {sec.items.map(([k, label, Icon]) => (
               <NavButton key={k} label={label} Icon={Icon} active={tab === k} onClick={() => onSelect(k)} />

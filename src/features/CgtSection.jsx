@@ -168,7 +168,7 @@ function RebalanceTab({ positions = [], disposals = [], income = 0 }) {
         </div>
       )}
 
-      <p className="text-[11px] text-[var(--muted)] leading-relaxed flex items-start gap-1">
+      <p className="text-xs text-[var(--muted)] leading-relaxed flex items-start gap-1">
         <Scale size={12} className="mt-0.5 shrink-0" />
         This is a mechanical calculation from targets you set — not a recommendation on what your allocation should be. Sell ranking: sheltered-wrapper and CGT-exempt-gilt holdings first (no tax cost), then GIA holdings at a loss (banks the loss), then GIA gains smallest-gain-fraction first (raises the most cash per pound of AEA used). The 30-day rule still applies to any repurchase of the same line in the GIA — see Planning for that warning.
       </p>
@@ -300,7 +300,7 @@ function BedIsaTab({ pools = {}, prices = {}, disposals = [], income = 0, allTxn
         </div>
       )}
 
-      <p className="text-[11px] text-[var(--muted)] leading-relaxed">
+      <p className="text-xs text-[var(--muted)] leading-relaxed">
         How this works: selling in the GIA crystallises the gain against your remaining AEA; the same-day repurchase <em>inside the ISA</em> is not matched by the 30-day rule (it applies to repurchases in the same capacity), so the base cost resets and all future growth is sheltered. The rebuy consumes ISA allowance; stamp duty (0.5%) applies to UK shares and investment trusts but not ETFs/funds; spreads and dealing fees are estimates — reconcile the generated entries against contract notes. Gilts never need this: they&apos;re already CGT-exempt.
       </p>
     </div>
@@ -742,7 +742,7 @@ function ReportTab({ taxYears, disposals, income, carried, yearlyLiab = {} }) {
             </tbody>
           </table>
         </div>
-        <p className="text-[10px] text-[var(--muted)] pt-2 border-t border-[var(--border)]">
+        <p className="text-[11px] text-[var(--muted)] pt-2 border-t border-[var(--border)]">
           Prepared as a computation to support a Self Assessment return. HMRC share-identification rules applied: same-day, then 30-day, then Section 104 pool. Not tax advice — verify before filing.
         </p>
       </div>

@@ -128,7 +128,7 @@ function ReturnsTab({ returns, valuations, pensionCashflows = [], secMeta = {}, 
                   <td className="px-3 py-2 num text-right">{pct(a.simpleReturn)}</td>
                   <td className="px-3 py-2 text-right">
                     <RateCell r={pensionXirrByWrapper[w] || a.xirr} />
-                    {pensionXirrByWrapper[w] && <span className="ml-1 text-[10px] text-[var(--muted)]" title="From real contribution dates (Pension & LISA tab), not the transaction ledger — the ledger only holds one snapshot per fund, not a purchase history">◆</span>}
+                    {pensionXirrByWrapper[w] && <span className="ml-1 text-[11px] text-[var(--muted)]" title="From real contribution dates (Pension & LISA tab), not the transaction ledger — the ledger only holds one snapshot per fund, not a purchase history">◆</span>}
                   </td>
                   <td className="px-3 py-2 num text-right text-[var(--muted)]">{pctPlain(a.actualYield)}</td>
                   <td className="px-3 py-2 num text-right text-[var(--muted)]">{pctPlain(a.forwardYield)}</td>
@@ -165,7 +165,7 @@ function ReturnsTab({ returns, valuations, pensionCashflows = [], secMeta = {}, 
             {[...openH, ...closedH].map((h) => (
               <tr key={h.wrapper + h.ticker} className={"hover:bg-[var(--panel2)]" + (h.open ? "" : " opacity-60")}>
                 <td className="px-3 py-2"><WrapperChip wrapper={h.wrapper} /></td>
-                <td className="px-3 py-2 font-medium">{h.ticker}{!h.open && <span className="ml-1.5 text-[10px] font-semibold px-1.5 py-0.5 rounded bg-[var(--chip)] text-[var(--muted)] align-middle">closed</span>}</td>
+                <td className="px-3 py-2 font-medium">{h.ticker}{!h.open && <span className="ml-1.5 text-[11px] font-semibold px-1.5 py-0.5 rounded bg-[var(--chip)] text-[var(--muted)] align-middle">closed</span>}</td>
                 <td className="px-3 py-2 num text-[var(--muted)] whitespace-nowrap text-xs">{h.firstDate || "—"}</td>
                 <td className="px-3 py-2 num text-right">{gbp(h.moneyIn)}</td>
                 <td className="px-3 py-2 num text-right">{gbp(h.moneyOut + h.incomeReceived)}</td>
