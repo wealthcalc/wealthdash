@@ -1348,9 +1348,48 @@ gapped whenever one pension fund lacked a quote.
   (`cgt.benchmark.symbol`); fetch failures degrade to an inline note,
   never block the chart.
 
+## Home redesign: action queue, plan health on desktop, income strip
+Product-review Phase 1, step 3. Home's rail led with data plumbing (stale
+prices, unpriced holdings) while the financially expensive stuff — an
+expired mortgage fix, unused ISA allowance, harvestable gains — was buried
+or absent. Redesigned around a rule: "your money needs a decision" and
+"the app would like a refresh click" are different classes of message.
+
+- **`core/action-queue.mjs`** (new, node-tested, 10 tests) — a ranked
+  queue of money decisions. It owns ONLY thresholds and ranking; every
+  figure comes from the already-tested module that owns it (ISA
+  subscriptions and AEA headroom from `allowances.mjs`, harvestable gains
+  from the CGT-taxable S104 pools at live prices — the tax truth, ERI
+  uplifts included, gilts excluded — drift from `rebalancing.mjs`,
+  mortgage fixes from `property.mjs`, cash maturities from `cash.mjs`).
+  Ranking: expired fix (SVR bleed) > matured fixed-term cash > ending
+  soon, scaled by days; ISA/AEA urgency grows as 5 April approaches;
+  drift needs real targets (sum to 100) and ≥5pp. Capped at 5 — a queue
+  of twelve "actions" is a list nobody reads. Guardrails: no ISA lecture
+  for a GIA-only user; when tax-year-end mode's banner is active the
+  queue suppresses its own ISA/AEA items rather than saying it twice.
+- **Home rail** = the queue, each item deep-linking to its tab (harvest
+  and drift also pre-select the right CGT sub-tab via the sub-tab's own
+  localStorage key before switching — CgtSection reads it on mount).
+  Plumbing collapsed to one status line at the card's foot ("2 prices
+  >3d old · 1 unpriced · Refresh"), with the old mortgage/no-trend/
+  all-good rail cards deleted (queue, chart empty-state, and queue
+  empty-state cover them respectively).
+- **New second row**: `PlanHealthCard` (previously mobile-only — the
+  deterministic 4-number plan headline now earns its desktop place; the
+  mobile summary's separate copy removed so it doesn't render twice),
+  a **90-day income strip** (reuses the shell's forward income calendar;
+  estimated cadence-forecast amounts marked ≈, cash maturities excluded
+  from the total since they're principal, not income, and the queue
+  already covers them), and the allocation bars (moved from the rail).
+- From the read-only mobile summary, tapping a queue item now opens the
+  full app on that tab — `homeTabProps.setTab` is wrapped in the shell.
+  Previously such taps changed hidden state behind the summary and looked
+  like dead buttons.
+
 ## Tests
 ```
-npm test        # node --test: 476 tests across the core modules + the DMO parser + the API guard
+npm test        # node --test: 486 tests across the core modules + the DMO parser + the API guard
 ```
 
 ## Deploy (recommended: Git → new Vercel project)

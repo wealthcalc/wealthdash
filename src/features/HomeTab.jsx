@@ -1,8 +1,12 @@
 import React, { useState, useMemo, useEffect, useRef } from "react";
-import { TrendingUp, TrendingDown, AlertTriangle, PieChart, RefreshCw, CalendarClock } from "lucide-react";
+import { TrendingUp, TrendingDown, AlertTriangle, PieChart, RefreshCw, CalendarClock, ListChecks, CalendarDays } from "lucide-react";
 import { WRAPPERS } from "../core/portfolio.mjs";
 import { mortgagesEndingSoon } from "../core/property.mjs";
 import { snapshotAtOrBefore, overlaySeries } from "../core/net-worth-series.mjs";
+import { accountsMaturingSoon } from "../core/cash.mjs";
+import { allocationDrift } from "../core/rebalancing.mjs";
+import { buildActionQueue } from "../core/action-queue.mjs";
+import PlanHealthCard from "../ui/PlanHealthCard.jsx";
 import {
   store, gbp, gbp0, num, pct, WrapperChip, AllocBar, KIND_LABEL, RateCell, Empty, todayISO,
 } from "../ui/shared.jsx";
@@ -243,6 +247,94 @@ function TrendChart({ valuations, snapshots }) {
   );
 }
 
+/* ----------------------------- action queue ---------------------------- */
+// Labels for core/action-queue.mjs item ids — UI layer, same pattern as
+// TAX_YEAR_END_LABELS above. Each returns { head, rest } so the £ figure
+// leads the line. Clicking an item can pre-select a sub-tab via a plain
+// localStorage write BEFORE the tab switch (CgtSection reads its sub-tab
+// key in a useState initialiser, and switching tabs remounts it).
+const ACTION_LABELS = {
+  "mortgage-expired": (i) => ({ head: gbp0(i.amount), rest: ` — ${i.lender} fixed rate EXPIRED, likely on SVR now. Rate-shop, then update the Property tab.` }),
+  "mortgage-ending": (i) => ({ head: gbp0(i.amount), rest: ` — ${i.lender} fixed rate ends in ${i.days} days. New deals can usually be locked ~6 months ahead.` }),
+  "cash-matured": (i) => ({ head: gbp0(i.amount), rest: ` — "${i.label}" fixed term has matured; it's probably earning a reversion rate. Re-fix or move it.` }),
+  "cash-maturing": (i) => ({ head: gbp0(i.amount), rest: ` — "${i.label}" fixed term matures in ${i.days} days. Line up the next home for it.` }),
+  "isa-headroom": (i) => ({ head: gbp0(i.amount), rest: ` — ISA allowance still unused, ${i.daysLeft} days left this tax year. Sheltered beats taxable for the same holding.` }),
+  "aea-harvest": (i) => ({ head: gbp0(i.amount), rest: ` — gains harvestable within this year's CGT allowance (${gbp0(i.aeaLeft)} AEA left). Mind the 30-day rule on rebuys.` }),
+  "allocation-drift": (i) => ({ head: gbp0(i.amount), rest: ` — ${i.overweight ? "overweight" : "underweight"} ${i.bucket} (${i.driftPct > 0 ? "+" : ""}${i.driftPct.toFixed(1)}pp vs target). Rebalance tax-aware, not market-timed.` }),
+};
+// Items that land on a CGT sub-tab pre-select it.
+const ACTION_SUBTAB = { "aea-harvest": "planning", "allocation-drift": "rebalance" };
+
+function ActionQueueCard({ queue, setTab, dataLine }) {
+  return (
+    <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 flex flex-col gap-2">
+      <div className="text-sm font-semibold flex items-center gap-1.5">
+        <ListChecks size={15} className="text-[var(--accent)]" /> Needs a decision
+      </div>
+      {queue.length === 0 && (
+        <div className="text-xs text-[var(--muted)] rounded-lg border border-[var(--border)] bg-[var(--panel2)] px-3 py-2">
+          No money decisions pending — allowances on track, no fixes or terms ending soon.
+        </div>
+      )}
+      {queue.map((item) => {
+        const { head, rest } = (ACTION_LABELS[item.id] || (() => ({ head: gbp0(item.amount), rest: ` — ${item.id}` })))(item);
+        const urgent = item.score >= 80;
+        return (
+          <button key={item.id + (item.label || item.lender || "")}
+            onClick={() => { if (ACTION_SUBTAB[item.id]) store.set("cgt.cgtsubtab", ACTION_SUBTAB[item.id]); setTab && setTab(item.tab); }}
+            className="text-left text-xs rounded-lg border border-[var(--border)] bg-[var(--panel2)] px-3 py-2 hover:border-[var(--accent)]">
+            <span className={"font-semibold num " + (urgent ? "text-[var(--loss)]" : "text-[var(--accent)]")}>{head}</span>
+            <span className="text-[var(--muted)]">{rest}</span>
+          </button>
+        );
+      })}
+      {dataLine}
+    </div>
+  );
+}
+
+/* --------------------------- 90-day income strip ------------------------ */
+// Reuses the shell's forward income calendar (core/income-calendar.mjs) —
+// a compact "what's landing soon" digest; the full table lives on the
+// Income tab. Estimated (cadence-forecast) amounts are marked ≈; cash
+// maturities are principal coming back, not income, so they're excluded
+// from the total here (the action queue already covers them).
+function IncomeStripCard({ incomeCalendar = [], setTab }) {
+  const today = todayISO();
+  const horizon = new Date(today + "T00:00:00Z");
+  horizon.setUTCDate(horizon.getUTCDate() + 90);
+  const horizonISO = horizon.toISOString().slice(0, 10);
+  const events = incomeCalendar.filter((e) => e.date <= horizonISO && e.source !== "cash-maturity");
+  const total = events.reduce((s, e) => s + (+e.amount || 0), 0);
+  const anyEstimated = events.some((e) => e.certainty === "estimated");
+  return (
+    <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4">
+      <div className="flex items-center justify-between gap-2 mb-2">
+        <div className="text-sm font-semibold flex items-center gap-1.5"><CalendarDays size={15} className="text-[var(--accent)]" /> Income · next 90 days</div>
+        <button onClick={() => setTab && setTab("income")} className="text-xs text-[var(--accent)] underline underline-offset-2 shrink-0">Calendar →</button>
+      </div>
+      <div className="text-lg font-semibold num">{anyEstimated ? "≈ " : ""}{gbp0(total)}</div>
+      {events.length === 0 ? (
+        <p className="text-xs text-[var(--muted)] mt-1 leading-relaxed">
+          Nothing scheduled or forecast — coupons, recurring dividends and interest appear here once the ledger has enough history to spot their cadence.
+        </p>
+      ) : (
+        <div className="mt-1.5 space-y-1">
+          {events.slice(0, 4).map((e, idx) => (
+            <div key={idx} className="flex items-baseline justify-between gap-2 text-xs">
+              <span className="text-[var(--muted)] truncate">
+                <span className="num">{e.date.slice(5)}</span> · {e.label}
+              </span>
+              <span className="num shrink-0">{e.certainty === "estimated" ? "≈" : ""}{gbp0(e.amount)}</span>
+            </div>
+          ))}
+          {events.length > 4 && <div className="text-[11px] text-[var(--muted)]">+ {events.length - 4} more on the Income tab</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ------------------------------ deltas -------------------------------- */
 function DeltaChip({ label, from, to }) {
   if (from == null || to == null || from.value == null) return null;
@@ -263,6 +355,7 @@ function DeltaChip({ label, from, to }) {
 export default function HomeTab({
   model, valuations = [], netWorthSnapshots = [], returns, priceMeta = {}, setTab,
   netWorth, mortgages = [], taxYearEnd = null,
+  cashAccounts = [], actionData = null, incomeCalendar = [], planInputs = null,
   // price-refresh plumbing (same engine as the Wealth/Holdings panels)
   txns = [], secMeta = {}, avKey = "", avMeta = {},
   setPrices, setPriceMeta, dmoReportDate, setDmoReportDate,
@@ -293,6 +386,29 @@ export default function HomeTab({
   // the early-return guard below (rules of hooks) — this file has already
   // been bitten once by a memo placed after an early return (see README).
   const mortgagesSoon = useMemo(() => mortgagesEndingSoon(mortgages, todayISO(), 180), [mortgages]);
+  const cashMaturing = useMemo(() => accountsMaturingSoon(cashAccounts, todayISO(), 90), [cashAccounts]);
+  // Rebalance targets are owned by the CGT tab's Rebalance sub-tab (same
+  // localStorage key). Read once per mount — Home remounts on every tab
+  // switch, so a target edited over there is always fresh by the time
+  // anyone is back here looking at the queue.
+  const rebalanceTargets = useMemo(() => store.get("cgt.rebalance.targets", {}), []);
+  const drift = useMemo(
+    () => allocationDrift({ positions, targets: rebalanceTargets }),
+    [model, rebalanceTargets] // positions derives from model
+  );
+  const queue = useMemo(() => buildActionQueue({
+    today: todayISO(),
+    hasIsaWrapper: ["ISA", "LISA"].some((w) => {
+      const agg = model?.byWrapper?.[w];
+      return agg && (agg.positions > 0 || agg.cash > 0);
+    }),
+    isaSubscribed: actionData?.isaSubscribed ?? 0,
+    aeaLeft: actionData?.aeaLeft ?? 0,
+    harvestable: actionData?.harvestable ?? 0,
+    driftRows: drift.rows, targetsSumTo100: drift.targetsSumTo100,
+    mortgagesSoon, cashMaturing,
+    taxYearEndActive: !!(taxYearEnd && taxYearEnd.active),
+  }), [model, actionData, drift, mortgagesSoon, cashMaturing, taxYearEnd]);
 
   if (!model) return <Empty msg="Couldn't build the portfolio model — check the Transactions tab for ledger errors." />;
   const { byWrapper, total } = model;
@@ -372,48 +488,47 @@ export default function HomeTab({
           </div>
         </div>
 
-        {/* needs-attention rail */}
-        <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 flex flex-col gap-3">
-          <div className="flex items-center justify-between gap-2">
-            <div className="text-sm font-semibold flex items-center gap-1.5"><AlertTriangle size={15} className="text-[var(--m-bb)]" /> Needs attention</div>
-            {canRefresh && (
-              <button onClick={doRefresh} disabled={refreshing}
-                className="btn-accent !h-auto !py-1.5 text-xs disabled:opacity-50"
-                title="Fetch fresh prices for every open holding — DMO for gilts, Yahoo then Alpha Vantage for the rest (pension fund units stay manual)">
-                <RefreshCw size={13} className={refreshing ? "animate-spin" : ""} /> Refresh prices
-              </button>
-            )}
+        {/* action queue — MONEY decisions, ranked (core/action-queue.mjs).
+            Data plumbing (stale/unpriced prices, refresh) is deliberately
+            demoted to the single status line at the bottom of this card:
+            "your money needs a decision" and "the app would like a refresh
+            click" are different classes of message. */}
+        <ActionQueueCard queue={queue} setTab={setTab} dataLine={
+          <div className="mt-auto pt-2 border-t border-[var(--border)]">
+            <div className="flex items-start justify-between gap-2">
+              <div className="text-[11px] text-[var(--muted)] leading-snug">
+                {refreshMsg || (
+                  <>
+                    {staleTickers.length > 0 || total.unpriced > 0 ? (
+                      <>
+                        {staleTickers.length > 0 && <>{staleTickers.length} price{staleTickers.length > 1 ? "s" : ""} &gt;3d old</>}
+                        {staleTickers.length > 0 && total.unpriced > 0 && " · "}
+                        {total.unpriced > 0 && <button onClick={() => setTab && setTab("wealth")} className="underline underline-offset-2 hover:text-[var(--fg)]">{total.unpriced} unpriced</button>}
+                      </>
+                    ) : (
+                      <>Prices fresh{last ? ` · snapshot ${last.date}` : ""}</>
+                    )}
+                  </>
+                )}
+              </div>
+              {canRefresh && (
+                <button onClick={doRefresh} disabled={refreshing}
+                  className="shrink-0 inline-flex items-center gap-1 text-[11px] text-[var(--muted)] hover:text-[var(--fg)] disabled:opacity-50"
+                  title="Fetch fresh prices for every open holding — DMO for gilts, Yahoo then Alpha Vantage for the rest (pension fund units stay manual)">
+                  <RefreshCw size={11} className={refreshing ? "animate-spin" : ""} aria-hidden="true" /> Refresh
+                </button>
+              )}
+            </div>
           </div>
-          {refreshMsg && <div className="text-[11px] text-[var(--muted)] leading-snug">{refreshMsg}</div>}
-          {staleTickers.length > 0 && (
-            <div className="text-left text-xs rounded-lg border border-[var(--border)] bg-[var(--panel2)] px-3 py-2">
-              <span className="font-semibold text-[var(--m-bb)]">{staleTickers.length} price{staleTickers.length > 1 ? "s" : ""} &gt;3 days old</span>
-              <span className="text-[var(--muted)]"> — {staleTickers.slice(0, 6).join(", ")}{staleTickers.length > 6 ? "…" : ""}. Use Refresh prices above, or set them manually on the Wealth tab.</span>
-            </div>
-          )}
-          {total.unpriced > 0 && (
-            <button onClick={() => setTab && setTab("wealth")} className="text-left text-xs rounded-lg border border-[var(--border)] bg-[var(--panel2)] px-3 py-2 hover:border-[var(--accent)]">
-              <span className="font-semibold text-[var(--loss)]">{total.unpriced} holding{total.unpriced > 1 ? "s" : ""} with no price at all</span>
-              <span className="text-[var(--muted)]"> — try Refresh prices; anything without a live source (pension funds) needs manual entry on the Wealth tab.</span>
-            </button>
-          )}
-          {mortgagesSoon.length > 0 && (
-            <button onClick={() => setTab && setTab("property")} className="text-left text-xs rounded-lg border border-[var(--border)] bg-[var(--panel2)] px-3 py-2 hover:border-[var(--accent)]">
-              <span className="font-semibold text-[var(--m-bb)]">{mortgagesSoon.length} fixed-rate mortgage{mortgagesSoon.length > 1 ? "s" : ""} {mortgagesSoon.some((m) => m.expired) ? "expired or " : ""}ending within 180 days</span>
-              <span className="text-[var(--muted)]"> — check the Property tab; an expired fixed deal usually reverts to a much higher SVR.</span>
-            </button>
-          )}
-          {valuations.length < 2 && netWorthSnapshots.length < 2 && (
-            <div className="text-xs text-[var(--muted)] rounded-lg border border-[var(--border)] bg-[var(--panel2)] px-3 py-2">
-              No trend yet — a net-worth snapshot records automatically each day you open the app (plus an exact invested-value snapshot on days every holding is priced).
-            </div>
-          )}
-          {staleTickers.length === 0 && total.unpriced === 0 && mortgagesSoon.length === 0 && (valuations.length >= 2 || netWorthSnapshots.length >= 2) && (
-            <div className="text-xs text-[var(--muted)] rounded-lg border border-[var(--border)] bg-[var(--panel2)] px-3 py-2">
-              All prices fresh, all holdings priced, snapshot recorded {last ? `(${last.date})` : ""}. Nothing needs you today.
-            </div>
-          )}
-          <div className="text-sm font-semibold mt-1 flex items-center gap-1.5"><PieChart size={15} className="text-[var(--accent)]" /> Allocation</div>
+        } />
+      </div>
+
+      {/* plan health · upcoming income · allocation */}
+      <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        <PlanHealthCard planInputs={planInputs} onOpenPlan={() => setTab && setTab("plan")} />
+        <IncomeStripCard incomeCalendar={incomeCalendar} setTab={setTab} />
+        <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 flex flex-col gap-3">
+          <div className="text-sm font-semibold flex items-center gap-1.5"><PieChart size={15} className="text-[var(--accent)]" /> Allocation</div>
           <AllocBar title="By asset class" buckets={model.allocation.assetClass} labelOf={(k) => KIND_LABEL[k] || k} />
           <AllocBar title="By wrapper" buckets={model.allocation.wrapper} />
         </div>

@@ -14,10 +14,11 @@ import { effectiveCashByWrapper } from "./core/cash.mjs";
 import { buildIncomeCalendar } from "./core/income-calendar.mjs";
 import { buildNetWorthSnapshot, upsertDailySnapshot } from "./core/net-worth-series.mjs";
 import { taxYearEndChecklist } from "./core/tax-year-end.mjs";
+import { isaSubscriptionsByYear, realisedForYear } from "./core/allowances.mjs";
+import { aeaForYear } from "./core/uk-tax.mjs";
 import { unitsHeldAt, uid, todayISO, IconBtn } from "./ui/shared.jsx";
 import { DesktopSidebar, MobileDrawer } from "./ui/Sidebar.jsx";
 import { useIsMobile } from "./ui/useIsMobile.js";
-import PlanHealthCard from "./ui/PlanHealthCard.jsx";
 import useAppStore from "./state/appStore.js";
 
 // Feature sections are lazy-loaded so the initial bundle carries only the
@@ -250,6 +251,25 @@ export default function App() {
     today: todayISO(),
   }), [txns, pensionCashflows, incomeEntries, eriTxns, taxableDisposals, income]);
 
+  // Aggregates for the Home action queue (core/action-queue.mjs) — each
+  // figure from the module that owns it: ISA subscriptions from the ledger
+  // (allowances.mjs), AEA headroom from this year's taxable disposals
+  // (allowances.mjs + uk-tax.mjs), harvestable gains from the CGT-taxable
+  // S104 pools at live prices (NOT position book cost — the pools are the
+  // tax truth, including ERI uplifts, and gilts are already excluded).
+  const actionData = useMemo(() => {
+    const year = ukTaxYear(todayISO());
+    const isa = isaSubscriptionsByYear(txns)[year];
+    const realised = realisedForYear(taxableDisposals, year, aeaForYear(year));
+    let harvestable = 0;
+    for (const [tk, p] of Object.entries(taxablePools)) {
+      const price = prices[tk];
+      if (!price || !p || p.qty <= 1e-9) continue;
+      harvestable += Math.max(0, p.qty * price - p.cost);
+    }
+    return { isaSubscribed: isa ? isa.total : 0, aeaLeft: realised.aeaLeft, harvestable };
+  }, [txns, taxableDisposals, taxablePools, prices]);
+
   const taxYears = useMemo(() => {
     const s = new Set(taxableDisposals.map((d) => d.taxYear));
     return [...s].sort().reverse();
@@ -372,14 +392,19 @@ export default function App() {
     e.target.value = ""; // allow re-selecting the same file
   };
 
+  const mobileSummaryMode = isMobile && !mobileFullApp;
   // Shared by the normal "home" tab render AND the read-only mobile summary
   // below — one object, so the two call sites can never quietly drift.
+  // setTab is wrapped so that, from the read-only mobile summary, tapping
+  // an action-queue item (or any Home deep-link) opens the FULL app on
+  // that tab — previously those taps changed the tab state invisibly
+  // behind the summary, which looked like a dead button.
   const homeTabProps = {
-    model: wealthModel, valuations, netWorthSnapshots, returns, priceMeta, setTab, netWorth, mortgages,
+    model: wealthModel, valuations, netWorthSnapshots, returns, priceMeta, netWorth, mortgages,
+    setTab: (t) => { setTab(t); if (mobileSummaryMode) setMobileFullApp(true); },
     txns, secMeta, avKey, avMeta, setPrices, setPriceMeta, dmoReportDate, setDmoReportDate,
-    taxYearEnd,
+    taxYearEnd, cashAccounts, actionData, incomeCalendar, planInputs,
   };
-  const mobileSummaryMode = isMobile && !mobileFullApp;
 
   return (
     <div className={dark ? "dark" : ""}>
@@ -466,7 +491,9 @@ export default function App() {
             {mobileSummaryMode ? (
               <div className="mt-5 space-y-4">
                 <Suspense fallback={<div className="text-sm text-[var(--muted)] py-6">Loading…</div>}>
-                  <PlanHealthCard planInputs={planInputs} onOpenPlan={() => { setTab("plan"); setMobileFullApp(true); }} />
+                  {/* PlanHealthCard now renders INSIDE HomeTab (it's on the
+                      desktop Home too since the redesign) — no separate copy
+                      here or the summary would show it twice. */}
                   <HomeTab {...homeTabProps} />
                 </Suspense>
                 <button onClick={() => setMobileFullApp(true)}
