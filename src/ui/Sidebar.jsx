@@ -24,7 +24,7 @@ export const SCREENS = [
   { key: "pension", label: "Pensions", icon: PiggyBank, leaves: ["pension"] },
   { key: "other", label: "Other assets", icon: Building2, leaves: ["private", "rsu"] },
   { key: "tax", label: "Tax", icon: TableProperties, leaves: ["cgt", "allowances"] },
-  { key: "data", label: "Data", icon: Database, leaves: ["ledger", "import"] },
+  { key: "data", label: "Data", icon: Database, leaves: ["ledger", "import", "sync"] },
 ];
 
 // Leaf labels as shown in the sub-tab bar and the command palette.
@@ -35,7 +35,7 @@ export const LEAF_LABELS = {
   income: "Income", pension: "Pension & LISA",
   private: "Private investments", rsu: "RSUs",
   cgt: "Capital gains", allowances: "Allowances",
-  ledger: "Transactions", import: "Import",
+  ledger: "Transactions", import: "Import", sync: "Backup & sync",
 };
 
 export const screenOf = (leaf) => SCREENS.find((s) => s.leaves.includes(leaf)) || SCREENS[0];

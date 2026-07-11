@@ -22,6 +22,7 @@ import HoldingsTab from "../../features/HoldingsTab.jsx";
 import WealthTab from "../../features/WealthTab.jsx";
 import GiltsTab from "../../features/GiltsTab.jsx";
 import RsuTab from "../../features/RsuTab.jsx";
+import SyncTab from "../../features/SyncTab.jsx";
 
 // Minimal but real derived model — two priced holdings across wrappers.
 const TXNS = [
@@ -105,6 +106,14 @@ test("GiltsTab and RsuTab render their empty states from store defaults", () => 
   assert.ok(gilts.length > 100);
   const rsu = renderToString(React.createElement(RsuTab));
   assert.ok(rsu.length > 100);
+});
+
+test("SyncTab renders the disabled state with both setup paths", () => {
+  const html = renderToString(React.createElement(SyncTab)).replaceAll("&amp;", "&");
+  assert.ok(html.includes("end-to-end encrypted"));
+  assert.ok(html.includes("Create a new sync"));
+  assert.ok(html.includes("Connect this device"));
+  assert.ok(html.includes("no reset"));
 });
 
 test("PlanHealthCard renders the no-plan prompt and a real projection", () => {

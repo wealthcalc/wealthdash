@@ -40,6 +40,7 @@ const ImportTab = lazy(() => import("./features/ImportTab.jsx"));
 const PropertyTab = lazy(() => import("./features/PropertyTab.jsx"));
 const PrivateTab = lazy(() => import("./features/PrivateTab.jsx"));
 const RsuTab = lazy(() => import("./features/RsuTab.jsx"));
+const SyncTab = lazy(() => import("./features/SyncTab.jsx"));
 
 /* ============================== app =================================== */
 export default function App() {
@@ -619,6 +620,7 @@ export default function App() {
               {tab === "private" && <PrivateTab {...{ holdings: privateHoldings, setHoldings: setPrivateHoldings, events: privateEvents, setEvents: setPrivateEvents }} />}
               {tab === "rsu" && <RsuTab />}
               {tab === "ledger" && <LedgerTab {...{ txns, setTxns }} />}
+              {tab === "sync" && <SyncTab />}
               {tab === "import" && <ImportTab {...{ setTxns, setTab, setIncomeEntries, setEriEntries, secMeta, setPensionCashflows, pensionCashflows, recomputeProviderCost, txns, incomeEntries, eriEntries, ibkrQueryId, setIbkrQueryId, ibkrToken, setIbkrToken, rsuGrants, setRsuGrants, rsuEvents, setRsuEvents }} />}
             </Suspense>
             </div>

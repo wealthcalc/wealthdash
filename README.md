@@ -1555,9 +1555,51 @@ tax-year-end banner) works unchanged, and no tab component moved.
   siblings only for multi-leaf screens, and the palette renders its item
   list when open.
 
+## Phase 2.1: end-to-end-encrypted sync/backup (Vercel Blob)
+Optional multi-device sync, OFF by default — the local-first model is
+unchanged until the user opts in. Zero-knowledge by construction: the
+server only ever stores the AES-256-GCM ciphertext envelope; the
+passphrase-derived key never leaves the device.
+
+- **`core/sync-crypto.mjs`** (new, node-tested, 8 tests — WebCrypto works
+  under `node --test`, so the full round-trip is tested with zero new dev
+  dependencies): PBKDF2 (600k iterations, SHA-256) → AES-256-GCM with
+  fresh salt+IV per push; GCM authentication means a tampered envelope or
+  wrong passphrase throws loudly, never silently decrypts to garbage
+  state. 128-bit random sync ids; pure last-writer-wins decision
+  (`shouldApplyRemote`) with the "own echo isn't newer" case tested.
+  Threat-model honesty stated in the header: the device already holds the
+  full plaintext in localStorage, so the passphrase is also stored
+  locally for usability — what E2E protects is transit and the server.
+- **`api/sync.mjs`** — Vercel Blob store (`@vercel/blob`, the one new
+  dependency): `sync/<id>/latest.json` + 14 pruned history versions (the
+  undo for LWW — a stale-clocked device can overwrite good data, and the
+  versions are how you climb out). Guarded like the other functions but
+  stricter (12/min); 5MB cap; clear 501 with setup instructions when no
+  Blob store is connected. **Deploy note: create a Blob store in the
+  Vercel dashboard (Storage → Blob) and connect it to the project.**
+- **`state/sync.js`** — reads state straight from localStorage via
+  `PERSIST_KEYS` (no store import → no cycle; every change already lands
+  in localStorage synchronously). Push: debounced, hooked into the same
+  persistence subscription as the durable mirror. Pull: `bootSyncPull()`
+  runs in main.jsx BEFORE the app module loads — the exact pattern the
+  IndexedDB eviction restore established — so a newer remote copy is
+  already in localStorage when the store reads it; no mid-session state
+  swap. Every failure degrades to a plain local boot. Sync config
+  (id/passphrase/lastSyncedAt) lives OUTSIDE `PERSIST_KEYS` on purpose:
+  it must never sync itself, mirror itself, or land in a backup file.
+- **New "Backup & sync" leaf under Data** — create (passphrase ×2 +
+  generated id + first push), connect-this-device (id + passphrase →
+  restore + reload, with an explicit "this replaces everything here"
+  warning), sync-now / restore-from-server / recovery-kit download
+  (contains the id, deliberately NOT the passphrase) / two-step disable
+  (local opt-out; the server copy stays for other devices). The
+  no-reset consequence of zero-knowledge is stated in plain words in
+  the UI, twice.
+
 ## Tests
 ```
-npm test        # node --test: 500 core tests + 9 UI smoke tests (test:ui)
+npm test        # node --test: 508 core tests + 10 UI smoke tests (test:ui)
 ```
 
 ## Deploy (recommended: Git → new Vercel project)

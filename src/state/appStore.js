@@ -15,6 +15,7 @@ import { store as ls, SAMPLE, SECURITY_SEED, todayISO } from "../ui/shared.jsx";
 // state key -> localStorage key lives in durable.js (single source of truth
 // shared with the IndexedDB mirror, so new keys can't silently miss it).
 import { PERSIST_KEYS, saveDurable, saveDailySnapshot } from "./durable.js";
+import { schedulePush } from "./sync.js";
 
 // First-run theme follows the OS (prefers-color-scheme) instead of a
 // hardcoded dark default. Only the DEFAULT changes: anyone who has ever
@@ -131,6 +132,10 @@ useAppStore.subscribe((state, prev) => {
     for (const [key, lsKey] of Object.entries(PERSIST_KEYS)) byLsKey[lsKey] = s[key];
     saveDurable(byLsKey);
     saveDailySnapshot(todayISO(), byLsKey);
+    // Encrypted sync push (state/sync.js) — no-op unless the user enabled
+    // sync; reads state back from localStorage itself, so nothing extra
+    // is passed here. Its own debounce coalesces bursts further.
+    schedulePush();
   }, 1500);
 });
 
