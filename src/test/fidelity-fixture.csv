@@ -1,0 +1,25 @@
+Account ,All Accounts
+Timeframe,Last 30 days
+Transaction type,All Transactions
+Investment name,All Investments
+Valuations,"£100,000.00"
+
+Order date,Completion date,Transaction type,Investments,Product Wrapper,Account Number,Source investment,Amount,Quantity,Price per unit,Reference Number,Status,
+10 Jul 2026,10 Jul 2026,Cash Dividend,"Cash",Investment ISA,AS00000001,"SCOTTISH MORTGAGE INV TRUST, ORD GBP0.05 (SMT)",6.97,6.97,1,9000000001,Completed,
+10 Jul 2026,10 Jul 2026,Cash Dividend,"Cash",Investment Account,AG00000002,"SCOTTISH MORTGAGE INV TRUST, ORD GBP0.05 (SMT)",67.71,67.71,1,9000000002,Completed,
+06 Jul 2026,06 Jul 2026,Dealing Fee,"Cash",Investment ISA,AS00000001,,-7.50,0,0,9000000003,Completed,
+06 Jul 2026,08 Jul 2026,Cash Out For Buy,"Cash",Investment ISA,AS00000001,,-4051.17,4051.17,1,9000000004,Completed,
+06 Jul 2026,06 Jul 2026,Stamp Duty Or Financial Transaction Tax,"Cash",Investment ISA,AS00000001,,-20.26,0,0,9000000005,Completed,
+06 Jul 2026,08 Jul 2026,Buy,"GREENCOAT UK WIND PLC, ORD GBP0.01 (UKW)",Investment ISA,AS00000001,,4078.93,3921,1.03,9000000006,Completed,
+03 Jul 2026,03 Jul 2026,Service Fee,"Cash",Cash Management Account,AW00000003,,-7.50,7.5,1,9000000007,Completed,
+02 Jul 2026,02 Jul 2026,Transfer Out From Cash Management Account,"Cash",Cash Management Account,AW00000003,,-500.00,500,1,9000000008,Completed,
+02 Jul 2026,02 Jul 2026,Cash In,"Cash",Investment ISA,AS00000001,,500.00,500,1,9000000009,Completed,
+02 Jul 2026,01 Jul 2026,Cash Dividend,"Cash",Investment ISA,AS00000001,"VANGUARD FUNDS PLC, FTSE ALL WLD HIGH DIV YLD UCITS ETF USD (VHYL)",505.99,505.99,1,9000000010,Completed,
+15 Jun 2026,22 Jun 2026,Cash Interest,"Cash",Investment ISA,AS00000001,"Cash",1.04,1.04,1,9000000011,Completed,
+15 Jun 2026,22 Jun 2026,Tax On Interest,"Cash",Cash Management Account,AW00000003,,-0.39,0,0,9000000012,Completed,
+15 Jun 2026,22 Jun 2026,Cash Interest,"Cash",Cash Management Account,AW00000003,"Relationship Cash Source",1.57,1.57,1,9000000013,Completed,
+05 Jun 2026,05 Jun 2026,Dealing Fee,"Cash",Investment Account,AG00000002,,-7.50,0,0,9000000014,Completed,
+05 Jun 2026,06 Jun 2026,Buy,"IMPERIAL BRANDS PLC, GBP0.10 (IMB)",Investment Account,AG00000002,,1000.00,50,20,9000000015,Completed,
+05 Jun 2026,06 Jun 2026,Sell,"COCA-COLA CO, COM USD0.25 (KO)",Investment Account,AG00000002,,1500.00,30,50,9000000016,Completed,
+01 Jun 2026,02 Jun 2026,Buy,"SOME FUND WITH NO SYMBOL",Investment ISA,AS00000001,,100.00,10,10,9000000017,Completed,
+01 May 2026,01 May 2026,Buy,"IMPERIAL BRANDS PLC, GBP0.10 (IMB)",Investment Account,AG00000002,,999.00,50,19.98,9000000018,Cancelled,

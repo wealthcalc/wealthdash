@@ -13,6 +13,7 @@ import { rsuTotals } from "./core/rsu.mjs";
 import { effectiveCashByWrapper } from "./core/cash.mjs";
 import { buildIncomeCalendar } from "./core/income-calendar.mjs";
 import { buildNetWorthSnapshot, upsertDailySnapshot } from "./core/net-worth-series.mjs";
+import { buildBackup, restorePlan } from "./core/backup.mjs";
 import { taxYearEndChecklist } from "./core/tax-year-end.mjs";
 import { isaSubscriptionsByYear, realisedForYear } from "./core/allowances.mjs";
 import { aeaForYear } from "./core/uk-tax.mjs";
@@ -373,20 +374,11 @@ export default function App() {
   const flash = (msg) => { setStatus(msg); setTimeout(() => setStatus(""), 3500); };
 
   const exportJSON = async () => {
-    // v13: secrets (Alpha Vantage key, IBKR Flex token) are deliberately NOT
-    // exported — a backup file lands in Downloads/cloud folders/email, and a
-    // plaintext credential inside it outlives every other secret-handling
-    // decision the app makes. They're cheap to re-enter on a new machine.
-    // Restore still ACCEPTS them from v12-and-earlier files, so old backups
-    // lose nothing. (ibkrQueryId stays: useless without its token.)
-    const backup = {
-      __cgtBackup: true, version: 14, exportedAt: new Date().toISOString(),
-      txns, incomeEntries, eriEntries, income, carried, cash, valuations, netWorthSnapshots,
-      prices, priceMeta, avMeta, secMeta, pensionCashflows,
-      properties, mortgages, otherLiabilities, cashAccounts, allowanceOverrides,
-      planInputs, privateHoldings, privateEvents, rsuGrants, rsuEvents,
-      ibkrQueryId, creditCards,
-    };
+    // v15: generated from PERSIST_KEYS by core/backup.mjs — one source of
+    // truth for what a backup contains (secrets/UI state/caches excluded
+    // there, with an exhaustiveness test so a new persisted key can't
+    // silently fall out of backups). See the module header for policy.
+    const backup = buildBackup(useAppStore.getState());
     const text = JSON.stringify(backup, null, 2);
     let downloaded = false;
     try {
@@ -407,43 +399,26 @@ export default function App() {
     const r = new FileReader();
     r.onload = () => {
       try {
-        const d = JSON.parse(r.result);
-        if (Array.isArray(d)) {
-          // Legacy export: a bare transaction array, nothing else.
-          setTxns(d.map((x) => ({ ...x, id: x.id || uid() })));
-          flash(`Imported ${d.length} transactions (legacy format — no income/ERI data in this file).`);
-        } else if (d && d.__cgtBackup) {
-          const n = (arr) => Array.isArray(arr) ? arr.length : 0;
-          if (Array.isArray(d.txns)) setTxns(d.txns.map((x) => ({ ...x, id: x.id || uid() })));
-          if (Array.isArray(d.incomeEntries)) setIncomeEntries(d.incomeEntries.map((x) => ({ ...x, id: x.id || uid() })));
-          if (Array.isArray(d.eriEntries)) setEriEntries(d.eriEntries.map((x) => ({ ...x, id: x.id || uid() })));
-          if (typeof d.income === "number") setIncome(d.income);
-          if (typeof d.carried === "number") setCarried(d.carried);
-          if (d.cash && typeof d.cash === "object" && !Array.isArray(d.cash)) setCash(d.cash);
-          if (Array.isArray(d.valuations)) setValuations(d.valuations);
-          if (Array.isArray(d.netWorthSnapshots)) setNetWorthSnapshots(d.netWorthSnapshots);
-          if (d.prices && typeof d.prices === "object") setPrices(d.prices);
-          if (d.priceMeta && typeof d.priceMeta === "object") setPriceMeta(d.priceMeta);
-          if (typeof d.avKey === "string") setAvKey(d.avKey);
-          if (d.avMeta && typeof d.avMeta === "object") setAvMeta(d.avMeta);
-          if (d.secMeta && typeof d.secMeta === "object") setSecMeta((m) => ({ ...m, ...d.secMeta }));
-          if (Array.isArray(d.pensionCashflows)) setPensionCashflows(d.pensionCashflows.map((x) => ({ ...x, id: x.id || uid() })));
-          if (Array.isArray(d.properties)) setProperties(d.properties.map((x) => ({ ...x, id: x.id || uid() })));
-          if (Array.isArray(d.mortgages)) setMortgages(d.mortgages.map((x) => ({ ...x, id: x.id || uid() })));
-          if (Array.isArray(d.otherLiabilities)) setOtherLiabilities(d.otherLiabilities.map((x) => ({ ...x, id: x.id || uid() })));
-          if (Array.isArray(d.cashAccounts)) setCashAccounts(d.cashAccounts.map((x) => ({ ...x, id: x.id || uid() })));
-          if (d.allowanceOverrides && typeof d.allowanceOverrides === "object") setAllowanceOverrides(d.allowanceOverrides);
-          if (d.planInputs && typeof d.planInputs === "object") setPlanInputs(d.planInputs);
-          if (Array.isArray(d.privateHoldings)) setPrivateHoldings(d.privateHoldings.map((x) => ({ ...x, id: x.id || uid() })));
-          if (Array.isArray(d.privateEvents)) setPrivateEvents(d.privateEvents.map((x) => ({ ...x, id: x.id || uid() })));
-          if (Array.isArray(d.rsuGrants)) setRsuGrants(d.rsuGrants.map((x) => ({ ...x, id: x.id || uid() })));
-          if (Array.isArray(d.rsuEvents)) setRsuEvents(d.rsuEvents.map((x) => ({ ...x, id: x.id || uid() })));
-          if (typeof d.ibkrQueryId === "string") setIbkrQueryId(d.ibkrQueryId);
-          if (typeof d.ibkrToken === "string") setIbkrToken(d.ibkrToken);
-          if (Array.isArray(d.creditCards)) setCreditCards(d.creditCards.map((x) => ({ ...x, id: x.id || uid() })));
-          flash(`Restored: ${n(d.txns)} transactions, ${n(d.incomeEntries)} dividend/interest entries, ${n(d.eriEntries)} ERI entries, ${n(d.pensionCashflows)} pension cashflows, ${n(d.properties)} properties, ${n(d.mortgages)} mortgages, ${n(d.cashAccounts)} cash accounts, ${n(d.privateHoldings)} private holdings, ${n(d.rsuGrants)} RSU grants, ${n(d.creditCards)} credit cards, plus prices, allowance overrides, retirement plan inputs and settings.`);
+        const plan = restorePlan(JSON.parse(r.result), { uid });
+        if (plan.error) { setError(plan.error); return; }
+        // Apply via the store's setter convention (stateKey -> setStateKey) —
+        // generated, so a key restored by core/backup.mjs can't be missing a
+        // hand-written apply line here (the old bug class this replaces).
+        const s = useAppStore.getState();
+        const setterOf = (key) => s["set" + key[0].toUpperCase() + key.slice(1)];
+        for (const [key, value] of Object.entries(plan.updates)) {
+          const setter = setterOf(key);
+          if (typeof setter === "function") setter(value);
+        }
+        for (const [key, value] of Object.entries(plan.merges)) {
+          const setter = setterOf(key);
+          if (typeof setter === "function") setter((cur) => ({ ...cur, ...value }));
+        }
+        if (plan.legacy) {
+          flash(`Imported ${plan.counts.txns} transactions (legacy format — no income/ERI data in this file).`);
         } else {
-          setError("That file isn't a recognised backup — expected a transaction array or a full backup file exported from this app.");
+          const c = plan.counts;
+          flash(`Restored: ${c.txns ?? 0} transactions, ${c.incomeEntries ?? 0} dividend/interest entries, ${c.pensionCashflows ?? 0} pension cashflows, ${c.properties ?? 0} properties, ${c.cashAccounts ?? 0} cash accounts, ${c.privateHoldings ?? 0} private holdings, ${c.rsuGrants ?? 0} RSU grants, ${c.creditCards ?? 0} credit cards, plus prices, allowances, plan inputs and settings.${plan.skipped.length ? ` Skipped malformed: ${plan.skipped.join(", ")}.` : ""}`);
         }
       } catch { setError("Couldn't parse that JSON file."); }
     };

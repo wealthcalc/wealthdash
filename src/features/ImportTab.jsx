@@ -4,6 +4,7 @@ import { Upload, Wand2, RefreshCw, FileUp, AlertTriangle, Copy, Check, Trash2 } 
 import { WRAPPERS, normWrapper } from "../core/portfolio.mjs";
 import { guessPensionColumns, mapPensionRow } from "../core/pension-import.mjs";
 import { parseIBKR } from "../core/ibkr-import.mjs";
+import { parseFidelity } from "../core/fidelity-import.mjs";
 import { shapeFlexPull, shapeCashReport } from "../core/ibkr-flex.mjs";
 import { parseISharesWorkbook } from "../core/ishares-eri.mjs";
 import { buildRsuImport, guessTickerFromFilename, detectRsuCsvFormat } from "../core/rsu-import.mjs";
@@ -69,6 +70,7 @@ function ImportTab({
   const [mode, setMode] = useState("ibkr");
   const [wrapper, setWrapper] = useState("GIA");
   const [ibkrSource, setIbkrSource] = useState("live"); // "paste" | "live"
+  const [fidRaw, setFidRaw] = useState(""); // Fidelity UK CSV paste
   const [flexBusy, setFlexBusy] = useState(false);
   const [flexError, setFlexError] = useState("");
   const [cashReport, setCashReport] = useState(null);
@@ -128,8 +130,8 @@ function ImportTab({
     const trades = ib.trades.map((t) => ({ ...t })), income = ib.income.map((t) => ({ ...t }));
     for (const t of trades) await resolve(t, "gbpAmount");
     for (const t of income) await resolve(t, "amount");
-    const newTxns = trades.filter((t) => t.gbpAmount != null).map((t) => ({ id: uid(), date: t.date, ticker: t.ticker, isin: t.isin, side: t.side, quantity: t.quantity, nativeCurrency: t.nativeCurrency, nativeAmount: t.nativeAmount, fxRate: t.fxRate || 1, gbpAmount: t.gbpAmount, wrapper: t.wrapper, note: "IBKR import", ibkrId: t.ibkrId || null }));
-    const newIncome = income.filter((t) => t.amount != null).map((t) => ({ id: uid(), date: t.date, ticker: t.ticker, kind: t.kind, amount: t.amount, wrapper: t.wrapper, note: "IBKR import", ibkrId: t.ibkrId || null }));
+    const newTxns = trades.filter((t) => t.gbpAmount != null).map((t) => ({ id: uid(), date: t.date, ticker: t.ticker, isin: t.isin, side: t.side, quantity: t.quantity, nativeCurrency: t.nativeCurrency, nativeAmount: t.nativeAmount, fxRate: t.fxRate || 1, gbpAmount: t.gbpAmount, fees: +t.fees || 0, account: t.account || "", wrapper: t.wrapper, note: `${t.source || "IBKR"} import`, ibkrId: t.ibkrId || null }));
+    const newIncome = income.filter((t) => t.amount != null).map((t) => ({ id: uid(), date: t.date, ticker: t.ticker, kind: t.kind, amount: t.amount, wrapper: t.wrapper, note: `${t.source || "IBKR"} import`, ibkrId: t.ibkrId || null }));
     const fxSkipped = (trades.length - newTxns.length) + (income.length - newIncome.length);
     // Prefer an exact IBKR tradeID/transactionID match over the
     // content-based key when a row carries one — see ibkrIdKey's comment.
@@ -374,10 +376,10 @@ function ImportTab({
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-2 flex-wrap">
-        <Tab k="ibkr" label="Interactive Brokers" /><Tab k="generic" label="Generic CSV" /><Tab k="dividends" label="Dividends CSV" /><Tab k="pension" label="Pension contributions" /><Tab k="ishares" label="iShares ERI" /><Tab k="rsu" label="RSU vest history" />
+        <Tab k="ibkr" label="Interactive Brokers" /><Tab k="fidelity" label="Fidelity UK" /><Tab k="generic" label="Generic CSV" /><Tab k="dividends" label="Dividends CSV" /><Tab k="pension" label="Pension contributions" /><Tab k="ishares" label="iShares ERI" /><Tab k="rsu" label="RSU vest history" />
       </div>
 
-      {mode !== "ishares" && mode !== "pension" && mode !== "rsu" && (
+      {mode !== "ishares" && mode !== "pension" && mode !== "rsu" && mode !== "fidelity" && (
         <div className="flex items-center gap-2 flex-wrap rounded-xl border border-[var(--border)] bg-[var(--panel2)] px-3 py-2">
           <span className="text-xs font-medium text-[var(--muted)]">Import into wrapper:</span>
           {WRAPPERS.map((w) => (
@@ -388,6 +390,19 @@ function ImportTab({
             </button>
           ))}
           {wrapper !== "GIA" && <span className="text-xs text-[var(--muted)] ml-1">{wrapper} is tax-sheltered — these rows won't affect CGT or income tax.</span>}
+        </div>
+      )}
+
+      {mode === "fidelity" && (
+        <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 space-y-3">
+          <p className="text-sm text-[var(--muted)]">
+            Paste a Fidelity UK <strong>Transaction History</strong> CSV (Transactions → export). Buys/sells, dividends and interest are picked up; the wrapper comes from each row's own <em>Product Wrapper</em> column (Investment ISA → ISA, Investment Account → GIA), so no wrapper selection is needed. Fidelity reports dealing fees and stamp duty as separate rows — where a day has exactly one trade in that account they're folded into its <em>Fees</em> automatically; ambiguous days are flagged instead of guessed. Cash movements (Cash In/Out, transfers, service fees) are deliberately skipped and listed below so nothing disappears silently. Re-importing an overlapping export is safe — rows dedupe by Fidelity's own reference number.
+          </p>
+          <textarea value={fidRaw} onChange={(e) => setFidRaw(e.target.value)} rows={6}
+            placeholder={"Account ,All Accounts\nTimeframe,Last 30 days\n…\nOrder date,Completion date,Transaction type,Investments,Product Wrapper,…"}
+            className="input w-full font-mono text-xs" aria-label="Fidelity UK CSV" />
+          <button onClick={() => { const t = fidRaw.trim(); if (t) setIb(parseFidelity(t)); }} className="btn-accent">Parse Fidelity CSV</button>
+          <p className="text-xs text-[var(--muted)]">Parsed rows appear in the preview below — same review/import flow as IBKR.</p>
         </div>
       )}
 

@@ -1597,9 +1597,85 @@ passphrase-derived key never leaves the device.
   no-reset consequence of zero-knowledge is stated in plain words in
   the UI, twice.
 
+## Phase 2.5: transaction fees + account labels, generated backup (v15)
+- **Fees (s38 incidental costs)** — optional `fees` field on transactions:
+  a BUY's allowable cost is `gbpAmount + fees`, a SELL's net proceeds are
+  `gbpAmount − fees` (`feeOf` in cgt-engine.mjs, one definition shared by
+  every engine). Because `buildPositions` reuses `matchWithPool`, book
+  cost gets fee-inclusive for free; XIRR flows and TWR flows include fees
+  on both sides, so returns are NET of dealing costs (the fee shows up as
+  the drag it really is). Critical semantics, stated in the engine and
+  the Ledger UI: `fees` means charges NOT already inside the amount —
+  IBKR imports net commissions into the amount (`netcash` handling in
+  ibkr-import.mjs) and leave it unset; UK contract notes, which quote
+  consideration and charges separately, use it. Rows without the field
+  behave exactly as before — tested to the penny (fees.test.mjs, 6 tests).
+- **Account label** — free-text `account` on transactions ("HL ISA",
+  "IBKR") so two brokers inside one wrapper stay distinguishable; Ledger
+  add-form + inline column with a shared datalist of labels already used.
+- **`core/backup.mjs` (v15)** — export and restore now GENERATED from
+  `PERSIST_KEYS` instead of two hand-maintained lists (an export object
+  in the shell + ~25 `if (Array.isArray(d.x)) setX(...)` lines). Policy
+  is data, not code: `EXPORT_EXCLUDED` (secrets/UI state/caches),
+  `RESTORE_ONLY` (secrets still accepted from old files), `ID_ARRAYS`
+  (uid refill), `MERGE_KEYS` (secMeta merges over the seed), and a TYPES
+  table that validates every restored value (mismatches are skipped and
+  reported, never applied). backup.test.mjs (6 tests) includes the same
+  exhaustiveness guarantee the durable mirror has — a new persisted key
+  that isn't explicitly exported or excluded fails the suite — plus a
+  full build→restore roundtrip. The shell applies restores via the
+  setter naming convention (`stateKey` → `setStateKey`), so a restored
+  key can't be missing its hand-written apply line — that's the exact
+  bug class this replaces.
+
+## Phase 2.6: Fidelity UK import (built against a real export)
+`core/fidelity-import.mjs` (node-tested, 6 tests + an anonymised fixture
+mirroring the real file's structure) parses Fidelity's Transaction History
+CSV: metadata preamble skipped by finding the header's landmarks, "06 Jul
+2026" dates, tickers extracted as the last parenthesised token of the
+security name, wrapper from each row's own Product Wrapper column (so no
+manual wrapper selection — one file can span ISA + GIA). The Fidelity
+quirk that earns its keep: dealing fees and stamp duty arrive as SEPARATE
+rows tied to a trade only by account + order date — when that day has
+exactly one trade, they fold into its `fees` (the Phase 2.5 field, so CGT
+cost and net returns get them automatically); ambiguous days warn instead
+of guessing. Trades use ORDER date (the CGT contract date), income uses
+COMPLETION date (payment). Cash movements are counted and listed, never
+silently dropped. Output shape is identical to parseIBKR(), so the Import
+tab's existing preview/dedupe/import path is reused verbatim — Fidelity's
+Reference Number rides the same id-dedupe slot as IBKR's tradeID, making
+overlapping re-imports safe. Verified against a real July-2026 export
+(1 trade with £27.76 of fees attached, 13 income rows) before writing the
+fixture. Remaining brokers (HL, AJ Bell, ii, Vanguard) follow this
+pattern when real exports are available.
+
+## Phase 2.3: look-through v1 (factsheet exposure tables + mix similarity)
+`core/lookthrough.mjs` (node-tested, 6 tests) upgrades exposure from
+"one tag per fund" to real factsheet percentage tables:
+
+- **Paste-based ingestion** — a collapsible "Fund exposure tables" panel
+  on Holdings: paste the region/sector breakdown from any issuer
+  factsheet ("United States 62.1%" per line; tabs/colons/% all accepted;
+  labels canonicalised — United States/USA/U.S. → US, Asia Pacific ex
+  Japan → Asia ex-Japan, etc; duplicates merge; a sum far from 100%
+  warns). Stored on `secMeta[ticker].exposure` with asOf/source.
+- **Blending with coverage tiers** — `portfolioExposure()` distributes
+  each holding's value across its table's buckets; funds without a table
+  fall back to the single hand-tag; neither → untagged, kept visible. A
+  <100% table books the remainder to "Cash/other" rather than silently
+  rescaling. The Wealth tab's caption states the split: X% of value has
+  factsheet-grade exposure, Y% rides a tag, Z% untagged.
+- **Mix similarity, honestly named** — Σ min(weight) over region buckets
+  between every pair of table-backed funds, shown as chips with ≥80%
+  flagged ("two OCFs for one exposure"). Labelled in the UI as a
+  REGION-MIX proxy, not constituent overlap — two funds can hold the
+  same countries via different stocks; holdings-file-level overlap is
+  the future version. (Look-through v0's exposureByTag stays exported;
+  the Wealth tab now uses the blended engine.)
+
 ## Tests
 ```
-npm test        # node --test: 508 core tests + 10 UI smoke tests (test:ui)
+npm test        # node --test: 532 core tests + 10 UI smoke tests (test:ui)
 ```
 
 ## Deploy (recommended: Git → new Vercel project)

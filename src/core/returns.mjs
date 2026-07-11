@@ -26,7 +26,7 @@
    - Returns are pre-tax in every wrapper.
    ====================================================================== */
 
-import { MS, dUTC } from "./cgt-engine.mjs";
+import { MS, dUTC, feeOf } from "./cgt-engine.mjs";
 import { normWrapper } from "./portfolio.mjs";
 
 const DAY_YEAR = 365;
@@ -103,10 +103,13 @@ export function unitsHeldAt(rows, dateStr) {
 
 // XIRR cashflows for one holding: trades + income received + terminal value.
 // `incomeEvents`: [{ date, amount }] cash actually received (NOT ERI).
+// Fees (separately-recorded dealing costs — see cgt-engine's feeOf) are
+// money out of pocket: a BUY costs gbpAmount + fees, a SELL returns
+// gbpAmount − fees, so XIRR is net of dealing costs.
 export function holdingFlows({ rows, incomeEvents = [], marketValue = null, asOf }) {
   const flows = [];
   for (const t of rows) if (_usableTrade(t))
-    flows.push({ date: t.date, amount: t.side === "BUY" ? -+t.gbpAmount : +t.gbpAmount });
+    flows.push({ date: t.date, amount: t.side === "BUY" ? -(+t.gbpAmount + feeOf(t)) : +t.gbpAmount - feeOf(t) });
   for (const e of incomeEvents) if (e && e.date && Number.isFinite(_num(e.amount)) && _num(e.amount) > 0)
     flows.push({ date: e.date, amount: _num(e.amount) });
   if (marketValue != null && Number.isFinite(marketValue) && marketValue > EPS && asOf)
@@ -293,8 +296,8 @@ export function computeReturns({
     const eriInc = eriIncome.get(key) || [];
     const flows = holdingFlows({ rows, incomeEvents: cashInc, marketValue: open ? marketValue : null, asOf: day });
 
-    const moneyIn = rows.filter((t) => _usableTrade(t) && t.side === "BUY").reduce((s, t) => s + +t.gbpAmount, 0);
-    const moneyOut = rows.filter((t) => _usableTrade(t) && t.side === "SELL").reduce((s, t) => s + +t.gbpAmount, 0);
+    const moneyIn = rows.filter((t) => _usableTrade(t) && t.side === "BUY").reduce((s, t) => s + +t.gbpAmount + feeOf(t), 0);
+    const moneyOut = rows.filter((t) => _usableTrade(t) && t.side === "SELL").reduce((s, t) => s + +t.gbpAmount - feeOf(t), 0);
     const incomeReceived = cashInc.reduce((s, e) => s + e.amount, 0);
     const profit = (open && !priced) ? null : moneyOut + incomeReceived + (marketValue || 0) - moneyIn;
 
@@ -353,9 +356,12 @@ export function computeReturns({
   const totalProfit = total.unpricedOpen > 0 ? null : total.moneyOut + total.income + total.value - total.moneyIn;
 
   // Portfolio TWR from the snapshot series; flows into the securities
-  // portfolio: BUY positive, SELL negative, cash income negative.
+  // portfolio: BUY positive, SELL negative, cash income negative. Fees are
+  // included in the flow (money committed was gbpAmount + fees) so TWR is
+  // net of dealing costs — the fee shows up as the drag it really is,
+  // consistent with the XIRR treatment above.
   const twrFlows = [];
-  for (const t of txns) if (_usableTrade(t)) twrFlows.push({ date: t.date, amount: t.side === "BUY" ? +t.gbpAmount : -+t.gbpAmount });
+  for (const t of txns) if (_usableTrade(t)) twrFlows.push({ date: t.date, amount: t.side === "BUY" ? +t.gbpAmount + feeOf(t) : -(+t.gbpAmount - feeOf(t)) });
   for (const e of incomeEntries) if (e && e.date && _num(e.amount) > 0) twrFlows.push({ date: e.date, amount: -_num(e.amount) });
   const portfolioTWR = twrFromValuations({ snapshots: valuations, flows: twrFlows });
 
