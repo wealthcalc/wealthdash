@@ -3,7 +3,12 @@ import { Plus, Wand2, RefreshCw } from "lucide-react";
 import { WRAPPERS, normWrapper } from "../core/portfolio.mjs";
 import { store, num, NumberInput, uid, todayISO, Field, fxToGBP, gbp, useSort, sortRows, SortTh, TwoStepDelete } from "../ui/shared.jsx";
 
-const BLANK = () => ({ id: uid(), date: todayISO(), ticker: "", side: "BUY", quantity: "", nativeCurrency: "GBP", nativeAmount: "", fxRate: 1, gbpAmount: "", wrapper: "GIA", note: "" });
+// `fees`: dealing costs NOT already inside the amount (commission, stamp
+// duty, PTM levy) — BUY cost +fees, SELL proceeds −fees in the CGT/returns
+// engines. IBKR imports net commissions into the amount, so leave 0 there.
+// `account`: free-text broker/account label ("HL ISA", "IBKR") so two
+// accounts in the same wrapper stay distinguishable.
+const BLANK = () => ({ id: uid(), date: todayISO(), ticker: "", side: "BUY", quantity: "", nativeCurrency: "GBP", nativeAmount: "", fxRate: 1, gbpAmount: "", fees: "", account: "", wrapper: "GIA", note: "" });
 function LedgerTab({ txns, setTxns }) {
   const [draft, setDraft] = useState(BLANK());
   const [fxBusy, setFxBusy] = useState(false);
@@ -32,7 +37,7 @@ function LedgerTab({ txns, setTxns }) {
 
   const add = () => {
     if (!draft.ticker || !draft.date || !(+draft.quantity > 0)) return;
-    const t = { ...draft, ticker: draft.ticker.toUpperCase().trim(), quantity: +draft.quantity, nativeAmount: +draft.nativeAmount || 0, fxRate: +draft.fxRate || 1, gbpAmount: +draft.gbpAmount || 0 };
+    const t = { ...draft, ticker: draft.ticker.toUpperCase().trim(), quantity: +draft.quantity, nativeAmount: +draft.nativeAmount || 0, fxRate: +draft.fxRate || 1, gbpAmount: +draft.gbpAmount || 0, fees: +draft.fees || 0, account: (draft.account || "").trim() };
     setTxns((p) => [...p, t]); setDraft(BLANK());
   };
   // Editing a transaction recomputes gbpAmount from native × fx when either
@@ -54,6 +59,7 @@ function LedgerTab({ txns, setTxns }) {
     date: (t) => t.date, ticker: (t) => t.ticker, side: (t) => t.side,
     quantity: (t) => +t.quantity || 0, nativeCurrency: (t) => t.nativeCurrency || "",
     nativeAmount: (t) => +t.nativeAmount || 0, fxRate: (t) => +t.fxRate || 0, gbpAmount: (t) => +t.gbpAmount || 0,
+    fees: (t) => +t.fees || 0, account: (t) => t.account || "",
   };
   const [filterWrapper, setFilterWrapper] = useState(() => store.get("cgt.ledger.wrapper", "All"));
   React.useEffect(() => store.set("cgt.ledger.wrapper", filterWrapper), [filterWrapper]);
@@ -87,7 +93,7 @@ function LedgerTab({ txns, setTxns }) {
         {/* Date gets a wider track than its 8 siblings (1.3fr vs 1fr each) —
             "yyyy-mm-dd" plus the native date-picker icon needs more room than
             an equal 1/9 share gives it. */}
-        <div className="grid grid-cols-2 sm:grid-cols-[1.3fr_repeat(8,1fr)] gap-2 items-end">
+        <div className="grid grid-cols-2 sm:grid-cols-[1.3fr_repeat(10,1fr)] gap-2 items-end">
           <Field label="Date"><input type="date" value={draft.date} onChange={(e) => set("date", e.target.value)} className="input num w-full" /></Field>
           <Field label="Ticker"><input value={draft.ticker} onChange={(e) => set("ticker", e.target.value)} placeholder="WFC" className="input w-full" /></Field>
           <Field label="Side">
@@ -107,6 +113,12 @@ function LedgerTab({ txns, setTxns }) {
             <input type="number" value={draft.fxRate} onChange={(e) => set("fxRate", e.target.value)} disabled={draft.nativeCurrency === "GBP"} className="input num w-full disabled:opacity-50" />
           </Field>
           <Field label="GBP amount"><input type="number" value={draft.gbpAmount} onChange={(e) => set("gbpAmount", e.target.value)} className="input num w-full" /></Field>
+          <Field label={<span title="Dealing costs NOT already in the amount: commission, stamp duty, PTM levy (£). Buys add to CGT cost, sells reduce proceeds. Leave 0 if your amount already includes them (IBKR imports do).">Fees £</span>}>
+            <input type="number" value={draft.fees} onChange={(e) => set("fees", e.target.value)} placeholder="0" className="input num w-full" />
+          </Field>
+          <Field label={<span title="Broker/account label so two accounts in the same wrapper stay distinguishable">Account</span>}>
+            <input value={draft.account} onChange={(e) => set("account", e.target.value)} placeholder="HL ISA" className="input w-full" list="ledger-accounts" />
+          </Field>
         </div>
         <div className="flex items-center justify-between mt-2">
           <span className="text-xs text-[var(--muted)]">{draft.nativeCurrency !== "GBP" ? "GBP auto-computes from native × rate; both stay editable." : "GBP transaction — rate fixed at 1."}</span>
@@ -127,6 +139,8 @@ function LedgerTab({ txns, setTxns }) {
               <SortTh id="nativeAmount" label="Native" sort={sort} onSort={toggleSort} align="right" className="px-2 py-1.5 font-medium" />
               <SortTh id="fxRate" label="FX" sort={sort} onSort={toggleSort} align="right" className="px-2 py-1.5 font-medium" />
               <SortTh id="gbpAmount" label="GBP" sort={sort} onSort={toggleSort} align="right" className="px-2 py-1.5 font-medium" />
+              <SortTh id="fees" label="Fees" sort={sort} onSort={toggleSort} align="right" className="px-2 py-1.5 font-medium" />
+              <SortTh id="account" label="Account" sort={sort} onSort={toggleSort} className="px-2 py-1.5 font-medium" />
               {/* Sticky to the right so it's never scrolled out of view on a
                   table this wide — the whole point of a delete control is
                   that it's always reachable, not something you have to go
@@ -160,6 +174,8 @@ function LedgerTab({ txns, setTxns }) {
                     <input type="number" value={t.fxRate ?? 1} disabled={isGBP} onChange={(e) => updateTxn(t.id, { fxRate: +e.target.value || 0 })} className="input num w-16 py-1 text-sm text-right disabled:opacity-50" />
                   </td>
                   <td className="px-2 py-1 text-right"><NumberInput value={t.gbpAmount} onChange={(v) => updateTxn(t.id, { gbpAmount: v })} className="w-28 py-1 text-sm font-medium" /></td>
+                  <td className="px-2 py-1 text-right"><NumberInput value={t.fees ?? 0} onChange={(v) => updateTxn(t.id, { fees: v })} className="w-20 py-1 text-sm" /></td>
+                  <td className="px-2 py-1"><input value={t.account || ""} onChange={(e) => updateTxn(t.id, { account: e.target.value })} placeholder="—" className="input w-24 py-1 text-sm" list="ledger-accounts" /></td>
                   <td className="px-2 py-1 sticky right-0 bg-[var(--panel)] group-hover:bg-[var(--panel2)] border-l border-[var(--border)]">
                     <TwoStepDelete onConfirm={() => setTxns((p) => p.filter((x) => x.id !== t.id))} label={`Delete transaction: ${t.date} ${t.ticker}`} />
                   </td>
@@ -169,6 +185,13 @@ function LedgerTab({ txns, setTxns }) {
           </tbody>
         </table>
       </div>
+      {/* one shared suggestion list for the add-form and inline Account inputs */}
+      <datalist id="ledger-accounts">
+        {[...new Set(txns.map((t) => t.account).filter(Boolean))].sort().map((a) => <option key={a} value={a} />)}
+      </datalist>
+      <p className="text-xs text-[var(--muted)]">
+        Fees are dealing costs <span className="font-medium">not already inside the GBP amount</span> (commission, stamp duty, PTM levy): buys add them to the CGT cost, sells deduct them from proceeds, and returns are computed net of them. IBKR imports already net commissions into the amount — leave their fees at 0. Account is a free label ("HL ISA", "IBKR") so two brokers in one wrapper stay distinguishable.
+      </p>
     </div>
   );
 }

@@ -1,8 +1,79 @@
 import React, { useState, useMemo, useCallback, useRef } from "react";
 import { isWrapperTaxable } from "../core/portfolio.mjs";
+import { parseExposurePaste } from "../core/lookthrough.mjs";
 import LivePricesPanel from "../ui/LivePricesPanel.jsx";
-import { gbp, gbp0, WrapperChip, num, pct, Stat, Empty, useSort, sortRows, SortTh } from "../ui/shared.jsx";
+import { gbp, gbp0, WrapperChip, num, pct, Stat, Empty, useSort, sortRows, SortTh, todayISO } from "../ui/shared.jsx";
 import useAppStore from "../state/appStore.js";
+
+/* Factsheet exposure editor — look-through v1 (core/lookthrough.mjs).
+   Paste the region and/or sector percentage table from a fund's factsheet
+   page; it's stored on secMeta[ticker].exposure and the Wealth tab's
+   exposure bars use it instead of the single hand-tag. */
+function ExposureEditor({ tickers, secMeta, setSecMeta }) {
+  const [open, setOpen] = useState(false);
+  const [tk, setTk] = useState("");
+  const [regionText, setRegionText] = useState("");
+  const [sectorText, setSectorText] = useState("");
+  const [msg, setMsg] = useState("");
+  const withTables = tickers.filter((t) => secMeta[t]?.exposure);
+
+  const save = () => {
+    const t = tk.toUpperCase().trim();
+    if (!t) { setMsg("Pick a ticker first."); return; }
+    const region = parseExposurePaste(regionText);
+    const sector = parseExposurePaste(sectorText, { canonical: (s) => String(s).trim() });
+    if (!Object.keys(region.table).length && !Object.keys(sector.table).length) { setMsg("Nothing parseable — paste lines like \"United States  62.1%\"."); return; }
+    setSecMeta((m) => ({
+      ...m,
+      [t]: {
+        ...m[t],
+        exposure: {
+          ...(m[t]?.exposure || {}),
+          ...(Object.keys(region.table).length ? { region: region.table } : {}),
+          ...(Object.keys(sector.table).length ? { sector: sector.table } : {}),
+          asOf: todayISO(), source: "factsheet paste",
+        },
+      },
+    }));
+    const warn = [...region.warnings, ...sector.warnings].filter((w) => w.includes("sum"));
+    setMsg(`Saved exposure for ${t}${Object.keys(region.table).length ? ` — ${Object.keys(region.table).length} region buckets` : ""}${Object.keys(sector.table).length ? `, ${Object.keys(sector.table).length} sector buckets` : ""}.${warn.length ? " " + warn.join(" ") : ""}`);
+    setRegionText(""); setSectorText("");
+  };
+
+  return (
+    <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4">
+      <button onClick={() => setOpen((o) => !o)} className="text-sm font-semibold text-left w-full" aria-expanded={open}>
+        Fund exposure tables (look-through) {open ? "▾" : "▸"}
+        <span className="text-xs font-normal text-[var(--muted)] ml-2">
+          {withTables.length ? `${withTables.length} fund${withTables.length > 1 ? "s" : ""} have factsheet tables: ${withTables.join(", ")}` : "none pasted yet — region/sector bars fall back to single tags"}
+        </span>
+      </button>
+      {open && (
+        <div className="mt-3 space-y-2">
+          <p className="text-xs text-[var(--muted)] leading-relaxed">
+            Copy the geographic/sector breakdown table from the fund's factsheet page (issuer site or justETF) and paste it below — one "Label 62.1%" per line. This replaces the single Region/Sector tag for that fund with its real percentage mix on the Wealth tab.
+          </p>
+          <div className="flex gap-2 items-end flex-wrap">
+            <label className="text-xs text-[var(--muted)]">Ticker
+              <input list="exposure-tickers" value={tk} onChange={(e) => setTk(e.target.value)} placeholder="VWRL" className="input w-28 block mt-1" />
+            </label>
+            <datalist id="exposure-tickers">{tickers.map((t) => <option key={t} value={t} />)}</datalist>
+            <button onClick={save} className="btn-accent">Save exposure</button>
+          </div>
+          <div className="grid sm:grid-cols-2 gap-2">
+            <label className="text-xs text-[var(--muted)]">Region breakdown
+              <textarea value={regionText} onChange={(e) => setRegionText(e.target.value)} rows={5} placeholder={"United States\t62.1%\nJapan\t6.2%\nUnited Kingdom\t3.5%\n…"} className="input w-full font-mono text-xs mt-1" />
+            </label>
+            <label className="text-xs text-[var(--muted)]">Sector breakdown (optional)
+              <textarea value={sectorText} onChange={(e) => setSectorText(e.target.value)} rows={5} placeholder={"Technology\t24.9%\nFinancials\t16.1%\n…"} className="input w-full font-mono text-xs mt-1" />
+            </label>
+          </div>
+          {msg && <div role="status" className="text-xs rounded-lg border border-[var(--border)] bg-[var(--panel2)] px-3 py-2">{msg}</div>}
+        </div>
+      )}
+    </div>
+  );
+}
 
 // Raw persisted state (prices, security meta) comes from the store via
 // selectors; only DERIVED data (positions, from the shell's wealth model)
@@ -60,6 +131,8 @@ function HoldingsTab({ positions }) {
       </div>
 
       <LivePricesPanel tickers={tickers} />
+
+      <ExposureEditor tickers={tickers} secMeta={secMeta} setSecMeta={setSecMeta} />
 
       <div className="rounded-xl border border-[var(--border)] overflow-hidden">
         <table className="w-full text-sm">

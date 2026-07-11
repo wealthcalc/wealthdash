@@ -5,7 +5,7 @@ import {
   cashAccountsByWrapper, totalCashAccounts, weightedAverageRate, accountsMaturingSoon,
 } from "../core/cash.mjs";
 import { totalCreditCardDebt } from "../core/credit-cards.mjs";
-import { exposureByTag } from "../core/exposure.mjs";
+import { portfolioExposure, overlapMatrix } from "../core/lookthrough.mjs";
 import LivePricesPanel from "../ui/LivePricesPanel.jsx";
 import {
   gbp, gbp0, WrapperChip, num, CurrencyInput, KIND_LABEL, ALLOC_COLORS, AllocBar, pct, Stat, Empty,
@@ -34,15 +34,18 @@ function WealthTab({ model, concentration = null }) {
   const [acctForm, setAcctForm] = useState(ACCOUNT_BLANK());
   const [acctSort, toggleAcctSort] = useSort("wrapper", "asc");
   const [cardForm, setCardForm] = useState(CARD_BLANK());
-  // Hand-tagged look-through v0 (core/exposure.mjs) — rolls priced value
-  // up by the region/sector tags set on the Holdings tab; untagged value
-  // stays visible as its own bucket rather than being hidden.
+  // Look-through v1 (core/lookthrough.mjs) — blends pasted factsheet
+  // exposure tables over hand tags over untagged, coverage reported.
   const regionExposure = useMemo(
-    () => exposureByTag({ positions: model?.positions || [], secMeta, field: "region" }),
+    () => portfolioExposure({ positions: model?.positions || [], secMeta, field: "region" }),
     [model, secMeta]
   );
   const sectorExposure = useMemo(
-    () => exposureByTag({ positions: model?.positions || [], secMeta, field: "sector" }),
+    () => portfolioExposure({ positions: model?.positions || [], secMeta, field: "sector" }),
+    [model, secMeta]
+  );
+  const similarity = useMemo(
+    () => overlapMatrix({ positions: model?.positions || [], secMeta, field: "region" }),
     [model, secMeta]
   );
 
@@ -320,15 +323,35 @@ function WealthTab({ model, concentration = null }) {
         <AllocBar title="By asset class" buckets={model.allocation.assetClass} labelOf={(k) => KIND_LABEL[k] || k} />
         <AllocBar title="By native currency" buckets={model.allocation.currency} />
         <AllocBar title="By fund domicile" buckets={model.allocation.geography} labelOf={(k) => (k === "unknown" ? "Unset" : k)} />
-        {regionExposure.total > 0 && regionExposure.untaggedPct < 1 && (
-          <AllocBar title="By region (your tags)" buckets={regionExposure.buckets} labelOf={(k) => (k === "untagged" ? "Untagged" : k)} />
+        {regionExposure.total > 0 && regionExposure.coverage.untaggedPct < 1 && (
+          <AllocBar title="By region (look-through)" buckets={regionExposure.buckets} labelOf={(k) => (k === "untagged" ? "Untagged" : k)} />
         )}
-        {sectorExposure.total > 0 && sectorExposure.untaggedPct < 1 && (
-          <AllocBar title="By sector (your tags)" buckets={sectorExposure.buckets} labelOf={(k) => (k === "untagged" ? "Untagged" : k)} />
+        {sectorExposure.total > 0 && sectorExposure.coverage.untaggedPct < 1 && (
+          <AllocBar title="By sector (look-through)" buckets={sectorExposure.buckets} labelOf={(k) => (k === "untagged" ? "Untagged" : k)} />
         )}
+
+        {/* region-mix similarity — a PROXY for fund overlap, said plainly */}
+        {similarity.length > 0 && (
+          <div>
+            <div className="text-xs font-medium mb-1">Fund mix similarity (region)</div>
+            <div className="flex flex-wrap gap-2">
+              {similarity.slice(0, 6).map((p) => (
+                <span key={p.a + p.b}
+                  className={"text-xs px-2 py-1 rounded border num " + (p.similarity >= 0.8 ? "border-[var(--m-bb)] text-[var(--m-bb)]" : "border-[var(--border)] text-[var(--muted)]")}
+                  title={p.similarity >= 0.8 ? "These two funds hold a near-identical region mix — check you're not paying two OCFs for one exposure." : "Region-mix overlap between these two funds."}>
+                  {p.a} ↔ {p.b}: {pct(p.similarity)}
+                </span>
+              ))}
+            </div>
+            <p className="text-xs text-[var(--muted)] mt-1">Similarity of region MIX from pasted factsheet tables — a proxy, not constituent overlap (two funds can hold the same countries via different stocks).</p>
+          </div>
+        )}
+
         <p className="text-xs text-[var(--muted)] leading-relaxed">
           Currency is each line's native trading currency (a proxy for listing, not look-through exposure — a USD-quoted S&amp;P 500 ETF and a GBP-quoted one hold the same underlying). Domicile comes from the ISIN registry (IE = Irish-domiciled fund, GB = UK).
-          {" "}Region/sector bars are look-through v0: they show YOUR tags from the Holdings tab (tag a world ETF "Global" and it stops pretending to be Irish){regionExposure.untaggedPct >= 1 ? " — nothing is tagged yet, so they're hidden until you tag a holding" : regionExposure.untaggedPct > 0 ? ` — ${pct(regionExposure.untaggedPct)} of value is still untagged` : ""}. Factsheet-driven exposure (real constituent data) is a planned Phase 2 feature.
+          {" "}Region/sector bars blend real factsheet tables (paste them per fund on the Holdings tab) over your single tags over untagged:
+          {" "}{pct(regionExposure.coverage.lookthroughPct)} of value has factsheet-grade exposure, {pct(regionExposure.coverage.taggedPct)} rides a hand tag, {pct(regionExposure.coverage.untaggedPct)} is untagged.
+          {" "}Constituent-level look-through (real holdings files) remains a future feature — these are the issuers' own published breakdowns.
         </p>
       </div>
 
