@@ -2,6 +2,7 @@ import React, { useState, useMemo, useCallback, useRef } from "react";
 import { Plus, Wand2, RefreshCw } from "lucide-react";
 import { WRAPPERS, normWrapper } from "../core/portfolio.mjs";
 import { store, num, NumberInput, uid, todayISO, Field, fxToGBP, gbp, useSort, sortRows, SortTh, TwoStepDelete } from "../ui/shared.jsx";
+import useAppStore from "../state/appStore.js";
 
 // `fees`: dealing costs NOT already inside the amount (commission, stamp
 // duty, PTM levy) — BUY cost +fees, SELL proceeds −fees in the CGT/returns
@@ -9,7 +10,9 @@ import { store, num, NumberInput, uid, todayISO, Field, fxToGBP, gbp, useSort, s
 // `account`: free-text broker/account label ("HL ISA", "IBKR") so two
 // accounts in the same wrapper stay distinguishable.
 const BLANK = () => ({ id: uid(), date: todayISO(), ticker: "", side: "BUY", quantity: "", nativeCurrency: "GBP", nativeAmount: "", fxRate: 1, gbpAmount: "", fees: "", account: "", wrapper: "GIA", note: "" });
-function LedgerTab({ txns, setTxns }) {
+// Phase 2.8 de-drilling: all raw persisted state from the store.
+function LedgerTab() {
+  const txns = useAppStore((s) => s.txns), setTxns = useAppStore((s) => s.setTxns);
   const [draft, setDraft] = useState(BLANK());
   const [fxBusy, setFxBusy] = useState(false);
 

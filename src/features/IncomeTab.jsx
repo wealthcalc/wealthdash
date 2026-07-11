@@ -7,6 +7,7 @@ import { investmentIncomeTax } from "../core/uk-tax.mjs";
 import { addMonthsISO } from "../core/ishares-eri.mjs";
 import { summariseBySource } from "../core/income-calendar.mjs";
 import { store, unitsHeldAt, gbp, SubTabs, num, uid, todayISO, fxToGBP, Field, Empty, useSort, sortRows, SortTh, CurrencyInput } from "../ui/shared.jsx";
+import useAppStore from "../state/appStore.js";
 
 // Fixed wrapper → colour mapping so the same wrapper reads as the same
 // colour everywhere this chart appears — unlike AllocBar's index-based
@@ -55,7 +56,14 @@ const ERI_COLS = [
   { label: "", align: "right" },
 ];
 
-function IncomeTab({ incomeEntries, setIncomeEntries, eriEntries, setEriEntries, eriTxns, incomeByYear, incomeAllWrappers = {}, income, setIncome, txns, secMeta, setSecMeta, incomeCalendar = [] }) {
+// Phase 2.8 de-drilling: raw state from the store; derived data (eriTxns,
+// incomeByYear, incomeAllWrappers, GIA-scoped txns, incomeCalendar) stays
+// props from the shell.
+function IncomeTab({ eriTxns, incomeByYear, incomeAllWrappers = {}, txns, incomeCalendar = [] }) {
+  const incomeEntries = useAppStore((s) => s.incomeEntries), setIncomeEntries = useAppStore((s) => s.setIncomeEntries);
+  const eriEntries = useAppStore((s) => s.eriEntries), setEriEntries = useAppStore((s) => s.setEriEntries);
+  const income = useAppStore((s) => s.income), setIncome = useAppStore((s) => s.setIncome);
+  const secMeta = useAppStore((s) => s.secMeta), setSecMeta = useAppStore((s) => s.setSecMeta);
   const [dv, setDv] = useState(DIV_BLANK());
   const [er, setEr] = useState(ERI_BLANK());
   const [fxBusy, setFxBusy] = useState(false);

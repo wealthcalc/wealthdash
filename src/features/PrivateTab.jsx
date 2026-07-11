@@ -5,6 +5,7 @@ import {
   PRIVATE_TYPES, TYPE_LABEL, RELIEF_RATE, EIS_ANNUAL_CAP, EIS_ANNUAL_CAP_KI, SEIS_ANNUAL_CAP,
 } from "../core/private-investments.mjs";
 import { gbp, gbp0, num, uid, todayISO, Field, Stat, Empty, TwoStepDelete, RateCell } from "../ui/shared.jsx";
+import useAppStore from "../state/appStore.js";
 
 /* ======================================================================
    PRIVATE INVESTMENTS — EIS/SEIS shares and LP fund commitments (e.g. a
@@ -37,7 +38,10 @@ const HOLDING_BLANK = () => ({
 });
 const EVENT_BLANK = (holdingId) => ({ id: uid(), holdingId, date: todayISO(), type: "call", amount: "", notes: "" });
 
-function PrivateTab({ holdings = [], setHoldings, events = [], setEvents }) {
+// Phase 2.8 de-drilling: all raw persisted state from the store.
+function PrivateTab() {
+  const holdings = useAppStore((s) => s.privateHoldings), setHoldings = useAppStore((s) => s.setPrivateHoldings);
+  const events = useAppStore((s) => s.privateEvents), setEvents = useAppStore((s) => s.setPrivateEvents);
   const [form, setForm] = useState(HOLDING_BLANK());
   const [eventForms, setEventForms] = useState({}); // holdingId -> draft event
   const [expanded, setExpanded] = useState({});     // holdingId -> bool (event ledger open)

@@ -5,6 +5,7 @@ import { WRAPPERS, normWrapper } from "../core/portfolio.mjs";
 import { guessPensionColumns, mapPensionRow } from "../core/pension-import.mjs";
 import { parseIBKR } from "../core/ibkr-import.mjs";
 import { parseFidelity } from "../core/fidelity-import.mjs";
+import useAppStore from "../state/appStore.js";
 import { shapeFlexPull, shapeCashReport } from "../core/ibkr-flex.mjs";
 import { parseISharesWorkbook } from "../core/ishares-eri.mjs";
 import { buildRsuImport, guessTickerFromFilename, detectRsuCsvFormat } from "../core/rsu-import.mjs";
@@ -61,12 +62,19 @@ const eriKey = (e) => `${(e.ticker || "").toUpperCase()}|${e.periodEnd}|${e.dist
 // dedupeAgainstExisting() falls back to the content key in that case.
 const ibkrIdKey = (t) => (t.ibkrId ? `ibkr:${t.ibkrId}` : null);
 
-function ImportTab({
-  setTxns, setTab, setIncomeEntries, setEriEntries, secMeta, setPensionCashflows, pensionCashflows = [], recomputeProviderCost,
-  txns = [], incomeEntries = [], eriEntries = [],
-  ibkrQueryId = "", setIbkrQueryId, ibkrToken = "", setIbkrToken,
-  rsuGrants = [], setRsuGrants, rsuEvents = [], setRsuEvents,
-}) {
+// Phase 2.8 de-drilling: raw state from the store; the shell keeps
+// providing setTab (navigation) and recomputeProviderCost (cross-slice
+// derived logic).
+function ImportTab({ setTab, recomputeProviderCost }) {
+  const txns = useAppStore((s) => s.txns), setTxns = useAppStore((s) => s.setTxns);
+  const incomeEntries = useAppStore((s) => s.incomeEntries), setIncomeEntries = useAppStore((s) => s.setIncomeEntries);
+  const eriEntries = useAppStore((s) => s.eriEntries), setEriEntries = useAppStore((s) => s.setEriEntries);
+  const secMeta = useAppStore((s) => s.secMeta);
+  const pensionCashflows = useAppStore((s) => s.pensionCashflows), setPensionCashflows = useAppStore((s) => s.setPensionCashflows);
+  const ibkrQueryId = useAppStore((s) => s.ibkrQueryId), setIbkrQueryId = useAppStore((s) => s.setIbkrQueryId);
+  const ibkrToken = useAppStore((s) => s.ibkrToken), setIbkrToken = useAppStore((s) => s.setIbkrToken);
+  const rsuGrants = useAppStore((s) => s.rsuGrants), setRsuGrants = useAppStore((s) => s.setRsuGrants);
+  const rsuEvents = useAppStore((s) => s.rsuEvents), setRsuEvents = useAppStore((s) => s.setRsuEvents);
   const [mode, setMode] = useState("ibkr");
   const [wrapper, setWrapper] = useState("GIA");
   const [ibkrSource, setIbkrSource] = useState("live"); // "paste" | "live"

@@ -5,11 +5,20 @@ import { cfgFor, aeaForYear, paFor, liabilityForYear, sharesForTargetGain, nextT
 import { ISA_LIMIT, isaSubscriptionsByYear, realisedForYear, bedAndIsaPlan } from "../core/allowances.mjs";
 import { rebalancePlan, BUCKETS, BUCKET_LABEL } from "../core/rebalancing.mjs";
 import { KIND_LABEL, store, fmtRate, gbp, gbp0, WrapperChip, SubTabs, num, uid, todayISO, METHOD, CurrencyInput, NumberInput, Field, Stat, Row, MethodChip, Empty } from "../ui/shared.jsx";
+import useAppStore from "../state/appStore.js";
 
 function CgtSection(props) {
-  const { taxYears, activeYear, setYear, yearDisposals, liab, income, setIncome, carried, setCarried,
-    carryForward, exemptGiltDisposalCount, pools, disposals, prices, setPrices, txns,
-    allTxns, secMeta, setTxns, positions, yearlyLiab } = props;
+  // Phase 2.8 de-drilling: raw state from the store; everything derived
+  // (matched disposals, pools, per-year liabilities, GIA-scoped txns,
+  // positions) stays props from the shell.
+  const { taxYears, activeYear, setYear, yearDisposals, liab,
+    carryForward, exemptGiltDisposalCount, pools, disposals, txns,
+    positions, yearlyLiab } = props;
+  const income = useAppStore((s) => s.income), setIncome = useAppStore((s) => s.setIncome);
+  const carried = useAppStore((s) => s.carried), setCarried = useAppStore((s) => s.setCarried);
+  const prices = useAppStore((s) => s.prices), setPrices = useAppStore((s) => s.setPrices);
+  const secMeta = useAppStore((s) => s.secMeta);
+  const allTxns = useAppStore((s) => s.txns), setTxns = useAppStore((s) => s.setTxns);
   const [sub, setSub] = useState(() => store.get("cgt.cgtsubtab", "summary"));
   React.useEffect(() => store.set("cgt.cgtsubtab", sub), [sub]);
   return (

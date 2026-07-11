@@ -3,8 +3,16 @@ import { Plus, Trash2 } from "lucide-react";
 import { normWrapper } from "../core/portfolio.mjs";
 import { xirr } from "../core/returns.mjs";
 import { gbp, gbp0, WrapperChip, num, round2, CurrencyInput, NumberInput, uid, todayISO, rateIsDisplayable, Field, Stat, Empty } from "../ui/shared.jsx";
+import useAppStore from "../state/appStore.js";
 
-function PensionTab({ txns, setTxns, cash, setCash, secMeta, setSecMeta, prices, setPrices, pensionCashflows = [], setPensionCashflows, recomputeProviderCost }) {
+// Phase 2.8 de-drilling: raw state from the store; the shell keeps
+// providing recomputeProviderCost (cross-slice derived logic).
+function PensionTab({ recomputeProviderCost }) {
+  const txns = useAppStore((s) => s.txns), setTxns = useAppStore((s) => s.setTxns);
+  const cash = useAppStore((s) => s.cash), setCash = useAppStore((s) => s.setCash);
+  const secMeta = useAppStore((s) => s.secMeta), setSecMeta = useAppStore((s) => s.setSecMeta);
+  const prices = useAppStore((s) => s.prices), setPrices = useAppStore((s) => s.setPrices);
+  const pensionCashflows = useAppStore((s) => s.pensionCashflows), setPensionCashflows = useAppStore((s) => s.setPensionCashflows);
   const [form, setForm] = useState({ wrapper: "SIPP", provider: "", ticker: "", name: "", units: "", price: "" });
   const [cfForm, setCfForm] = useState({ provider: "", date: todayISO(), type: "Regular Contribution", amount: "" });
   const [confirmRemoveProvider, setConfirmRemoveProvider] = useState(null);

@@ -23,6 +23,12 @@ import WealthTab from "../../features/WealthTab.jsx";
 import GiltsTab from "../../features/GiltsTab.jsx";
 import RsuTab from "../../features/RsuTab.jsx";
 import SyncTab from "../../features/SyncTab.jsx";
+import LedgerTab from "../../features/LedgerTab.jsx";
+import PropertyTab from "../../features/PropertyTab.jsx";
+import PrivateTab from "../../features/PrivateTab.jsx";
+import PensionTab from "../../features/PensionTab.jsx";
+import AllowancesTab from "../../features/AllowancesTab.jsx";
+import ReturnsTab from "../../features/ReturnsTab.jsx";
 
 // Minimal but real derived model — two priced holdings across wrappers.
 const TXNS = [
@@ -114,6 +120,22 @@ test("SyncTab renders the disabled state with both setup paths", () => {
   assert.ok(html.includes("Create a new sync"));
   assert.ok(html.includes("Connect this device"));
   assert.ok(html.includes("no reset"));
+});
+
+test("de-drilled data tabs render from store defaults without props", () => {
+  // These tabs now read raw state via store selectors (Phase 2.8) — the
+  // exact wiring this suite exists to catch regressions in.
+  for (const [name, el] of [
+    ["Ledger", React.createElement(LedgerTab)],
+    ["Property", React.createElement(PropertyTab)],
+    ["Private", React.createElement(PrivateTab)],
+    ["Pension", React.createElement(PensionTab, { recomputeProviderCost: () => {} })],
+    ["Allowances", React.createElement(AllowancesTab, { eriTxns: [], taxableDisposals: [] })],
+    ["Returns", React.createElement(ReturnsTab, { returns: null })],
+  ]) {
+    const html = renderToString(el);
+    assert.ok(html.length > 50, `${name} rendered almost nothing`);
+  }
 });
 
 test("PlanHealthCard renders the no-plan prompt and a real projection", () => {

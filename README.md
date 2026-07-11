@@ -1673,9 +1673,55 @@ pattern when real exports are available.
   the future version. (Look-through v0's exposureByTag stays exported;
   the Wealth tab now uses the blended engine.)
 
+## Phase 2.7: Monte Carlo v2 — two-asset glidepath, stochastic inflation, bootstrap
+`core/monte-carlo.mjs` grows three optional return models (6 new tests;
+the DEFAULT reproduces the legacy single-asset engine draw-for-draw — the
+old seeded tests still pass unchanged, asserted explicitly):
+
+- **Two-asset** — correlated equity/bond draws (Cholesky on ρ=0.1
+  default; `TWO_ASSET_DEFAULTS` exported and shown in the UI) with a
+  derisking **glidepath**: equity share slides from `mcEqStart` to
+  `mcEqEnd` across the decumulation years. Tested property: derisking
+  narrows the terminal fan (p90−p10) vs a flat allocation.
+- **Stochastic inflation** — AR(1) around the plan's inflation
+  (persistence 0.7, vol 1.5% default). The deterministic engine builds
+  NOMINAL withdrawal schedules, so each run re-prices withdrawals by
+  cumSim/cumDet — an inflation shock raises the money the plan actually
+  needs, the mechanism that breaks real retirements. Finding recorded in
+  the test: the effect is ASYMMETRIC around the success rate — it can
+  RAISE success for a marginal (~35%) plan (failing paths can't fail
+  twice; low-inflation paths rescue marginal ones) and lowers it for the
+  healthy plans people actually retire on, which is what the test asserts.
+- **Historical bootstrap** — resamples (return, inflation) YEAR-PAIRS
+  (kept together, so inflation shocks arrive with the returns they
+  historically came with) from the app's existing HIST stress sequences
+  (2008 GFC, 1970s stagflation, 2000s lost decade) rather than a
+  fabricated longer series. Stated limitation, in the module and the UI:
+  a small pool — "years like these, reshuffled", not all of history.
+
+Plan tab → Monte Carlo gains a "Return model" picker (Simple / Equity +
+bonds / Historical bootstrap), glidepath fields, and a stochastic-
+inflation toggle; new plan inputs (mcModel/mcEqStart/mcEqEnd/mcStochInfl)
+default to the legacy behaviour so existing plans are unchanged. The Web
+Worker forwards the new options untouched (bootstrap pairs travel as
+plain data), and Scenario A/B still compares on common random numbers.
+
+## Phase 2.8 (completion): every tab off the prop-drilling pattern
+The remaining nine data-entry tabs (Ledger, Property, Private, Pension,
+Income, Allowances, Returns, CGT, Import) now read raw persisted state
+via store selectors, same recipe as the price cluster. The rule is now
+uniform across all 16 tabs: **props carry derived data and cross-slice
+callbacks** (wealth model, matched disposals, eriTxns, incomeCalendar,
+recomputeProviderCost, setTab), **the store carries raw state**. Ledger/
+Property/Private take no props at all. The shell's own destructure still
+reads everything (it computes the derived models); slimming it to
+selectors is possible once something needs it. Six new UI smoke tests
+render the de-drilled tabs from store defaults — the exact wiring class
+this refactor could have broken.
+
 ## Tests
 ```
-npm test        # node --test: 532 core tests + 10 UI smoke tests (test:ui)
+npm test        # node --test: 538 core tests + 11 UI smoke tests (test:ui)
 ```
 
 ## Deploy (recommended: Git → new Vercel project)

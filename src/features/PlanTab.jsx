@@ -12,8 +12,9 @@ import {
 } from "lucide-react";
 import { taxRUK, taxScot, employeeNI } from "../core/uk-income-tax.mjs";
 import {
-  lifeExpectancy, effInflation, btlYearly, replayDecum, STRATEGY_LABELS, buildProjection,
+  lifeExpectancy, effInflation, btlYearly, replayDecum, STRATEGY_LABELS, buildProjection, HIST,
 } from "../core/drawdown.mjs";
+import { bootstrapPairs, TWO_ASSET_DEFAULTS } from "../core/monte-carlo.mjs";
 import { solveSWR } from "../core/swr.mjs";
 import { runGuytonKlinger } from "../core/guyton-klinger.mjs";
 import { rollingStressTest } from "../core/sequence-risk.mjs";
@@ -124,6 +125,12 @@ function mcInputsFromPlan(p, det) {
     withdrawSchedule: det.withdrawSchedule,
     growthPre: p.growthPre, growthPost: p.growthPost, fee: p.fee, vol: p.vol,
     inflation: effInflation(p), currentAge: p.currentAge,
+    // Phase 2.7 return-model options — defaults reproduce the legacy
+    // single-asset/fixed-inflation engine exactly (see monte-carlo.mjs).
+    model: p.mcModel || "single",
+    glidepath: { start: p.mcEqStart ?? 60, end: p.mcEqEnd ?? 40 },
+    stochasticInflation: !!p.mcStochInfl,
+    ...(p.mcModel === "bootstrap" ? { histPairs: bootstrapPairs(HIST) } : {}),
   };
 }
 
@@ -392,6 +399,13 @@ const DEFAULTS = {
   // essential ("needs, not wants") share of target spending — what the
   // Income floor tab tests guaranteed income against
   essentialPct: 65,
+  // Monte Carlo return model (Phase 2.7): "single" = legacy one-asset
+  // normal; "twoAsset" = correlated equity/bond with a glidepath;
+  // "bootstrap" = resampled historical (return, inflation) year-pairs.
+  mcModel: "single",
+  mcEqStart: 60, // equity % at retirement start (twoAsset)
+  mcEqEnd: 40,   // equity % at plan end — the derisking glidepath
+  mcStochInfl: false,
   // tax-free cash treatment
   tfcMode: "ufpls", // 'ufpls' | 'pcls'
   // phased/part-time retirement: a DC contribution that continues into the
@@ -1940,6 +1954,33 @@ function AdequacyTab({ p, mc, mcB, progress = 0, compareKey = "none", setCompare
           </button>
         </div>
         <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+        {/* Return model (Phase 2.7) */}
+        <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px solid ${T.line}` }}>
+          <div style={{ fontSize: 12.5, color: T.ink2, fontWeight: 600, marginBottom: 6 }}>Return model</div>
+          <Segmented value={p.mcModel || "single"} onChange={(v) => set("mcModel", v)} accent={T.green}
+            options={[
+              { value: "single", label: "Simple" },
+              { value: "twoAsset", label: "Equity + bonds" },
+              { value: "bootstrap", label: "Historical bootstrap" },
+            ]} />
+          <p style={{ margin: "6px 0 0", fontSize: 11.5, color: T.muted, maxWidth: 640 }}>
+            {(p.mcModel || "single") === "single" && `One blended asset at your growth/volatility sliders, fixed ${effInflation(p)}% inflation — the original model.`}
+            {p.mcModel === "twoAsset" && `Correlated equity (${TWO_ASSET_DEFAULTS.equityMean}%/${TWO_ASSET_DEFAULTS.equityVol}%) and bonds (${TWO_ASSET_DEFAULTS.bondMean}%/${TWO_ASSET_DEFAULTS.bondVol}%, ρ=${TWO_ASSET_DEFAULTS.correlation}), derisking along your glidepath through retirement. Your growth sliders are ignored in this mode — the mix drives the return.`}
+            {p.mcModel === "bootstrap" && "Resamples (return, inflation) YEAR-PAIRS from the app's historical stress sequences (2008 GFC, 1970s stagflation, 2000s lost decade) — fat tails and inflation shocks arrive together, as they did. Small pool by design: it tests \"years like these, reshuffled\", not all of market history."}
+          </p>
+          {p.mcModel === "twoAsset" && (
+            <div style={{ display: "flex", gap: 16, marginTop: 8, flexWrap: "wrap", alignItems: "center" }}>
+              <Field label="Equity % at retirement" value={p.mcEqStart ?? 60} min={0} max={100} step={5} suffix="%" onChange={(v) => set("mcEqStart", v)} />
+              <Field label="Equity % at plan end" value={p.mcEqEnd ?? 40} min={0} max={100} step={5} suffix="%" onChange={(v) => set("mcEqEnd", v)} />
+            </div>
+          )}
+          {p.mcModel !== "bootstrap" && (
+            <div style={{ marginTop: 8 }}>
+              <Toggle label={`Stochastic inflation (AR(1) around ${effInflation(p)}%) — withdrawals re-price along each simulated path`} checked={!!p.mcStochInfl} onChange={(v) => set("mcStochInfl", v)} />
+            </div>
+          )}
+        </div>
+
         <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px solid ${T.line}` }}>
           <div style={{ fontSize: 12.5, color: T.ink2, fontWeight: 600, marginBottom: 6 }}>Compare against (Scenario A/B)</div>
           <Segmented value={compareKey} onChange={setCompareKey} options={compareOptions} accent={T.blue} />
