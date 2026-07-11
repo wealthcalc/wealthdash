@@ -1,0 +1,142 @@
+/* ======================================================================
+   APP STORE (Zustand) — the app's persisted state, moved out of App's
+   useState pile so any component can subscribe to just the slice it needs
+   (selector-based subscriptions stop the whole-tree re-render cascade as
+   features adopt them). Persistence keeps the EXACT same localStorage keys
+   as before, so existing user data loads unchanged and older backups
+   restore identically.
+
+   Setters accept either a value or an updater function, mirroring React's
+   setState signature — so existing call sites (setTxns(fn), etc.) work
+   verbatim.
+   ====================================================================== */
+import { create } from "zustand";
+import { store as ls, SAMPLE, SECURITY_SEED, todayISO } from "../ui/shared.jsx";
+// state key -> localStorage key lives in durable.js (single source of truth
+// shared with the IndexedDB mirror, so new keys can't silently miss it).
+import { PERSIST_KEYS, saveDurable, saveDailySnapshot } from "./durable.js";
+import { schedulePush } from "./sync.js";
+
+// First-run theme follows the OS (prefers-color-scheme) instead of a
+// hardcoded dark default. Only the DEFAULT changes: anyone who has ever
+// toggled the theme has `cgt.dark` in localStorage (the persistence
+// subscription writes it on first change) and keeps their choice; anyone
+// who hasn't keeps following the OS on every load, because the computed
+// default is never written back until they express a preference.
+const prefersDark = typeof window !== "undefined" && typeof window.matchMedia === "function"
+  ? window.matchMedia("(prefers-color-scheme: dark)").matches
+  : true;
+
+const useAppStore = create((set) => {
+  // setState-compatible setter: accepts a value or an updater function.
+  const upd = (key) => (v) => set((s) => ({ [key]: typeof v === "function" ? v(s[key]) : v }));
+  return {
+    dark: ls.get("cgt.dark", prefersDark), setDark: upd("dark"),
+    txns: ls.get("cgt.txns", SAMPLE), setTxns: upd("txns"),
+    tab: ls.get("cgt.tab", "home"), setTab: upd("tab"),
+    income: ls.get("cgt.income", 200000), setIncome: upd("income"),
+    carried: ls.get("cgt.carried", 0), setCarried: upd("carried"),
+    cash: ls.get("cgt.cash", {}), setCash: upd("cash"), // { wrapper: GBP balance }
+    // [{id, date, provider, type, ccy, nativeAmount}]
+    pensionCashflows: ls.get("cgt.pensioncf", []), setPensionCashflows: upd("pensionCashflows"),
+    // DMO publishes one gilt-price report per business day (~2pm) — this is
+    // the report DATE (not fetch time) of the last successful pull, in ISO,
+    // so callers can skip the network round-trip when nothing's changed.
+    dmoReportDate: ls.get("cgt.dmoreportdate", null), setDmoReportDate: upd("dmoReportDate"),
+    valuations: ls.get("cgt.valuations", []), setValuations: upd("valuations"), // [{date, value, byWrapper}]
+    // Daily household net-worth history (core/net-worth-series.mjs) — the
+    // TRUE-net-worth counterpart to `valuations`, recorded even on days with
+    // unpriced holdings (flagged `estimated`), which `valuations` must never
+    // be (it feeds the exact-TWR computation). One record per day.
+    netWorthSnapshots: ls.get("cgt.networthsnapshots", []), setNetWorthSnapshots: upd("netWorthSnapshots"),
+    incomeEntries: ls.get("cgt.incomeEntries", []), setIncomeEntries: upd("incomeEntries"), // dividends/interest ledger
+    eriEntries: ls.get("cgt.eriEntries", []), setEriEntries: upd("eriEntries"), // excess reportable income
+    prices: ls.get("cgt.prices", {}), setPrices: upd("prices"),
+    avKey: ls.get("cgt.avkey", ""), setAvKey: upd("avKey"),
+    avMeta: ls.get("cgt.avmeta", {}), setAvMeta: upd("avMeta"),           // { ticker: {symbol, currency} }
+    priceMeta: ls.get("cgt.pricemeta", {}), setPriceMeta: upd("priceMeta"), // { ticker: {asOf, raw, ccy} }
+    // { ticker: {isin, name, domicile, eri, ...} } — seed merged under saved edits
+    secMeta: { ...SECURITY_SEED, ...ls.get("cgt.secmeta", {}) }, setSecMeta: upd("secMeta"),
+    // Phase 2: balance-sheet completion (property/liabilities). Each a flat
+    // array of records, same "own array, own setter" shape as pensionCashflows.
+    properties: ls.get("cgt.properties", []), setProperties: upd("properties"),
+    mortgages: ls.get("cgt.mortgages", []), setMortgages: upd("mortgages"),
+    otherLiabilities: ls.get("cgt.otherliabilities", []), setOtherLiabilities: upd("otherLiabilities"),
+    // [{id, wrapper, label, institution, balance, rate, rateType, maturityDate, notes}]
+    // — additive on top of `cash` (the manual/unallocated figure), see core/cash.mjs.
+    cashAccounts: ls.get("cgt.cashaccounts", []), setCashAccounts: upd("cashAccounts"),
+    // { [taxYear]: { isaOnly, lisa, pension } } manual overrides for the Allowances
+    // tab. Previously lived entirely OUTSIDE this store (component-local state +
+    // its own localStorage write), which meant it was invisible to the IndexedDB
+    // durable mirror, the daily snapshot, AND the JSON backup/restore — a real
+    // data-loss bug (overrides silently missing after a restore, or after a
+    // localStorage eviction that everything else survived via the mirror). Falls
+    // back to the old mixed-case key once, for anyone with overrides saved there.
+    allowanceOverrides: ls.get("cgt.allowanceoverrides", ls.get("cgt.allowanceOverrides", {})),
+    setAllowanceOverrides: upd("allowanceOverrides"),
+    // UK retirement planner inputs (Plan tab). Previously lived entirely
+    // OUTSIDE this store — component-local state backed by its own
+    // `localStorage.setItem("uk-retirement-planner:inputs", JSON.stringify(p))`
+    // call, invisible to the IndexedDB durable mirror, the daily snapshot, and
+    // the JSON backup/restore — the same data-loss class fixed for
+    // allowanceOverrides above, and the reason the Plan tab had its own
+    // separate Save/Load buttons in the first place (it had no other way to
+    // round-trip through a backup). null = not yet customised — PlanTab falls
+    // back to its own DEFAULTS. The old key used the same JSON.stringify
+    // encoding `ls` uses, so it reads straight through as a one-time migration.
+    planInputs: ls.get("cgt.planinputs", ls.get("uk-retirement-planner:inputs", null)),
+    setPlanInputs: upd("planInputs"),
+    // Private investments (EIS/SEIS/LP funds — e.g. a direct EIS holding, or
+    // a venture LP like "Passion Capital IV"/"JamJar Fund II"). Two flat
+    // arrays, same "own array, own setter" shape as properties/mortgages:
+    // holdings (identity, type, share-issue date, relief %, manual
+    // valuation) and events (capital calls, distributions, write-offs —
+    // see core/private-investments.mjs for the full model).
+    privateHoldings: ls.get("cgt.privateholdings", []), setPrivateHoldings: upd("privateHoldings"),
+    privateEvents: ls.get("cgt.privateevents", []), setPrivateEvents: upd("privateEvents"),
+    // RSU grants (employer stock, e.g. WFC) — same "own array, own setter"
+    // shape as privateHoldings/privateEvents: grants (identity, ticker,
+    // grant date) and events (vest tranches + sales — see core/rsu.mjs).
+    rsuGrants: ls.get("cgt.rsugrants", []), setRsuGrants: upd("rsuGrants"),
+    rsuEvents: ls.get("cgt.rsuevents", []), setRsuEvents: upd("rsuEvents"),
+    // IBKR Flex Web Service credentials (Import tab's live pull) — same
+    // "client holds it, sent per-request, never stored server-side"
+    // pattern as avKey. Still persisted locally like avKey so it doesn't
+    // need retyping every session; the security boundary that matters is
+    // server-side (api/ibkr-flex.mjs never writes it anywhere), not this.
+    ibkrQueryId: ls.get("cgt.ibkrqueryid", ""), setIbkrQueryId: upd("ibkrQueryId"),
+    ibkrToken: ls.get("cgt.ibkrtoken", ""), setIbkrToken: upd("ibkrToken"),
+    // Credit cards (Wealth tab) — named revolving-debt balances subtracted
+    // from net worth, same "own array, own setter" shape as cashAccounts.
+    // See core/credit-cards.mjs. [{id, label, issuer, balance, notes}]
+    creditCards: ls.get("cgt.creditcards", []), setCreditCards: upd("creditCards"),
+  };
+});
+
+// Persist on change — one subscription, writing only the keys that changed
+// (replaces the 16 per-key useEffect hooks that serialised on every render).
+// localStorage stays the synchronous primary; a debounced full-state mirror
+// goes to IndexedDB (durable.js) as eviction insurance, plus one snapshot
+// per day (rolling 30) as a corruption fallback.
+let _durableTimer = null;
+useAppStore.subscribe((state, prev) => {
+  let changed = false;
+  for (const [key, lsKey] of Object.entries(PERSIST_KEYS)) {
+    if (state[key] !== prev[key]) { ls.set(lsKey, state[key]); changed = true; }
+  }
+  if (!changed) return;
+  clearTimeout(_durableTimer);
+  _durableTimer = setTimeout(() => {
+    const s = useAppStore.getState();
+    const byLsKey = {};
+    for (const [key, lsKey] of Object.entries(PERSIST_KEYS)) byLsKey[lsKey] = s[key];
+    saveDurable(byLsKey);
+    saveDailySnapshot(todayISO(), byLsKey);
+    // Encrypted sync push (state/sync.js) — no-op unless the user enabled
+    // sync; reads state back from localStorage itself, so nothing extra
+    // is passed here. Its own debounce coalesces bursts further.
+    schedulePush();
+  }, 1500);
+});
+
+export default useAppStore;

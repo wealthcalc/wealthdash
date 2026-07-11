@@ -3,19 +3,33 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
-  "engines": { "node": "22.x" },
-  "scripts": { "dev": "vite", "build": "vite build", "preview": "vite preview", "test": "node --test \"src/test/*.test.mjs\"" },
+  "engines": {
+    "node": "22.x"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "node --test \"src/test/*.test.mjs\" && npm run test:ui",
+    "test:ui": "node --test --import ./src/test/setup/register.mjs \"src/test/ui/*.test.mjs\""
+  },
   "dependencies": {
+    "@vercel/blob": "^2.6.1",
     "lucide-react": "^0.383.0",
     "papaparse": "^5.4.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "recharts": "^3.9.2",
     "xlsx": "^0.18.5",
-    "yahoo-finance2": "^3.15.4"
+    "yahoo-finance2": "^3.15.4",
+    "zustand": "^5.0.14"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.1",
     "autoprefixer": "^10.4.19",
+    "eslint": "^9.39.4",
+    "eslint-plugin-react": "^7.37.5",
+    "globals": "^17.7.0",
     "postcss": "^8.4.38",
     "tailwindcss": "^3.4.4",
     "vite": "^5.3.1"

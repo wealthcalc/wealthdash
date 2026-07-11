@@ -4,6 +4,16 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Wealth Dashboard</title>
+    <!-- PWA: installable to the home screen / dock. Deliberately NO service
+         worker — a mis-cached SW can serve a stale bundle of a finance app
+         indefinitely, and installability no longer requires one in modern
+         Chromium; data already lives in localStorage/IndexedDB, so there is
+         no offline story a SW would meaningfully add beyond asset caching. -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" href="/icon-192.png" type="image/png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f6f7f9" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0f141d" />
   </head>
   <body>
     <div id="root"></div>

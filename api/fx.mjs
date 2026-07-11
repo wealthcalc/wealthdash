@@ -17,6 +17,7 @@
 // client can swap providers with no change to how the number is used.
 
 import YahooFinance from "yahoo-finance2";
+import { guard } from "./_lib/guard.mjs";
 
 const yf = new YahooFinance({ suppressNotices: ["yahooSurvey"] });
 
@@ -34,6 +35,7 @@ async function closeOnOrBefore(ticker, dateStr) {
 }
 
 export default async function handler(req, res) {
+  if (!guard(req, res)) return;
   const ccy = (req.query?.ccy ?? "").toString().trim().toUpperCase();
   const date = (req.query?.date ?? "").toString().trim();
   if (!/^[A-Z]{3}$/.test(ccy) || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {

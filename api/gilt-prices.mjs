@@ -21,6 +21,7 @@
 // recent report — the same "closest available" approach as api/fx.mjs.
 
 import { stripRtf, parseGiltPrices, ukDateStr } from "./_lib/dmo-gilt-parser.mjs";
+import { guard } from "./_lib/guard.mjs";
 
 const REPORT_URL = (dateStr) =>
   `https://www.dmo.gov.uk/umbraco/surface/DataExport/GetDataExport?reportCode=D10B&exportFormatValue=doc&parameters=%26Trade%20Date%3D${encodeURIComponent(dateStr)}`;
@@ -38,6 +39,7 @@ async function fetchForDate(dateStr) {
 }
 
 export default async function handler(req, res) {
+  if (!guard(req, res)) return;
   const isinFilter = (req.query?.isins ?? "").toString().split(",").map((s) => s.trim().toUpperCase()).filter(Boolean);
   const requestedDate = (req.query?.date ?? "").toString().trim();
 

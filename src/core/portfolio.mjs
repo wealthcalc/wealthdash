@@ -266,6 +266,25 @@ export function allocation(valued, dimension = "assetClass") {
     .sort((a, b) => b.marketValue - a.marketValue);
 }
 
+// Cash sits outside `positions` entirely (it's a per-wrapper balance, not a
+// priced holding), so allocation()'s asset-class breakdown otherwise omits
+// it — understating "how much of my wealth is cash" for anyone actually
+// holding a meaningful cash buffer. This folds cashAmount in as its own
+// "cash" bucket (labelled via KIND_LABEL.cash in the UI) and rescales every
+// bucket's `pct` against the new combined total (priced positions + cash),
+// so percentages still sum to ~100% including it. A zero/negative cash
+// figure adds no bucket at all — no zero-width sliver cluttering the chart
+// for an account with no cash recorded.
+export function withCashBucket(buckets, cashAmount) {
+  const cash = Math.max(0, +cashAmount || 0);
+  if (cash <= 0) return buckets;
+  const positionsTotal = buckets.reduce((s, b) => s + b.marketValue, 0);
+  const grandTotal = positionsTotal + cash;
+  const rescaled = buckets.map((b) => ({ ...b, pct: grandTotal > 0 ? b.marketValue / grandTotal : 0 }));
+  rescaled.push({ key: "cash", marketValue: cash, pct: grandTotal > 0 ? cash / grandTotal : 0 });
+  return rescaled.sort((a, b) => b.marketValue - a.marketValue);
+}
+
 /* ------------------------- the unified model ------------------------ */
 // One call the whole app reads from: positions, per-wrapper + consolidated
 // roll-ups, income (with tax gating), and allocation primitives.
@@ -282,7 +301,12 @@ export function buildWealthModel({
     cash,
     income,
     allocation: {
-      assetClass: allocation(positions, "assetClass"),
+      // Cash folded in here specifically (not geography/wrapper/currency —
+      // out of scope of this change, and cash doesn't have a meaningful
+      // domicile/trading-currency dimension the way a priced holding does)
+      // so "how much of my wealth is cash" is visible in the one chart
+      // that's specifically about asset-class mix.
+      assetClass: withCashBucket(allocation(positions, "assetClass"), total.cash),
       geography: allocation(positions, "geography"),
       wrapper: allocation(positions, "wrapper"),
       currency: allocation(positions, "currency"),
