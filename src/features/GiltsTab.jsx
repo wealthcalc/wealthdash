@@ -2,8 +2,14 @@ import React, { useState, useMemo, useCallback, useRef } from "react";
 import { Landmark } from "lucide-react";
 import { gbp, WrapperChip, dmoDateToIso, fetchDmoGiltPrices, num, NumberInput, uid, todayISO, Field, Stat, Empty, useSort, sortRows, SortTh } from "../ui/shared.jsx";
 import { buildGiltLadder } from "../core/gilt-ladder.mjs";
+import useAppStore from "../state/appStore.js";
 
-function GiltsTab({ data, secMeta, setSecMeta, prices, setPrices, dmoReportDate, setDmoReportDate }) {
+// Raw persisted state from the store via selectors; only DERIVED data
+// (`data`, the shell's giltAnalytics output) arrives as a prop — Phase 2.8.
+function GiltsTab({ data }) {
+  const secMeta = useAppStore((s) => s.secMeta), setSecMeta = useAppStore((s) => s.setSecMeta);
+  const prices = useAppStore((s) => s.prices), setPrices = useAppStore((s) => s.setPrices);
+  const dmoReportDate = useAppStore((s) => s.dmoReportDate), setDmoReportDate = useAppStore((s) => s.setDmoReportDate);
   const [form, setForm] = React.useState({ ticker: "", name: "", coupon: "", maturity: "", isin: "" });
   const [dmoState, setDmoState] = React.useState({ status: "idle", message: "" }); // idle | loading | done | error
   const [sort, toggleSort] = useSort("maturity", "asc");

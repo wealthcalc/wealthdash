@@ -20,46 +20,42 @@ import { rollingStressTest } from "../core/sequence-risk.mjs";
 import { projectIHT, pensionsInEstate, PENSIONS_IN_ESTATE_FROM } from "../core/iht.mjs";
 import { buildIncomeFloor } from "../core/income-floor.mjs";
 import { giltIncomeByYear } from "../core/gilt-ladder.mjs";
+import { store } from "../ui/shared.jsx";
 
 /* ------------------------------------------------------------------ */
-/*  Design tokens — resolved via CSS variables so the theme can swap    */
+/*  Design tokens — Phase 2.8: mapped onto the APP's CSS variables      */
+/*  (CgtDashboard.jsx's .root / .dark .root palette) instead of a        */
+/*  second, private light/dark palette that had to be kept in sync by    */
+/*  hand. The `T.*` indirection every inline style here uses is          */
+/*  unchanged — only what the tokens RESOLVE to moved — so this is a     */
+/*  mapping table, not a 2,000-line restyle. Soft ("Soft") backgrounds   */
+/*  derive via color-mix (already used throughout the app shell), and    */
+/*  since the app vars flip with the .dark class, one mapping serves     */
+/*  both themes — the [data-theme] attribute and THEME_CSS remain only   */
+/*  so the chart-specific extras (ink2/gold) can keep per-theme values   */
+/*  with the same mechanism as before.                                  */
 /* ------------------------------------------------------------------ */
-const LIGHT = {
-  paper: "#F4F6F2",
-  surface: "#FFFFFF",
-  ink: "#16202C",
-  ink2: "#42505F",
-  muted: "#7C8893",
-  line: "#E3E7E1",
-  lineSoft: "#EEF1EC",
-  green: "#0F7A52",
-  greenSoft: "#E2F0E8",
-  blue: "#2C5C86",
-  blueSoft: "#E3ECF4",
-  amber: "#BE7918",
-  amberSoft: "#F6ECD8",
-  red: "#B23A3A",
-  redSoft: "#F4E2E0",
-  gold: "#8F7327",
+const SHARED_TOKENS = {
+  paper: "var(--bg)",
+  surface: "var(--panel)",
+  ink: "var(--fg)",
+  muted: "var(--muted)",
+  line: "var(--border)",
+  lineSoft: "color-mix(in srgb, var(--border) 55%, transparent)",
+  green: "var(--gain)",
+  greenSoft: "color-mix(in srgb, var(--gain) 14%, transparent)",
+  blue: "var(--m-same)",
+  blueSoft: "color-mix(in srgb, var(--m-same) 13%, transparent)",
+  amber: "var(--m-bb)",
+  amberSoft: "color-mix(in srgb, var(--m-bb) 14%, transparent)",
+  red: "var(--loss)",
+  redSoft: "color-mix(in srgb, var(--loss) 13%, transparent)",
+  // secondary ink: between fg and muted — no app token exists for this
+  ink2: "color-mix(in srgb, var(--fg) 70%, var(--muted))",
 };
-const DARK = {
-  paper: "#0E141A",
-  surface: "#171F28",
-  ink: "#E7ECF0",
-  ink2: "#AFB9C3",
-  muted: "#8592A0",
-  line: "#2A3540",
-  lineSoft: "#212B35",
-  green: "#37B481",
-  greenSoft: "#15281F",
-  blue: "#5B94C6",
-  blueSoft: "#152532",
-  amber: "#D89B3F",
-  amberSoft: "#2C2413",
-  red: "#D45E5E",
-  redSoft: "#2E1B1B",
-  gold: "#C6A24E",
-};
+// Chart-only colours with no app-palette equivalent keep per-theme values.
+const LIGHT = { ...SHARED_TOKENS, gold: "#8F7327" };
+const DARK = { ...SHARED_TOKENS, gold: "#C6A24E" };
 const T = Object.fromEntries(Object.keys(LIGHT).map((k) => [k, `var(--t-${k})`]));
 const themeVars = (obj) => Object.entries(obj).map(([k, v]) => `--t-${k}:${v};`).join("");
 const THEME_CSS = `[data-theme="light"]{${themeVars(LIGHT)}}[data-theme="dark"]{${themeVars(DARK)}}`;
@@ -498,7 +494,17 @@ export default function PlanTab({
   // Theme follows the app shell (one toggle for the whole dashboard).
   const theme = dark ? "dark" : "light";
 
-  const [tab, setTab] = useState("overview");
+  // Sub-tab persisted under its own key so (a) a reload returns you to the
+  // sub-tab you were on, and (b) the ⌘K palette / #/plan/<subtab> deep
+  // links can pre-select one by writing the key before switching here
+  // (this component remounts on tab switch and reads it in this
+  // initialiser — same pattern as CgtSection's cgt.cgtsubtab).
+  const VALID_SUBTABS = ["overview", "accum", "decum", "floor", "drawdown", "btl", "stress", "adequacy", "iht"];
+  const [tab, setTab] = useState(() => {
+    const saved = store.get("plan.subtab", "overview");
+    return VALID_SUBTABS.includes(saved) ? saved : "overview";
+  });
+  React.useEffect(() => { store.set("plan.subtab", tab); }, [tab]);
   const [panelOpen, setPanelOpen] = useState(true);
   const [mc, setMc] = useState(null);
   const [mcB, setMcB] = useState(null);

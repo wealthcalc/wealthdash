@@ -1479,9 +1479,85 @@ every input existed somewhere in the app.
   Spending profile panel. Existing saved plans get the default via the
   usual `DEFAULTS` fallback; no migration needed.
 
+## Phase 2.8: de-drilling, one theme system, UI smoke tests
+Refactor-only step (no feature changes), done FIRST in Phase 2 because
+household mode and the IA consolidation will churn exactly this wiring.
+
+- **Prop de-drilling (price/security cluster).** `LivePricesPanel` was the
+  worst offender: three tabs each forwarded the same 12 raw-state props to
+  it verbatim. It now takes ONLY `tickers` and reads prices/AV key+meta/
+  price meta/ledger/security meta/DMO date from the Zustand store via
+  per-slice selectors — as do HomeTab, HoldingsTab, WealthTab, GiltsTab
+  and RsuTab for all their RAW persisted state. The rule now enforced by
+  convention: **props carry DERIVED data** (wealth model, returns,
+  netWorth, concentration, gilt analytics — things the shell computes),
+  **the store carries RAW persisted state**. RsuTab takes no props at all.
+  Selector subscriptions also mean a price tick re-renders the panel, not
+  the tab tree. Still to convert in a later pass (same recipe): Pension,
+  Import, Income, Property, Private, Ledger, CGT, Allowances, Returns.
+- **PlanTab on the app's theme.** PlanTab's private LIGHT/DARK palettes
+  (a second theme system maintained by hand) now RESOLVE to the app's own
+  CSS variables — paper→`--bg`, surface→`--panel`, ink→`--fg`,
+  green→`--gain`, red→`--loss`, blue→`--m-same`, amber→`--m-bb`, soft
+  backgrounds via `color-mix` — through the same `T.*` indirection every
+  inline style already used, so it's a mapping table, not a 2,000-line
+  restyle. Chart-only `gold` (and derived `ink2`) keep their own values.
+  A future palette change now propagates to the Plan tab for free.
+- **UI smoke tests (`npm run test:ui`, chained into `npm test`).** A node
+  module-loader hook (`src/test/setup/`) transforms `.jsx` with esbuild —
+  already present as Vite's own dependency, no new install — so
+  `renderToString` runs under `node --test`. Seven smoke tests render the
+  sidebar, Home (real `buildWealthModel` output AND the null-model error
+  state), Holdings, Wealth, Gilts, RSUs and PlanHealthCard, asserting
+  landmark strings and, above all, no throw. Not behavioural tests: they
+  cover the one seam the 500 core tests can't — React wiring (props,
+  store selectors, hook order) — which is where refactors break things.
+  `renderToString` runs no effects, so no fetches or workers fire; the
+  store's localStorage reads are already try/catch-guarded, so it boots
+  clean under node.
+
+## Phase 2.4: nine screens, ⌘K palette, hash deep links
+Fifteen sidebar tabs consolidated into 9 screens organised by the question
+being asked, with a command palette and URL deep links. The design
+constraint that makes this LOW RISK: the app's tab state still holds the
+same LEAF keys it always has — this is a presentation-layer regrouping,
+so every existing `setTab()` deep link (action queue, first-run panel,
+tax-year-end banner) works unchanged, and no tab component moved.
+
+- **Screens** (`SCREENS` in `ui/Sidebar.jsx`): Home · Plan · Net worth
+  (Balance sheet / Property & debts) · Portfolio (Holdings / Returns /
+  Gilts) · Income · Pensions · Other assets (Private / RSUs) · Tax
+  (Capital gains / Allowances) · Data (Transactions / Import), grouped
+  Overview / Wealth / Tax & data. A screen with multiple leaves gets a
+  `SubTabBar` above the content (same pill language as CGT's internal
+  sub-tabs); the sidebar highlights whichever screen CONTAINS the active
+  leaf. Notable moves: Rebalance stays inside CGT (its sell logic is
+  AEA-aware, that's the point of it) but is now one ⌘K away; Gilts moved
+  from "Instruments" into Portfolio; Income is its own screen (it was
+  filed under Tax, where its income-calendar half never belonged).
+- **⌘K / Ctrl+K command palette** (`ui/CommandPalette.jsx`, dependency-
+  free): screens, sub-tabs, previously-buried tools (Bed & ISA,
+  Harvesting, Rebalance, SA108 report, Income floor, Monte Carlo, IHT…)
+  and open holdings by ticker. Navigation-only by design — no mutating
+  actions in a fuzzy-matched list where Enter fires the top hit. Inner-
+  tab jumps reuse the localStorage-before-setTab trick the action queue
+  established; PlanTab's sub-tab is now persisted (`plan.subtab`, same
+  pattern as `cgt.cgtsubtab`) which also means reload returns you to the
+  Plan sub-tab you were on.
+- **Hash deep links**: `#/<leaf>` (e.g. `#/holdings`), with an optional
+  sub-tab segment for the two tabs that have inner tabs (`#/cgt/bedisa`,
+  `#/plan/floor`). Setting the hash pushes history, so the browser back
+  button walks screen history; a pasted deep link lands on the right
+  inner tab. Inner-tab CLICKS don't rewrite the hash — one history entry
+  per screen change is the sane granularity.
+- Smoke tests updated for the new structure (9 UI tests now): every leaf
+  must have a label and a containing screen, the sub-tab bar renders
+  siblings only for multi-leaf screens, and the palette renders its item
+  list when open.
+
 ## Tests
 ```
-npm test        # node --test: 500 tests across the core modules + the DMO parser + the API guard
+npm test        # node --test: 500 core tests + 9 UI smoke tests (test:ui)
 ```
 
 ## Deploy (recommended: Git → new Vercel project)

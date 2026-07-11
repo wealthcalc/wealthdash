@@ -11,6 +11,7 @@ import {
   store, gbp, gbp0, num, pct, WrapperChip, AllocBar, KIND_LABEL, RateCell, Empty, todayISO,
 } from "../ui/shared.jsx";
 import { refreshAllPrices } from "../ui/priceRefresh.js";
+import useAppStore from "../state/appStore.js";
 
 // Labels for core/tax-year-end.mjs's checklist item ids — kept in the UI
 // layer (not the pure core module) so the core module stays plain data.
@@ -353,14 +354,27 @@ function DeltaChip({ label, from, to }) {
 }
 
 /* ------------------------------- home ---------------------------------- */
+// Raw persisted state (valuations, snapshots, price plumbing, mortgages,
+// cash accounts, plan inputs) comes from the store via selectors; only
+// DERIVED data computed by the shell (model, returns, netWorth,
+// taxYearEnd, actionData, incomeCalendar, concentration) plus the shell's
+// wrapped setTab arrive as props — Phase 2.8 de-drilling.
 export default function HomeTab({
-  model, valuations = [], netWorthSnapshots = [], returns, priceMeta = {}, setTab,
-  netWorth, mortgages = [], taxYearEnd = null,
-  cashAccounts = [], actionData = null, incomeCalendar = [], planInputs = null, concentration = null,
-  // price-refresh plumbing (same engine as the Wealth/Holdings panels)
-  txns = [], secMeta = {}, avKey = "", avMeta = {},
-  setPrices, setPriceMeta, dmoReportDate, setDmoReportDate,
+  model, returns, setTab,
+  netWorth, taxYearEnd = null,
+  actionData = null, incomeCalendar = [], concentration = null,
 }) {
+  const valuations = useAppStore((s) => s.valuations);
+  const netWorthSnapshots = useAppStore((s) => s.netWorthSnapshots);
+  const priceMeta = useAppStore((s) => s.priceMeta), setPriceMeta = useAppStore((s) => s.setPriceMeta);
+  const mortgages = useAppStore((s) => s.mortgages);
+  const cashAccounts = useAppStore((s) => s.cashAccounts);
+  const planInputs = useAppStore((s) => s.planInputs);
+  const txns = useAppStore((s) => s.txns);
+  const secMeta = useAppStore((s) => s.secMeta);
+  const avKey = useAppStore((s) => s.avKey), avMeta = useAppStore((s) => s.avMeta);
+  const setPrices = useAppStore((s) => s.setPrices);
+  const dmoReportDate = useAppStore((s) => s.dmoReportDate), setDmoReportDate = useAppStore((s) => s.setDmoReportDate);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshMsg, setRefreshMsg] = useState("");
 

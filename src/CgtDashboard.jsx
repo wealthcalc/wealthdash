@@ -17,8 +17,9 @@ import { taxYearEndChecklist } from "./core/tax-year-end.mjs";
 import { isaSubscriptionsByYear, realisedForYear } from "./core/allowances.mjs";
 import { aeaForYear } from "./core/uk-tax.mjs";
 import { concentration } from "./core/exposure.mjs";
-import { unitsHeldAt, uid, todayISO, IconBtn } from "./ui/shared.jsx";
-import { DesktopSidebar, MobileDrawer } from "./ui/Sidebar.jsx";
+import { unitsHeldAt, uid, todayISO, IconBtn, store as lsStore } from "./ui/shared.jsx";
+import { DesktopSidebar, MobileDrawer, SubTabBar, SCREENS } from "./ui/Sidebar.jsx";
+import CommandPalette from "./ui/CommandPalette.jsx";
 import { useIsMobile } from "./ui/useIsMobile.js";
 import useAppStore from "./state/appStore.js";
 
@@ -102,6 +103,43 @@ export default function App() {
   const isMobile = useIsMobile();
   const [mobileFullApp, setMobileFullApp] = useState(false);
   // (persistence moved into the store — one subscription, only changed keys)
+
+  // ---- Phase 2.4: hash deep links + command palette -------------------
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  // #/<leaf>(/<subtab>) — leaf keys are the SAME strings tab state has
+  // always used, so old muscle memory and new URLs agree. A subtab segment
+  // pre-selects an inner tab by writing its localStorage key before the
+  // switch (CgtSection/PlanTab read it in a useState initialiser and
+  // remount on tab change). Setting location.hash pushes a history entry,
+  // so the browser back button walks tab history for free.
+  React.useEffect(() => {
+    const validLeaves = new Set(SCREENS.flatMap((s) => s.leaves));
+    const applyHash = () => {
+      const m = window.location.hash.match(/^#\/([a-z]+)(?:\/([a-z-]+))?$/i);
+      if (!m || !validLeaves.has(m[1])) return;
+      if (m[2]) {
+        if (m[1] === "cgt") lsStore.set("cgt.cgtsubtab", m[2]);
+        if (m[1] === "plan") lsStore.set("plan.subtab", m[2]);
+      }
+      setTab(m[1]);
+    };
+    applyHash(); // honour a deep link on first load
+    window.addEventListener("hashchange", applyHash);
+    return () => window.removeEventListener("hashchange", applyHash);
+  }, []);
+  React.useEffect(() => {
+    // Reflect leaf-level location in the hash (subtab segments only come
+    // FROM deep links; inner tab clicks don't rewrite history — one
+    // history entry per screen change is the sane granularity).
+    if (!window.location.hash.startsWith(`#/${tab}`)) window.location.hash = `#/${tab}`;
+  }, [tab]);
+  React.useEffect(() => {
+    const onKey = (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); setPaletteOpen((o) => !o); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   // Only unsheltered (GIA) holdings are within scope for CGT and income tax;
   // ISA / SIPP / LISA are tax-free and excluded from every tax computation.
@@ -415,15 +453,16 @@ export default function App() {
   const mobileSummaryMode = isMobile && !mobileFullApp;
   // Shared by the normal "home" tab render AND the read-only mobile summary
   // below — one object, so the two call sites can never quietly drift.
+  // Phase 2.8: only DERIVED data (computed in this shell) travels as props
+  // now — HomeTab reads raw persisted state from the store itself.
   // setTab is wrapped so that, from the read-only mobile summary, tapping
   // an action-queue item (or any Home deep-link) opens the FULL app on
   // that tab — previously those taps changed the tab state invisibly
   // behind the summary, which looked like a dead button.
   const homeTabProps = {
-    model: wealthModel, valuations, netWorthSnapshots, returns, priceMeta, netWorth, mortgages,
+    model: wealthModel, returns, netWorth,
     setTab: (t) => { setTab(t); if (mobileSummaryMode) setMobileFullApp(true); },
-    txns, secMeta, avKey, avMeta, setPrices, setPriceMeta, dmoReportDate, setDmoReportDate,
-    taxYearEnd, cashAccounts, actionData, incomeCalendar, planInputs,
+    taxYearEnd, actionData, incomeCalendar,
     concentration: exposureConcentration,
   };
 
@@ -455,8 +494,10 @@ export default function App() {
         Skip to main content
       </a>
       <div className="root min-h-screen bg-[var(--bg)] text-[var(--fg)] flex" style={{ fontFamily: "ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif" }}>
-        {!mobileSummaryMode && <DesktopSidebar tab={tab} setTab={setTab} />}
+        {!mobileSummaryMode && <DesktopSidebar tab={tab} setTab={setTab} onOpenPalette={() => setPaletteOpen(true)} />}
         {!mobileSummaryMode && <MobileDrawer tab={tab} setTab={setTab} open={mobileNavOpen} onClose={() => setMobileNavOpen(false)} />}
+        <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} setTab={setTab}
+          tickers={wealthModel ? [...new Set(wealthModel.positions.filter((p) => p.qty > 1e-9).map((p) => p.ticker))].sort() : []} />
         <main id="main-content" tabIndex={-1} className="flex-1 min-w-0">
           <div className="max-w-5xl mx-auto px-4 sm:px-6 py-6">
             {/* header */}
@@ -527,6 +568,7 @@ export default function App() {
               </div>
             ) : (
             <div className="mt-5">
+            <SubTabBar tab={tab} setTab={setTab} />
             <Suspense fallback={<div className="text-sm text-[var(--muted)] py-6">Loading…</div>}>
               {tab === "home" && <HomeTab {...homeTabProps} />}
               {tab === "plan" && <PlanTab {...{
@@ -558,9 +600,9 @@ export default function App() {
                   creditCardDebt: netWorth.creditCardDebt,
                 } : null,
               }} />}
-              {tab === "wealth" && <WealthTab {...{ model: wealthModel, cash, setCash, cashAccounts, setCashAccounts, creditCards, setCreditCards, prices, setPrices, avKey, setAvKey, avMeta, setAvMeta, priceMeta, setPriceMeta, txns, secMeta, setSecMeta, dmoReportDate, setDmoReportDate, concentration: exposureConcentration }} />}
+              {tab === "wealth" && <WealthTab model={wealthModel} concentration={exposureConcentration} />}
               {tab === "returns" && <ReturnsTab {...{ returns, valuations, pensionCashflows, secMeta, setSecMeta, txns }} />}
-              {tab === "gilts" && <GiltsTab {...{ data: giltData, secMeta, setSecMeta, prices, setPrices, dmoReportDate, setDmoReportDate }} />}
+              {tab === "gilts" && <GiltsTab data={giltData} />}
               {tab === "pension" && <PensionTab {...{ txns, setTxns, cash, setCash, secMeta, setSecMeta, prices, setPrices, pensionCashflows, setPensionCashflows, recomputeProviderCost }} />}
               {tab === "cgt" && <CgtSection {...{
                 taxYears, activeYear, setYear, yearDisposals, liab, income, setIncome, carried, setCarried,
@@ -572,10 +614,10 @@ export default function App() {
               }} />}
               {tab === "allowances" && <AllowancesTab {...{ txns, pensionCashflows, incomeEntries, eriTxns, income, taxableDisposals, overrides: allowanceOverrides, setOverrides: setAllowanceOverrides }} />}
               {tab === "income" && <IncomeTab {...{ incomeEntries, setIncomeEntries, eriEntries, setEriEntries, eriTxns, incomeByYear, incomeAllWrappers, income, setIncome, txns: giaTxns, secMeta, setSecMeta, incomeCalendar }} />}
-              {tab === "holdings" && <HoldingsTab {...{ positions: wealthModel ? wealthModel.positions : [], prices, setPrices, avKey, setAvKey, avMeta, setAvMeta, priceMeta, setPriceMeta, txns, secMeta, setSecMeta, dmoReportDate, setDmoReportDate }} />}
+              {tab === "holdings" && <HoldingsTab positions={wealthModel ? wealthModel.positions : []} />}
               {tab === "property" && <PropertyTab {...{ properties, setProperties, mortgages, setMortgages, otherLiabilities, setOtherLiabilities }} />}
               {tab === "private" && <PrivateTab {...{ holdings: privateHoldings, setHoldings: setPrivateHoldings, events: privateEvents, setEvents: setPrivateEvents }} />}
-              {tab === "rsu" && <RsuTab {...{ grants: rsuGrants, setGrants: setRsuGrants, events: rsuEvents, setEvents: setRsuEvents, prices, setPrices, avKey, setAvKey, avMeta, setAvMeta, priceMeta, setPriceMeta, secMeta, setSecMeta, dmoReportDate, setDmoReportDate, txns }} />}
+              {tab === "rsu" && <RsuTab />}
               {tab === "ledger" && <LedgerTab {...{ txns, setTxns }} />}
               {tab === "import" && <ImportTab {...{ setTxns, setTab, setIncomeEntries, setEriEntries, secMeta, setPensionCashflows, pensionCashflows, recomputeProviderCost, txns, incomeEntries, eriEntries, ibkrQueryId, setIbkrQueryId, ibkrToken, setIbkrToken, rsuGrants, setRsuGrants, rsuEvents, setRsuEvents }} />}
             </Suspense>

@@ -11,6 +11,7 @@ import {
   gbp, gbp0, WrapperChip, num, CurrencyInput, KIND_LABEL, ALLOC_COLORS, AllocBar, pct, Stat, Empty,
   uid, todayISO, Field, useSort, sortRows, SortTh, TwoStepDelete,
 } from "../ui/shared.jsx";
+import useAppStore from "../state/appStore.js";
 
 const ACCOUNT_BLANK = () => ({
   id: uid(), wrapper: "GIA", label: "", institution: "", balance: "",
@@ -18,7 +19,14 @@ const ACCOUNT_BLANK = () => ({
 });
 const CARD_BLANK = () => ({ id: uid(), label: "", issuer: "", balance: "", notes: "" });
 
-function WealthTab({ model, cash, setCash, cashAccounts = [], setCashAccounts, creditCards = [], setCreditCards, prices, setPrices, avKey, setAvKey, avMeta, setAvMeta, priceMeta, setPriceMeta, txns, secMeta, dmoReportDate, setDmoReportDate, concentration = null }) {
+// Raw persisted state comes from the store via selectors; only DERIVED
+// data (model, concentration) arrives as props — Phase 2.8 de-drilling.
+function WealthTab({ model, concentration = null }) {
+  const cash = useAppStore((s) => s.cash), setCash = useAppStore((s) => s.setCash);
+  const cashAccounts = useAppStore((s) => s.cashAccounts), setCashAccounts = useAppStore((s) => s.setCashAccounts);
+  const creditCards = useAppStore((s) => s.creditCards), setCreditCards = useAppStore((s) => s.setCreditCards);
+  const prices = useAppStore((s) => s.prices), setPrices = useAppStore((s) => s.setPrices);
+  const secMeta = useAppStore((s) => s.secMeta);
   // Hooks must run in the same order every render regardless of whether
   // `model` is null this time round, so anything stateful lives above both
   // early-return guards below (this file previously had no hooks at all,
@@ -106,7 +114,7 @@ function WealthTab({ model, cash, setCash, cashAccounts = [], setCashAccounts, c
         </div>
       )}
 
-      <LivePricesPanel {...{ tickers, avKey, setAvKey, avMeta, setAvMeta, prices, setPrices, priceMeta, setPriceMeta, txns, secMeta, dmoReportDate, setDmoReportDate }} />
+      <LivePricesPanel tickers={tickers} />
 
       {/* per-wrapper roll-up with editable cash */}
       <div className="rounded-xl border border-[var(--border)] overflow-hidden">

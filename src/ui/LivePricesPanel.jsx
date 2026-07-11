@@ -2,8 +2,23 @@ import React, { useState, useMemo, useCallback, useRef } from "react";
 import { RefreshCw, Check } from "lucide-react";
 import { gbp, dmoDateToIso, fetchDmoGiltPrices, num, avQuote, fxToGBP, toGBP, avBudget, avBump, Field } from "../ui/shared.jsx";
 import { refreshAllPrices } from "./priceRefresh.js";
+import useAppStore from "../state/appStore.js";
 
-function LivePricesPanel({ tickers, avKey, setAvKey, avMeta, setAvMeta, prices, setPrices, priceMeta, setPriceMeta, txns, secMeta = {}, dmoReportDate, setDmoReportDate }) {
+// Callers pass only `tickers` — everything else (prices, AV key/meta,
+// price meta, ledger, security meta, DMO date) is raw persisted state this
+// panel now reads from the store itself via per-slice selectors. This
+// panel was the single worst prop-drilling offender: three tabs each
+// forwarded the same 12 props here verbatim, so any new piece of price
+// plumbing meant touching four files. Selector subscriptions also mean a
+// price tick re-renders this panel, not the whole tab tree above it.
+function LivePricesPanel({ tickers }) {
+  const avKey = useAppStore((s) => s.avKey), setAvKey = useAppStore((s) => s.setAvKey);
+  const avMeta = useAppStore((s) => s.avMeta), setAvMeta = useAppStore((s) => s.setAvMeta);
+  const prices = useAppStore((s) => s.prices), setPrices = useAppStore((s) => s.setPrices);
+  const priceMeta = useAppStore((s) => s.priceMeta), setPriceMeta = useAppStore((s) => s.setPriceMeta);
+  const txns = useAppStore((s) => s.txns);
+  const secMeta = useAppStore((s) => s.secMeta);
+  const dmoReportDate = useAppStore((s) => s.dmoReportDate), setDmoReportDate = useAppStore((s) => s.setDmoReportDate);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [prog, setProg] = useState("");

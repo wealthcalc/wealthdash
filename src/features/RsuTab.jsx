@@ -3,6 +3,7 @@ import { Award, PlusCircle, Info, ChevronDown, ChevronUp, CalendarClock } from "
 import { vestingSchedule, grantSummary, rsuTotals } from "../core/rsu.mjs";
 import { gbp, gbp0, num, uid, todayISO, Field, Stat, Empty, TwoStepDelete } from "../ui/shared.jsx";
 import LivePricesPanel from "../ui/LivePricesPanel.jsx";
+import useAppStore from "../state/appStore.js";
 
 /* ======================================================================
    RSU VESTING TRACKER — employer stock grants (e.g. Wells Fargo RSUs,
@@ -20,11 +21,13 @@ const GRANT_BLANK = () => ({ id: uid(), ticker: "", grantDate: todayISO(), note:
 const EVENT_BLANK = (grantId) => ({ id: uid(), grantId, type: "vest", date: todayISO(), shares: "", priceNative: "", fxRate: 1 });
 const EVENT_LABEL = { vest: "Vest", sale: "Sale" };
 
-function RsuTab({
-  grants = [], setGrants, events = [], setEvents,
-  prices, setPrices, avKey, setAvKey, avMeta, setAvMeta, priceMeta, setPriceMeta,
-  secMeta = {}, setSecMeta, dmoReportDate, setDmoReportDate, txns = [],
-}) {
+// Everything here is raw persisted state — grants/events are this tab's
+// own arrays, prices feed the totals — so it all comes from the store via
+// selectors and the shell passes NO props. Phase 2.8 de-drilling.
+function RsuTab() {
+  const grants = useAppStore((s) => s.rsuGrants), setGrants = useAppStore((s) => s.setRsuGrants);
+  const events = useAppStore((s) => s.rsuEvents), setEvents = useAppStore((s) => s.setRsuEvents);
+  const prices = useAppStore((s) => s.prices);
   const [form, setForm] = useState(GRANT_BLANK());
   const [eventForms, setEventForms] = useState({}); // grantId -> draft event
   const [expanded, setExpanded] = useState({});     // grantId -> bool (event ledger open)
@@ -85,7 +88,7 @@ function RsuTab({
       </div>
 
       {tickers.length > 0 && (
-        <LivePricesPanel {...{ tickers, avKey, setAvKey, avMeta, setAvMeta, prices, setPrices, priceMeta, setPriceMeta, txns, secMeta, dmoReportDate, setDmoReportDate }} />
+        <LivePricesPanel tickers={tickers} />
       )}
 
       {/* upcoming vesting schedule */}

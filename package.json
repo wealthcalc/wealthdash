@@ -10,9 +10,11 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "node --test \"src/test/*.test.mjs\""
+    "test": "node --test \"src/test/*.test.mjs\" && npm run test:ui",
+    "test:ui": "node --test --import ./src/test/setup/register.mjs \"src/test/ui/*.test.mjs\""
   },
   "dependencies": {
+    "@vercel/blob": "^2.6.1",
     "lucide-react": "^0.383.0",
     "papaparse": "^5.4.1",
     "react": "^18.3.1",

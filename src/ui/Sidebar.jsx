@@ -1,44 +1,51 @@
-/* Five-section sidebar IA — replaces the old flat, wrapping 12-button tab
-   row. With Plan and Allowances added on top of the original build, a single
-   row no longer scaled: it wrapped to 2-3 lines on anything narrower than a
-   wide desktop, and gave no structure to help a user find a tab by what it's
-   for. Grouped by purpose, not alphabetically: orientation, the portfolio
-   itself, wrapper-specific instruments with their own mechanics (gilts have
-   coupons/AIS, pensions have provider snapshots), tax tools, then raw data
-   in/out. Desktop gets a static, sticky column; mobile gets an overlay
-   drawer so narrow screens don't lose vertical space to a permanent rail. */
+/* Phase 2.4 IA: 15 flat tabs consolidated into 9 SCREENS, organised by the
+   question being asked ("what am I worth" / "how am I invested" / "what do
+   I owe HMRC"), not by feature accretion. Crucially this is a PRESENTATION
+   regrouping only: the app's tab state still holds the same LEAF keys it
+   always has ("wealth", "cgt", "import", …), so every setTab() deep-link —
+   action queue items, first-run panel, tax-year-end banner — keeps working
+   unchanged. A screen with multiple leaves gets a sub-tab bar in the
+   content area (rendered by the shell); the sidebar highlights whichever
+   screen CONTAINS the active leaf. Deep links: #/<leaf>(/<subtab>) — see
+   CgtDashboard's hash sync. */
 import React, { useEffect, useRef } from "react";
 import {
-  Wallet, PoundSterling, PieChart, Percent, Landmark, PiggyBank, TrendingUp, Gauge, Target,
-  TableProperties, Receipt, FileUp, X, Home, Building2, Award,
+  Wallet, PoundSterling, PieChart, PiggyBank, TrendingUp, Gauge,
+  TableProperties, Receipt, X, Building2, Database, Search,
 } from "lucide-react";
 
-export const NAV_SECTIONS = [
-  { title: "Overview", items: [
-    ["home", "Home", TrendingUp],
-    ["plan", "Plan", Gauge],
-  ] },
-  { title: "Portfolio", items: [
-    ["wealth", "Wealth", PieChart],
-    ["holdings", "Holdings", Wallet],
-    ["returns", "Returns", Percent],
-    ["property", "Property", Home],
-    ["private", "Private", Building2],
-    ["rsu", "RSUs", Award],
-  ] },
-  { title: "Instruments", items: [
-    ["gilts", "Gilts", Landmark],
-    ["pension", "Pension & LISA", PiggyBank],
-  ] },
-  { title: "Tax", items: [
-    ["cgt", "CGT", TableProperties],
-    ["allowances", "Allowances", Target],
-    ["income", "Income", PoundSterling],
-  ] },
-  { title: "Data", items: [
-    ["ledger", "Transactions", Receipt],
-    ["import", "Import", FileUp],
-  ] },
+// screen key -> { label, icon, leaves: [leaf tab keys] }. Leaf order = sub-tab order.
+export const SCREENS = [
+  { key: "home", label: "Home", icon: TrendingUp, leaves: ["home"] },
+  { key: "plan", label: "Plan", icon: Gauge, leaves: ["plan"] },
+  { key: "networth", label: "Net worth", icon: PieChart, leaves: ["wealth", "property"] },
+  { key: "portfolio", label: "Portfolio", icon: Wallet, leaves: ["holdings", "returns", "gilts"] },
+  { key: "income", label: "Income", icon: PoundSterling, leaves: ["income"] },
+  { key: "pension", label: "Pensions", icon: PiggyBank, leaves: ["pension"] },
+  { key: "other", label: "Other assets", icon: Building2, leaves: ["private", "rsu"] },
+  { key: "tax", label: "Tax", icon: TableProperties, leaves: ["cgt", "allowances"] },
+  { key: "data", label: "Data", icon: Database, leaves: ["ledger", "import"] },
+];
+
+// Leaf labels as shown in the sub-tab bar and the command palette.
+export const LEAF_LABELS = {
+  home: "Home", plan: "Plan",
+  wealth: "Balance sheet", property: "Property & debts",
+  holdings: "Holdings", returns: "Returns", gilts: "Gilts",
+  income: "Income", pension: "Pension & LISA",
+  private: "Private investments", rsu: "RSUs",
+  cgt: "Capital gains", allowances: "Allowances",
+  ledger: "Transactions", import: "Import",
+};
+
+export const screenOf = (leaf) => SCREENS.find((s) => s.leaves.includes(leaf)) || SCREENS[0];
+
+// Light grouping — three clusters keep the scan short without pretending
+// nine items need a taxonomy.
+const SECTIONS = [
+  { title: "Overview", screens: ["home", "plan"] },
+  { title: "Wealth", screens: ["networth", "portfolio", "income", "pension", "other"] },
+  { title: "Tax & data", screens: ["tax", "data"] },
 ];
 
 function NavButton({ label, Icon, active, onClick }) {
@@ -51,16 +58,29 @@ function NavButton({ label, Icon, active, onClick }) {
   );
 }
 
-function NavSections({ tab, onSelect }) {
+function NavSections({ tab, onSelect, onOpenPalette }) {
+  const activeScreen = screenOf(tab).key;
   return (
     <div className="px-2 py-3 space-y-4">
-      {NAV_SECTIONS.map((sec) => (
+      {onOpenPalette && (
+        <button onClick={onOpenPalette}
+          className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-sm border border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)] hover:bg-[var(--panel2)]"
+          title="Jump anywhere — screens, tools, holdings">
+          <Search size={14} aria-hidden="true" /> <span className="truncate">Search…</span>
+          <kbd className="ml-auto text-[11px] px-1 py-0.5 rounded border border-[var(--border)] text-[var(--muted)]">⌘K</kbd>
+        </button>
+      )}
+      {SECTIONS.map((sec) => (
         <div key={sec.title}>
           <div className="px-2.5 text-[11px] font-semibold uppercase tracking-wider text-[var(--muted)] mb-1">{sec.title}</div>
           <div className="space-y-0.5">
-            {sec.items.map(([k, label, Icon]) => (
-              <NavButton key={k} label={label} Icon={Icon} active={tab === k} onClick={() => onSelect(k)} />
-            ))}
+            {sec.screens.map((k) => {
+              const s = SCREENS.find((x) => x.key === k);
+              return (
+                <NavButton key={s.key} label={s.label} Icon={s.icon} active={activeScreen === s.key}
+                  onClick={() => onSelect(s.leaves[0])} />
+              );
+            })}
           </div>
         </div>
       ))}
@@ -70,14 +90,14 @@ function NavSections({ tab, onSelect }) {
 
 // Desktop (sm+): a static column, sticky within the viewport so it stays put
 // while a long tab (e.g. Transactions) scrolls underneath it.
-export function DesktopSidebar({ tab, setTab }) {
+export function DesktopSidebar({ tab, setTab, onOpenPalette }) {
   return (
     <aside className="hidden sm:flex sm:flex-col w-56 shrink-0 border-r border-[var(--border)] bg-[var(--panel)] sticky top-0 h-screen overflow-y-auto">
       <div className="px-4 py-4 flex items-center gap-2 border-b border-[var(--border)]">
         <Receipt size={18} className="text-[var(--accent)]" aria-hidden="true" />
         <span className="font-semibold text-sm truncate">Wealth Dashboard</span>
       </div>
-      <nav aria-label="Main navigation"><NavSections tab={tab} onSelect={setTab} /></nav>
+      <nav aria-label="Main navigation"><NavSections tab={tab} onSelect={setTab} onOpenPalette={onOpenPalette} /></nav>
     </aside>
   );
 }
@@ -111,6 +131,25 @@ export function MobileDrawer({ tab, setTab, open, onClose }) {
         </div>
         <nav aria-label="Main navigation"><NavSections tab={tab} onSelect={(k) => { setTab(k); onClose(); }} /></nav>
       </div>
+    </div>
+  );
+}
+
+// Sub-tab bar for screens with more than one leaf — rendered by the shell
+// above the active tab's content. Same pill language as CgtSection's
+// internal sub-tabs so it reads as one pattern.
+export function SubTabBar({ tab, setTab }) {
+  const screen = screenOf(tab);
+  if (screen.leaves.length < 2) return null;
+  return (
+    <div className="flex gap-1 mb-4 border-b border-[var(--border)] pb-2 flex-wrap" role="tablist" aria-label={`${screen.label} sections`}>
+      {screen.leaves.map((leaf) => (
+        <button key={leaf} role="tab" aria-selected={tab === leaf} onClick={() => setTab(leaf)}
+          className={"px-3 py-1.5 rounded-lg text-sm font-medium " +
+            (tab === leaf ? "bg-[var(--accent)] text-[var(--accent-fg)]" : "text-[var(--muted)] hover:bg-[var(--panel2)] hover:text-[var(--fg)]")}>
+          {LEAF_LABELS[leaf] || leaf}
+        </button>
+      ))}
     </div>
   );
 }

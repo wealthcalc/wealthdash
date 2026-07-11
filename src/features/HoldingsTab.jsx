@@ -2,8 +2,14 @@ import React, { useState, useMemo, useCallback, useRef } from "react";
 import { isWrapperTaxable } from "../core/portfolio.mjs";
 import LivePricesPanel from "../ui/LivePricesPanel.jsx";
 import { gbp, gbp0, WrapperChip, num, pct, Stat, Empty, useSort, sortRows, SortTh } from "../ui/shared.jsx";
+import useAppStore from "../state/appStore.js";
 
-function HoldingsTab({ positions, prices, setPrices, avKey, setAvKey, avMeta, setAvMeta, priceMeta, setPriceMeta, txns, secMeta, setSecMeta, dmoReportDate, setDmoReportDate }) {
+// Raw persisted state (prices, security meta) comes from the store via
+// selectors; only DERIVED data (positions, from the shell's wealth model)
+// arrives as a prop. Part of the Phase 2.8 de-drilling pass.
+function HoldingsTab({ positions }) {
+  const prices = useAppStore((s) => s.prices), setPrices = useAppStore((s) => s.setPrices);
+  const secMeta = useAppStore((s) => s.secMeta), setSecMeta = useAppStore((s) => s.setSecMeta);
   const open = positions.filter((p) => p.qty > 1e-6);
   const [sort, toggleSort] = useSort("wrapper", "asc");
   if (!open.length) return <Empty msg="No open holdings yet. Add buy transactions (any wrapper) to see your positions and unrealised gains." />;
@@ -53,7 +59,7 @@ function HoldingsTab({ positions, prices, setPrices, avKey, setAvKey, avMeta, se
         <Stat label="Unrealised %" value={priced.length && totCost ? `${totUnreal >= 0 ? "+" : ""}${num((totUnreal / totCost) * 100)}%` : "—"} tone={totUnreal >= 0 ? "gain" : "loss"} />
       </div>
 
-      <LivePricesPanel {...{ tickers, avKey, setAvKey, avMeta, setAvMeta, prices, setPrices, priceMeta, setPriceMeta, txns, secMeta, dmoReportDate, setDmoReportDate }} />
+      <LivePricesPanel tickers={tickers} />
 
       <div className="rounded-xl border border-[var(--border)] overflow-hidden">
         <table className="w-full text-sm">
