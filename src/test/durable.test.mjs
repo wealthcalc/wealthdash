@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { PERSIST_KEYS, SNAPSHOT_KEEP, snapshotDatesToPrune, shouldRestore } from "../state/durable.js";
+import { PERSIST_KEYS, SNAPSHOT_KEEP, snapshotDatesToPrune, shouldRestore, LARGE_KEYS, keysWhereDurableIsAhead } from "../state/durable.js";
 
 test("PERSIST_KEYS covers every localStorage key the app has ever used", () => {
   const expected = [
@@ -10,6 +10,7 @@ test("PERSIST_KEYS covers every localStorage key the app has ever used", () => {
     "cgt.properties", "cgt.mortgages", "cgt.otherliabilities", "cgt.cashaccounts",
     "cgt.allowanceoverrides", "cgt.planinputs", "cgt.privateholdings", "cgt.privateevents",
     "cgt.rsugrants", "cgt.rsuevents", "cgt.ibkrqueryid", "cgt.ibkrtoken", "cgt.creditcards",
+    "cgt.scenarios",
   ];
   assert.deepEqual(Object.values(PERSIST_KEYS).sort(), expected.sort());
 });
@@ -35,4 +36,38 @@ test("shouldRestore: only when localStorage lost the data keys AND the mirror ha
   assert.equal(shouldRestore(["cgt.dark", "cgt.tab"], mirrorFull), true);
   // mirror holds only settings, no real data -> nothing worth restoring
   assert.equal(shouldRestore([], ["cgt.dark"]), false);
+});
+
+test("LARGE_KEYS are all real, unbounded-over-time state keys", () => {
+  for (const k of LARGE_KEYS) assert.ok(k in PERSIST_KEYS, `${k} must be a real PERSIST_KEYS entry`);
+  // settings-shaped keys must never be treated as "large" (their whole point
+  // is that they're small and bounded, unlike a decade of transactions)
+  assert.ok(!LARGE_KEYS.includes("dark"));
+  assert.ok(!LARGE_KEYS.includes("planInputs"));
+});
+
+test("keysWhereDurableIsAhead: IndexedDB-primary reconciliation is strictly one-directional", () => {
+  // localStorage has 3 txns, mirror has 3000 -> localStorage fell behind (quota exceeded mid-write)
+  const lsBehind = { [PERSIST_KEYS.txns]: [1, 2, 3] };
+  const mirrorAhead = { [PERSIST_KEYS.txns]: Array.from({ length: 3000 }) };
+  assert.deepEqual(keysWhereDurableIsAhead(lsBehind, mirrorAhead), ["txns"]);
+
+  // equal size -> never "ahead", nothing to reconcile
+  const same = { [PERSIST_KEYS.txns]: [1, 2, 3] };
+  assert.deepEqual(keysWhereDurableIsAhead(lsBehind, same), []);
+
+  // mirror SMALLER than localStorage (e.g. user just deleted rows this
+  // session, before the debounced mirror caught up) must never be adopted —
+  // that would resurrect deleted data.
+  const mirrorSmaller = { [PERSIST_KEYS.txns]: [1] };
+  assert.deepEqual(keysWhereDurableIsAhead(lsBehind, mirrorSmaller), []);
+
+  // missing keys on either side are treated as empty, not a crash
+  assert.deepEqual(keysWhereDurableIsAhead({}, {}), []);
+  assert.deepEqual(keysWhereDurableIsAhead({}, mirrorAhead), ["txns"]);
+
+  // multiple large keys can be ahead simultaneously
+  const lsMulti = { [PERSIST_KEYS.txns]: [1, 2], [PERSIST_KEYS.valuations]: [1, 2, 3] };
+  const mirrorMulti = { [PERSIST_KEYS.txns]: [1, 2, 3, 4], [PERSIST_KEYS.valuations]: [1, 2, 3] };
+  assert.deepEqual(keysWhereDurableIsAhead(lsMulti, mirrorMulti), ["txns"]);
 });

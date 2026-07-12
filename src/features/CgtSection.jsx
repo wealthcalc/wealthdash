@@ -2,6 +2,8 @@ import React, { useState, useMemo, useCallback, useRef } from "react";
 import { AlertCircle, Download, Wand2, FlaskConical, Check, Printer, Info, Scale } from "lucide-react";
 import { ukTaxYear } from "../core/cgt-engine.mjs";
 import { cfgFor, aeaForYear, paFor, liabilityForYear, sharesForTargetGain, nextTaxYear, optimiseDisposals } from "../core/uk-tax.mjs";
+import { buildTaxPack, renderTaxPackHTML } from "../core/tax-pack.mjs";
+import { locationPlan } from "../core/asset-location.mjs";
 import { ISA_LIMIT, isaSubscriptionsByYear, realisedForYear, bedAndIsaPlan } from "../core/allowances.mjs";
 import { rebalancePlan, BUCKETS, BUCKET_LABEL } from "../core/rebalancing.mjs";
 import { KIND_LABEL, store, fmtRate, gbp, gbp0, WrapperChip, SubTabs, num, uid, todayISO, METHOD, CurrencyInput, NumberInput, Field, Stat, Row, MethodChip, Empty } from "../ui/shared.jsx";
@@ -24,15 +26,72 @@ function CgtSection(props) {
   return (
     <div>
       <SubTabs
-        tabs={[["summary", "Summary"], ["planning", "Planning"], ["bedisa", "Bed & ISA"], ["rebalance", "Rebalance"], ["report", "Report"], ["whatif", "What-if"]]}
+        tabs={[["summary", "Summary"], ["planning", "Planning"], ["bedisa", "Bed & ISA"], ["rebalance", "Rebalance"], ["location", "Location"], ["report", "Report"], ["whatif", "What-if"]]}
         active={sub} onChange={setSub}
       />
       {sub === "summary" && <CgtTab {...{ taxYears, activeYear, setYear, yearDisposals, liab, income, setIncome, carried, setCarried, carryForward, exemptGiltDisposalCount }} />}
+      {sub === "location" && <LocationTab {...{ positions: positions || [], secMeta, income }} />}
       {sub === "planning" && <PlanningTab {...{ pools, prices, setPrices, disposals, txns, income }} />}
       {sub === "bedisa" && <BedIsaTab {...{ pools, prices, disposals, income, allTxns, secMeta, setTxns }} />}
       {sub === "rebalance" && <RebalanceTab {...{ positions: positions || [], disposals, income }} />}
       {sub === "report" && <ReportTab {...{ taxYears, disposals, income, carried, yearlyLiab }} />}
       {sub === "whatif" && <WhatIfTab {...{ pools, disposals, income, carried, prices }} />}
+    </div>
+  );
+}
+
+/* ------------------------ Asset-location tool ------------------------- */
+// Phase 3.3 — same portfolio, better PLACEMENT (core/asset-location.mjs):
+// estimated annual tax drag of each holding if held in the GIA, the
+// minimum drag achievable given current shelter capacity, and the moves
+// that close the gap. The Bed & ISA tab prices any actual move.
+function LocationTab({ positions = [], secMeta = {}, income = 0 }) {
+  const plan = useMemo(() => locationPlan({ positions, secMeta, income }), [positions, secMeta, income]);
+  if (!plan.rows.length) return <Empty msg="No priced holdings yet — asset location needs market values." />;
+  const pctFmt = (x) => (x * 100).toFixed(2) + "%";
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+        <Stat label="Annual tax drag now" value={gbp0(plan.currentDrag)} sub="estimated cost of current placement" />
+        <Stat label="Best achievable" value={gbp0(plan.minimalDrag)} sub="same holdings, optimally placed" />
+        <Stat label="Placement saves" value={`${gbp0(plan.savingPerYear)}/yr`} tone={plan.savingPerYear > 100 ? "gain" : "ink"} sub={plan.savingPerYear > 100 ? "every year, compounding" : "already close to optimal"} />
+      </div>
+
+      {plan.moves.length > 0 && (
+        <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 space-y-2">
+          <h3 className="text-sm font-semibold">Suggested moves</h3>
+          {plan.moves.map((m) => (
+            <div key={m.ticker + m.wrapper} className="text-xs rounded-lg border border-[var(--border)] bg-[var(--panel2)] px-3 py-2">
+              <span className="font-semibold">{m.direction === "shelter" ? "Shelter" : "Release"} {m.ticker}</span>
+              <span className="text-[var(--muted)]"> ({m.wrapper}, {gbp0(m.value)}) — GIA drag {pctFmt(m.dragPct)} ≈ {gbp0(m.dragGbp)}/yr. {m.direction === "shelter" ? "Move into ISA/SIPP via new contributions or Bed & ISA (which prices the CGT cost of the move)." : "Cheap to hold unsheltered — releasing it frees shelter room for something expensive."}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="rounded-xl border border-[var(--border)] overflow-hidden">
+        <table className="w-full text-sm">
+          <thead className="bg-[var(--panel2)] text-[var(--muted)] text-xs uppercase tracking-wide">
+            <tr>{["Holding", "Wrapper", "Value", "GIA drag %/yr", "GIA drag £/yr"].map((h, i) => (
+              <th key={h} className={"px-3 py-2 font-medium " + (i <= 1 ? "text-left" : "text-right")}>{h}</th>
+            ))}</tr>
+          </thead>
+          <tbody className="divide-y divide-[var(--border)] bg-[var(--panel)]">
+            {plan.rows.map((r) => (
+              <tr key={r.ticker + r.wrapper} className="hover:bg-[var(--panel2)]">
+                <td className="px-3 py-2 font-medium">{r.ticker}</td>
+                <td className="px-3 py-2 text-[var(--muted)]">{r.wrapper}{r.sheltered ? " (sheltered)" : ""}</td>
+                <td className="px-3 py-2 num text-right">{gbp0(r.value)}</td>
+                <td className="px-3 py-2 num text-right">{pctFmt(r.dragPct)}</td>
+                <td className={"px-3 py-2 num text-right " + (!r.sheltered && r.dragGbp > 100 ? "text-[var(--loss)]" : "")}>{r.sheltered ? `(${gbp0(r.dragGbp)})` : gbp0(r.dragGbp)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="text-xs text-[var(--muted)] leading-relaxed">
+        Drag = income yield × your marginal rate ({(plan.rates.dividend * 100).toFixed(2)}% dividends / {(plan.rates.interest * 100).toFixed(0)}% interest at your income) + expected growth × {(plan.rates.cgt * 100).toFixed(0)}% CGT × 0.5 realisation discount. Yields/growth are kind-based assumptions (override per security via a yieldPct in its metadata); individual gilts are CGT-exempt, which is why low-coupon gilts belong OUTSIDE the shelter. Dividend allowance and PSA aren't netted per holding — the drag is slightly overstated, uniformly. Estimates to guide placement, not tax advice.
+      </p>
     </div>
   );
 }
@@ -626,6 +685,24 @@ function ReportTab({ taxYears, disposals, income, carried, yearlyLiab = {} }) {
     return rows;
   };
 
+  // Phase 3.2: the whole year in ONE printable file — CGT computation,
+  // disposal schedule with matching legs, GIA dividend/interest schedules,
+  // ERI — for the tax return or the accountant (core/tax-pack.mjs).
+  const incomeEntriesAll = useAppStore((s) => s.incomeEntries);
+  const eriEntriesAll = useAppStore((s) => s.eriEntries);
+  const downloadTaxPack = () => {
+    try {
+      const html = renderTaxPackHTML(buildTaxPack({
+        year: yr, disposals, liability: liab,
+        incomeEntries: incomeEntriesAll, eriEntries: eriEntriesAll, carried,
+      }));
+      const url = URL.createObjectURL(new Blob([html], { type: "text/html" }));
+      const a = document.createElement("a"); a.href = url; a.download = `tax-pack-${yr.replace("/", "-")}.html`;
+      document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+      flash("Tax pack downloaded — open it in any browser and print to PDF for your records/accountant.");
+    } catch { flash("Download blocked in this frame — use the deployed app."); }
+  };
+
   const exportCSV = async () => {
     const rows = [["Tax year", "Disposal date", "Security", "Matching method", "Quantity", "Proceeds GBP", "Allowable cost GBP", "Gain/loss GBP"]];
     for (const d of yd) for (const l of d.legs) rows.push([yr, d.date, d.ticker, METHOD[l.method].label, l.quantity, l.proceeds.toFixed(2), l.cost.toFixed(2), l.gain.toFixed(2)]);
@@ -680,6 +757,11 @@ function ReportTab({ taxYears, disposals, income, carried, yearlyLiab = {} }) {
         <button onClick={exportPack} className="inline-flex items-center gap-1.5 text-sm font-medium px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--panel)] hover:bg-[var(--panel2)]"
           title={`Every tracked tax year (${taxYears.length}) in one file`}>
           <Download size={15} /> Download SA108 pack (all {taxYears.length} years)
+        </button>
+        <button onClick={downloadTaxPack}
+          className="inline-flex items-center gap-1.5 text-sm font-medium px-3 h-9 rounded-lg border border-[var(--accent)] text-[var(--accent)] hover:bg-[var(--panel2)]"
+          title="One printable HTML file for this tax year: CGT computation, disposal schedule with matching, GIA dividend & interest schedules, and ERI — everything the return (or your accountant) needs from this app.">
+          <Download size={15} /> Tax pack {yr} (print-ready)
         </button>
         {msg && <span className="text-xs text-[var(--muted)]">{msg}</span>}
       </div>

@@ -1719,9 +1719,157 @@ selectors is possible once something needs it. Six new UI smoke tests
 render the de-drilled tabs from store defaults — the exact wiring class
 this refactor could have broken.
 
+## Phase 3.1: drawdown tax-optimiser (strategy × tax-free-cash search)
+`core/drawdown-optimiser.mjs` (5 tests) runs the deterministic projection
+across every withdrawal ordering × TFC mode (5 × 2 = 10 combos, instant)
+and ranks them survival > lifetime tax (real, `totalTaxReal`) > estate.
+The Sequencing tab's comparison now runs through it, with two upgrades
+over the old in-component table: **PCLS-vs-UFPLS is part of the search**
+(it often moves more tax than the ordering itself), and the headline is
+**"switching saves you £X" measured against YOUR CURRENT pick**, not
+against the worst candidate — with a one-click adopt that sets both plan
+inputs. Tested: ranking policy, current-pick identification, saving
+arithmetic, adopt-best-then-rerun reports alreadyOptimal, determinism.
+
+## Phase 3.2: tax pack (one printable file per tax year)
+`core/tax-pack.mjs` (3 tests): `buildTaxPack()` assembles the year's CGT
+computation (SA108 figures), full disposal schedule with matching legs,
+GIA-only dividend & interest schedules with per-source subtotals, and ERI
+as recorded; `renderTaxPackHTML()` emits a self-contained printable HTML
+document — inline styles, zero scripts (asserted in the test), all user
+strings HTML-escaped (a tax pack must not be an XSS vector), disclaimer
+baked into the document. New button on CGT → Report: "Tax pack YYYY/YY
+(print-ready)" — open in any browser, print to PDF, hand to the
+accountant. The existing all-years SA108 CSV pack is unchanged.
+
+## Phase 3.3: asset-location optimiser (which asset in which wrapper)
+`core/asset-location.mjs` (6 tests): estimates each holding's ANNUAL tax
+drag if held in the GIA (income yield × marginal rate + expected growth ×
+CGT × 0.5 realisation discount; kind-based yield/growth assumptions,
+overridable per security via secMeta.yieldPct; individual gilts CGT-exempt
+per s115), then computes the minimum drag achievable with the SAME
+holdings and the SAME shelter capacity (fractional knapsack: shelter the
+highest-drag value first) and the £/yr saving. New "Location" sub-tab
+under CGT: drag table, suggested shelter/release moves (the Bed & ISA tab
+prices any actual move), model stated in full in the footer. Worth
+recording from the tests: for a higher-rate taxpayer under these
+assumptions the ordering is bond funds (1.66%/yr) > par-coupon gilts
+(1.40%) > equity funds (1.28%), and LOW-coupon gilts (~0.1%) are the
+classic cheap-to-hold-outside asset — the model quantifies the folklore
+instead of assuming it. In the ⌘K palette as "CGT · Asset location".
+
+## Phase 3.5: sequence-risk heatmap (every retirement start since 1926)
+The FIRECalc question answered with this app's own decumulation numbers:
+"would MY withdrawal schedule have survived retiring in 1929? 1966? Every
+year since 1926?"
+
+- **`core/market-history.mjs`** — 100 years of annual (S&P 500 total
+  return, US CPI) pairs, 1926–2025, TRANSCRIBED from slickcharts.com
+  (fetched 2026-07-12, provenance in the header — same "verified by hand,
+  not recalled" rule as the DMO/HPI endpoints; the partial current year
+  deliberately excluded). Landmark years spot-checked in the test
+  (1931: −43.34%/−9.32%; 1974: −26.47%/12.34%; 2022: −18.11%/6.45%).
+  Honesty notes stated in the module and echoed in the UI: US data (no
+  equally long free UK series exists; 1970s UK inflation was WORSE),
+  100% equity with no bond damping — absolute rates are indicative for a
+  GBP investor, the ORDERING of good and bad start years is the point.
+- **`core/sequence-heatmap.mjs`** (6 tests) — replays the plan's own
+  nominal withdrawal schedule through every rolling start-year window.
+  RAW history minus the user's fee (deliberately unlike the Scenarios
+  replay, which rescales means to isolate order effects — the heatmap's
+  question is historical). Withdrawals re-price along each window's
+  actual inflation (the Monte Carlo v2 cumSim/cumDet mechanism), so 1966
+  fails through prices tripling, not just markets falling — asserted in
+  the test by pinning inflation and watching the depletion age move.
+  Windows outrunning recorded history get the plan's own assumptions as
+  a tail, are flagged partial (min 15 historical years), and are
+  EXCLUDED from the summary success rate. The classic Trinity-style
+  result is a test: at 5.5% initial withdrawal over 30 years, 1929 and
+  1966 starts fail while 1975 and 1982 survive.
+- **UI** — decade-row heatmap on Plan → Scenarios & stress: one cell per
+  start year (green lasts / amber late / red early, dashed = partial),
+  hover for the per-window story, summary line with success rate and the
+  worst start year + depletion age.
+
+## Phase 3.6: goals + named scenario library
+Two answers to "what does this life decision do to the plan?":
+
+- **Goals (`p.goals`, inside planInputs — persisted/mirrored/synced/backed
+  up for free)** — one-off dated outflows in TODAY'S £: house deposit at
+  58, university fees at 62, a gift at 70. Engine integration in
+  `buildProjection` (5 tests, zero-goals byte-identical asserted): before
+  retirement a goal is funded from liquid wealth ISA → GIA → LISA(60+),
+  NEVER the pension — an unfundable goal reports a shortfall rather than
+  silently raiding the pot, and the Monte Carlo contribution schedule
+  nets the outflow so randomised paths see it too. From retirement a goal
+  joins that year's net spending need, so the existing waterfall pays it
+  tax-aware and a too-big goal shows up as earlier depletion — the honest
+  signal. Test finding worth keeping: lifetime tax is deliberately NOT
+  asserted to rise with a retirement goal, because early depletion can
+  LOWER lifetime tax (a dead pot pays none) — the asserted invariant is
+  the outcome worsening (estate/depletion). Panel editor shows per-goal
+  status from `det.goalEvents`: "funded from ISA/GIA at 58 ✓" / "⚠ short
+  by £43k".
+- **Scenario library (`scenarios`, new persisted key — PERSIST_KEYS,
+  durable mirror, backup TYPES all extended; exhaustiveness tests keep
+  it honest)** — save the full plan inputs under a name ("Retire at 58",
+  "Sell the BTL in 2030"), load back any time, same-name saves overwrite.
+  Each saved plan shows deterministic quick metrics inline (lasts/gone-at,
+  lifetime tax, Δtax vs the CURRENT plan). Saved plans also join the
+  Monte Carlo "Compare against" picker, compared on the same common
+  random numbers as the preset tweaks — so "Retire at 58 vs my plan" is
+  a real A/B, not two different dice rolls.
+
+## Phase 3.7: IndexedDB-primary storage + table virtualisation
+Two related fixes to the same root cause: localStorage's ~5MB-ish quota
+becomes a real ceiling once `txns`/`valuations`/a decade of dividend history
+add up, and rendering thousands of `<tr>`s at once gets sluggish well before
+that.
+
+- **IndexedDB-primary storage (`state/durable.js`, `state/appStore.js`)** —
+  `LARGE_KEYS` (`txns`, `valuations`, `netWorthSnapshots`, `incomeEntries`,
+  `eriEntries`: the collections that actually grow unbounded over years of
+  use, as opposed to settings-shaped keys like `dark` or `planInputs`) now
+  get a short **debounced** localStorage write instead of a synchronous one
+  on every change — editing a number character-by-character no longer
+  re-serialises the whole array into localStorage on every keystroke. If a
+  write ever throws (`QuotaExceededError`), it stops retrying for that key
+  for the rest of the session rather than paying a doomed JSON.stringify on
+  every subsequent change — `storageOverflow` (session-only store field)
+  records which keys this happened to, and Backup & sync shows a plain-
+  language note ("your transactions have grown past what quick-access
+  storage can hold — nothing is lost, the full data is in IndexedDB
+  instead"). IndexedDB's debounced mirror keeps getting every change from
+  live state regardless, so nothing is ever actually lost.
+  Shortly after boot, `keysWhereDurableIsAhead` (pure, tested) compares the
+  IndexedDB mirror against what localStorage just booted from and adopts
+  the mirror's copy of any LARGE_KEYS entry it holds — one-directional,
+  never the other way round, so it can't resurrect something genuinely
+  deleted this session. This is the actual "IndexedDB becomes primary"
+  fix: it's how a PREVIOUS session's quota-exceeded write (localStorage left
+  holding a shorter array than IndexedDB's much larger quota preserved) gets
+  self-healed on the next load, invisibly, without an explicit restore
+  step. A `visibilitychange` listener also flushes the debounced IndexedDB
+  mirror immediately when the tab is hidden, shrinking the window in which
+  a closed tab could lose an unflushed change.
+- **Table virtualisation (`core/virtual-rows.mjs`, `ui/shared.jsx`'s
+  `useVirtualRows`)** — Ledger and Holdings switch to windowed rendering
+  past `VIRTUALIZE_THRESHOLD` (1000) rows: a capped-height scroll region
+  with a sticky header, only the visible rows (plus overscan) actually in
+  the DOM, and two spacer `<tr>`s standing in for the height of everything
+  above/below so the scrollbar still represents the true row count. Not
+  built on a virtualization library: an absolutely-positioned `<tr>` has its
+  computed `display` forced from `table-row` to `block` per the CSS spec
+  (still true today), which breaks column alignment — the classic
+  alternative used here keeps every rendered row a REAL `<tr>` in normal
+  document flow (spacer-row + scroll-position math instead), so existing
+  column widths, `SortTh`/`sortRows`, and sticky headers all keep working
+  unmodified. Below the threshold — the overwhelming majority of users —
+  tables render exactly as before; nothing changes for them.
+
 ## Tests
 ```
-npm test        # node --test: 538 core tests + 11 UI smoke tests (test:ui)
+npm test        # node --test: 574 core tests + 12 UI smoke tests (test:ui)
 ```
 
 ## Deploy (recommended: Git → new Vercel project)

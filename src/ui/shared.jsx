@@ -1,7 +1,8 @@
 /* Shared UI primitives, formatters, price/FX fetch helpers and seed data —
    extracted verbatim from CgtDashboard.jsx (UI split, phase 1). */
-import React, { useState, useMemo, useCallback, useRef } from "react";
+import React, { useState, useMemo, useCallback, useRef, useEffect } from "react";
 import { dedupeAgainstExisting as _dedupeAgainstExisting } from "../core/dedupe.mjs";
+import { computeVisibleRange } from "../core/virtual-rows.mjs";
 
 // Safe localStorage wrapper: persists on the deployed app, silently no-ops in
 // sandboxed preview frames where storage access throws.
@@ -355,6 +356,48 @@ function sortRows(rows, sort, accessors) {
   });
   return withKey.map((x) => x.r);
 }
+// Row count past which LedgerTab/HoldingsTab switch from rendering every
+// row to the windowed mode below — chosen to match the product review's own
+// "past ~1k rows" language. Below it, tables render exactly as they always
+// have (no scroll container, no spacer rows) — this is a no-op for the
+// overwhelming majority of users.
+export const VIRTUALIZE_THRESHOLD = 1000;
+
+// DOM-facing half of windowed rendering — the range math itself lives in
+// core/virtual-rows.mjs (pure, node-tested) so it's covered without a DOM.
+// Returns a ref to attach to the scrollable container plus the current
+// visible slice bounds and the two spacer heights; callers render:
+//   <div ref={containerRef} style={{maxHeight, overflowY:"auto"}}>
+//     <table>...<tbody>
+//       {topPad>0 && <tr style={{height:topPad}}><td colSpan={n}/></tr>}
+//       {rows.slice(start,end).map(...)}
+//       {bottomPad>0 && <tr style={{height:bottomPad}}><td colSpan={n}/></tr>}
+//     </tbody></table>
+//   </div>
+// Every rendered row stays a real <tr> in normal flow (see virtual-rows.mjs
+// for why: absolutely-positioned rows lose table layout entirely), so a
+// sticky `<thead>` and existing column widths keep working unmodified.
+function useVirtualRows(rowCount, rowHeight, overscan = 10) {
+  const containerRef = useRef(null);
+  const [range, setRange] = useState({ start: 0, end: rowCount, topPad: 0, bottomPad: 0 });
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el || !rowCount) { setRange({ start: 0, end: rowCount, topPad: 0, bottomPad: 0 }); return; }
+    let raf = 0;
+    const recompute = () => {
+      raf = 0;
+      setRange(computeVisibleRange({ scrollTop: el.scrollTop, clientHeight: el.clientHeight, rowHeight, rowCount, overscan }));
+    };
+    const onScroll = () => { if (!raf) raf = requestAnimationFrame(recompute); };
+    recompute();
+    el.addEventListener("scroll", onScroll, { passive: true });
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(onScroll) : null;
+    ro?.observe(el);
+    return () => { el.removeEventListener("scroll", onScroll); ro?.disconnect(); if (raf) cancelAnimationFrame(raf); };
+  }, [rowCount, rowHeight, overscan]);
+  return { containerRef, ...range };
+}
+
 // Drop-in <th> — pass the same padding/alignment classes the table already
 // used (this repo's tables aren't all padded identically), plus an `id` that
 // matches a key in the `accessors` object passed to sortRows.
@@ -453,4 +496,5 @@ export {
   KIND_LABEL, ALLOC_COLORS, AllocBar, pct, pctPlain, toneOf, SHORT_SPAN, RateCell, rateIsDisplayable,
   IconBtn, Field, Stat, Row, MethodChip, Empty, TwoStepDelete,
   useSort, sortRows, SortTh, dedupeAgainstExisting,
+  useVirtualRows,
 };

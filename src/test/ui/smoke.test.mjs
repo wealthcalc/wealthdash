@@ -90,6 +90,32 @@ test("HomeTab with a null model shows the ledger-error empty state, not a crash"
   assert.ok(html.includes("Transactions tab"));
 });
 
+test("Phase 3.7: HoldingsTab switches to windowed rendering past VIRTUALIZE_THRESHOLD rows without crashing", () => {
+  // renderToString runs no effects, so useVirtualRows' scroll-driven
+  // narrowing never fires here (jsdom-free harness, by design — see the
+  // header comment) — this test exists to catch the windowed-rendering
+  // JSX itself (spacer <tr>s, sticky headers, the "Showing X of Y" note)
+  // throwing or mis-rendering when the row count crosses the threshold,
+  // not to assert the DOM-narrowing behaviour (covered by
+  // core/virtual-rows.test.mjs, which is pure and needs no DOM at all).
+  //
+  // LedgerTab isn't exercised the same way here: it reads `txns` from the
+  // Zustand store rather than a prop, and React's useSyncExternalStore
+  // freezes its server snapshot to whatever the store held at FIRST read —
+  // a useAppStore.setState() call before renderToString is silently
+  // invisible to the component (confirmed with a minimal repro against the
+  // pre-existing `dark` field, unrelated to this change), so there's no way
+  // to inject a >1000-row store state into a renderToString-based test.
+  // HoldingsTab takes `positions` as a plain prop, which isn't subject to
+  // that limitation, so it's the one exercised directly here; the two tabs
+  // share the exact same useVirtualRows/VIRTUALIZE_THRESHOLD code path.
+  const flatten = (html) => html.replaceAll("<!-- -->", "");
+  const manyPositions = Array.from({ length: 1200 }, (_, i) => ({ ticker: `T${i}`, wrapper: "GIA", qty: 10, bookCost: 100 }));
+  const holdingsHtml = flatten(renderToString(React.createElement(HoldingsTab, { positions: manyPositions })));
+  assert.ok(holdingsHtml.includes("Showing 1200 of 1200 positions"));
+  assert.ok(holdingsHtml.includes("T0") && holdingsHtml.includes("T1199"));
+});
+
 test("HoldingsTab renders positions with region/sector tag inputs", () => {
   const html = renderToString(React.createElement(HoldingsTab, { positions: model.positions }));
   assert.ok(html.includes("VWRL"));

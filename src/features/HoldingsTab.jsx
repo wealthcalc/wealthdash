@@ -2,7 +2,7 @@ import React, { useState, useMemo, useCallback, useRef } from "react";
 import { isWrapperTaxable } from "../core/portfolio.mjs";
 import { parseExposurePaste } from "../core/lookthrough.mjs";
 import LivePricesPanel from "../ui/LivePricesPanel.jsx";
-import { gbp, gbp0, WrapperChip, num, pct, Stat, Empty, useSort, sortRows, SortTh, todayISO } from "../ui/shared.jsx";
+import { gbp, gbp0, WrapperChip, num, pct, Stat, Empty, useSort, sortRows, SortTh, todayISO, useVirtualRows, VIRTUALIZE_THRESHOLD } from "../ui/shared.jsx";
 import useAppStore from "../state/appStore.js";
 
 /* Factsheet exposure editor — look-through v1 (core/lookthrough.mjs).
@@ -110,6 +110,16 @@ function HoldingsTab({ positions }) {
     price: (r) => (r.price === "" ? null : +r.price), value: (r) => r.value, unreal: (r) => r.unreal, pct: (r) => r.pct,
   });
 
+  // Windowed rendering past VIRTUALIZE_THRESHOLD rows (see ui/shared.jsx) —
+  // realistically bounded by distinct positions rather than transaction
+  // count, but wired up the same way as Ledger for a multi-account/broad
+  // portfolio that genuinely gets there.
+  const HOLDINGS_ROW_H = 44;
+  const virtualHoldings = rows.length > VIRTUALIZE_THRESHOLD;
+  const { containerRef: holdingsScrollRef, start: holdingsStart, end: holdingsEnd, topPad: holdingsTopPad, bottomPad: holdingsBottomPad } =
+    useVirtualRows(virtualHoldings ? rows.length : 0, HOLDINGS_ROW_H);
+  const visibleRows = virtualHoldings ? rows.slice(holdingsStart, holdingsEnd) : rows;
+
   const priced = rows.filter((r) => r.value != null);
   const totCost = priced.reduce((s, r) => s + r.cost, 0);
   const totValue = priced.reduce((s, r) => s + r.value, 0);
@@ -134,26 +144,30 @@ function HoldingsTab({ positions }) {
 
       <ExposureEditor tickers={tickers} secMeta={secMeta} setSecMeta={setSecMeta} />
 
-      <div className="rounded-xl border border-[var(--border)] overflow-hidden">
+      {/* Past VIRTUALIZE_THRESHOLD rows this becomes a capped-height scroll
+          region with a sticky header and only the visible rows (plus
+          overscan) actually in the DOM — see ui/shared.jsx's useVirtualRows. */}
+      <div ref={virtualHoldings ? holdingsScrollRef : undefined} className="rounded-xl border border-[var(--border)] overflow-hidden" style={virtualHoldings ? { maxHeight: "70vh", overflowY: "auto" } : undefined}>
         <table className="w-full text-sm">
           <thead className="bg-[var(--panel2)] text-[var(--muted)] text-xs uppercase tracking-wide">
             <tr>
-              <SortTh id="wrapper" label="Wrapper" sort={sort} onSort={toggleSort} className="px-3 py-2 font-medium" />
-              <SortTh id="tk" label="Ticker" sort={sort} onSort={toggleSort} className="px-3 py-2 font-medium" />
-              <th className="px-3 py-2 font-medium text-left">ISIN</th>
-              <th className="px-3 py-2 font-medium text-left" title="Where the holding's underlying exposure actually is — your judgement, powers the Wealth tab's region bar">Region</th>
-              <th className="px-3 py-2 font-medium text-left" title="Sector of the underlying exposure — 'Diversified' is the honest tag for a broad fund">Sector</th>
-              <SortTh id="qty" label="Quantity" sort={sort} onSort={toggleSort} align="right" className="px-3 py-2 font-medium" />
-              <SortTh id="avg" label="Avg cost" sort={sort} onSort={toggleSort} align="right" className="px-3 py-2 font-medium" />
-              <SortTh id="cost" label="Pool cost" sort={sort} onSort={toggleSort} align="right" className="px-3 py-2 font-medium" />
-              <SortTh id="price" label="Price now" sort={sort} onSort={toggleSort} align="right" className="px-3 py-2 font-medium" />
-              <SortTh id="value" label="Market value" sort={sort} onSort={toggleSort} align="right" className="px-3 py-2 font-medium" />
-              <SortTh id="unreal" label="Unrealised" sort={sort} onSort={toggleSort} align="right" className="px-3 py-2 font-medium" />
-              <SortTh id="pct" label="%" sort={sort} onSort={toggleSort} align="right" className="px-3 py-2 font-medium" />
+              <SortTh id="wrapper" label="Wrapper" sort={sort} onSort={toggleSort} className="px-3 py-2 font-medium sticky top-0 z-10 bg-[var(--panel2)]" />
+              <SortTh id="tk" label="Ticker" sort={sort} onSort={toggleSort} className="px-3 py-2 font-medium sticky top-0 z-10 bg-[var(--panel2)]" />
+              <th className="px-3 py-2 font-medium text-left sticky top-0 z-10 bg-[var(--panel2)]">ISIN</th>
+              <th className="px-3 py-2 font-medium text-left sticky top-0 z-10 bg-[var(--panel2)]" title="Where the holding's underlying exposure actually is — your judgement, powers the Wealth tab's region bar">Region</th>
+              <th className="px-3 py-2 font-medium text-left sticky top-0 z-10 bg-[var(--panel2)]" title="Sector of the underlying exposure — 'Diversified' is the honest tag for a broad fund">Sector</th>
+              <SortTh id="qty" label="Quantity" sort={sort} onSort={toggleSort} align="right" className="px-3 py-2 font-medium sticky top-0 z-10 bg-[var(--panel2)]" />
+              <SortTh id="avg" label="Avg cost" sort={sort} onSort={toggleSort} align="right" className="px-3 py-2 font-medium sticky top-0 z-10 bg-[var(--panel2)]" />
+              <SortTh id="cost" label="Pool cost" sort={sort} onSort={toggleSort} align="right" className="px-3 py-2 font-medium sticky top-0 z-10 bg-[var(--panel2)]" />
+              <SortTh id="price" label="Price now" sort={sort} onSort={toggleSort} align="right" className="px-3 py-2 font-medium sticky top-0 z-10 bg-[var(--panel2)]" />
+              <SortTh id="value" label="Market value" sort={sort} onSort={toggleSort} align="right" className="px-3 py-2 font-medium sticky top-0 z-10 bg-[var(--panel2)]" />
+              <SortTh id="unreal" label="Unrealised" sort={sort} onSort={toggleSort} align="right" className="px-3 py-2 font-medium sticky top-0 z-10 bg-[var(--panel2)]" />
+              <SortTh id="pct" label="%" sort={sort} onSort={toggleSort} align="right" className="px-3 py-2 font-medium sticky top-0 z-10 bg-[var(--panel2)]" />
             </tr>
           </thead>
           <tbody className="divide-y divide-[var(--border)] bg-[var(--panel)]">
-            {rows.map((r) => (
+            {holdingsTopPad > 0 && <tr aria-hidden="true"><td colSpan={12} style={{ height: holdingsTopPad, padding: 0, border: 0 }} /></tr>}
+            {visibleRows.map((r) => (
               <tr key={r.wrapper + r.tk} className="hover:bg-[var(--panel2)]">
                 <td className="px-3 py-2"><WrapperChip wrapper={r.wrapper} /></td>
                 <td className="px-3 py-2 font-medium">
@@ -182,9 +196,15 @@ function HoldingsTab({ positions }) {
                 <td className={"px-3 py-2 num text-right " + (r.pct == null ? "text-[var(--muted)]" : r.pct >= 0 ? "text-[var(--gain)]" : "text-[var(--loss)]")}>{r.pct != null ? `${r.pct >= 0 ? "+" : ""}${num(r.pct)}%` : "—"}</td>
               </tr>
             ))}
+            {holdingsBottomPad > 0 && <tr aria-hidden="true"><td colSpan={12} style={{ height: holdingsBottomPad, padding: 0, border: 0 }} /></tr>}
           </tbody>
         </table>
       </div>
+      {virtualHoldings && (
+        <p className="text-xs text-[var(--muted)]">
+          Showing {visibleRows.length} of {rows.length} positions in view — scroll for more (rendering all {rows.length} at once past {VIRTUALIZE_THRESHOLD} rows gets sluggish, so only the visible window is in the page).
+        </p>
+      )}
       <p className="text-xs text-[var(--muted)]">
         All holdings across every wrapper (GIA, ISA, SIPP, LISA, VCT). The same price per share applies to a ticker wherever it's held. Prices save locally on your device.
         Unrealised gain = current value − Section 104 pool cost; it's an indicator, not a taxable event. Only <span className="font-semibold">GIA</span> holdings are subject to CGT — ISA/SIPP/LISA/VCT are sheltered.
