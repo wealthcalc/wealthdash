@@ -69,7 +69,7 @@ function LocationTab({ positions = [], secMeta = {}, income = 0 }) {
         </div>
       )}
 
-      <div className="rounded-xl border border-[var(--border)] overflow-hidden">
+      <div className="rounded-xl border border-[var(--border)] overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="bg-[var(--panel2)] text-[var(--muted)] text-xs uppercase tracking-wide">
             <tr>{["Holding", "Wrapper", "Value", "GIA drag %/yr", "GIA drag £/yr"].map((h, i) => (
@@ -139,7 +139,7 @@ function RebalanceTab({ positions = [], disposals = [], income = 0 }) {
 
       <div>
         <h3 className="text-sm font-semibold mb-2">Target split — bonds/gilts vs equities</h3>
-        <div className="rounded-xl border border-[var(--border)] overflow-hidden">
+        <div className="rounded-xl border border-[var(--border)] overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-[var(--panel2)] text-[var(--muted)] text-xs uppercase tracking-wide">
               <tr>{["Bucket", "Current", "Target %", "Drift"].map((h, i) => (
@@ -181,7 +181,7 @@ function RebalanceTab({ positions = [], disposals = [], income = 0 }) {
       {plan.sells.rows.length > 0 && (
         <div>
           <h3 className="text-sm font-semibold mb-2">Sell candidates — cheapest tax cost first</h3>
-          <div className="rounded-xl border border-[var(--border)] overflow-hidden">
+          <div className="rounded-xl border border-[var(--border)] overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="bg-[var(--panel2)] text-[var(--muted)] text-xs uppercase tracking-wide">
                 <tr>{["Ticker", "Wrapper", "Kind", "Sell", "Est. gain", "Tax impact"].map((h, i) => (
@@ -211,7 +211,7 @@ function RebalanceTab({ positions = [], disposals = [], income = 0 }) {
       {plan.buys.length > 0 && (
         <div>
           <h3 className="text-sm font-semibold mb-2">Underweight — where new money could go</h3>
-          <div className="rounded-xl border border-[var(--border)] overflow-hidden">
+          <div className="rounded-xl border border-[var(--border)] overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="bg-[var(--panel2)] text-[var(--muted)] text-xs uppercase tracking-wide">
                 <tr>{["Bucket", "Amount needed", "Existing holdings you could add to"].map((h, i) => (
@@ -506,7 +506,7 @@ function PlanningTab({ pools, prices, setPrices, disposals, txns, income }) {
 
       <div>
         <h3 className="text-sm font-semibold mb-2">Harvesting — sell within this year's allowance</h3>
-        <div className="rounded-xl border border-[var(--border)] overflow-hidden">
+        <div className="rounded-xl border border-[var(--border)] overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-[var(--panel2)] text-[var(--muted)] text-xs uppercase tracking-wide">
               <tr>{["Ticker", "Avg cost", "Price now", "Gain / share", "Unrealised", "Max shares tax-free", "Gain realised"].map((h, i) => (
@@ -613,7 +613,7 @@ function MultiYearOptimiser({ pools, prices, income }) {
             <Stat label="Tax over plan" value={gbp(totalTax)} tone={totalTax > 0 ? "loss" : undefined} sub={useBasicBand ? "basic-band 18%" : "within AEA"} />
           </div>
 
-          <div className="rounded-xl border border-[var(--border)] overflow-hidden">
+          <div className="rounded-xl border border-[var(--border)] overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="bg-[var(--panel2)] text-[var(--muted)] text-xs uppercase tracking-wide">
                 <tr>{["Tax year", "Harvest", "AEA used", "Tax", "Sell", "Cumulative washed", "Gain still embedded"].map((h, i) => (

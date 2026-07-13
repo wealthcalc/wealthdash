@@ -167,7 +167,7 @@ function IncomeTab({ eriTxns, incomeByYear, incomeAllWrappers = {}, txns, income
                   </button>
                 ))}
               </div>
-              <div className="rounded-xl border border-[var(--border)] overflow-hidden">
+              <div className="rounded-xl border border-[var(--border)] overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead className="bg-[var(--panel2)] text-[var(--muted)] text-xs uppercase tracking-wide">
                     <tr>{["Tax year", "Dividends", "Interest", "Total"].map((h, i) => <th key={i} className={"py-2 px-3 font-medium " + (i ? "text-right" : "text-left")}>{h}</th>)}</tr>
@@ -195,7 +195,7 @@ function IncomeTab({ eriTxns, incomeByYear, incomeAllWrappers = {}, txns, income
           {years.length ? (
             <div className="space-y-2">
               <h3 className="font-semibold text-sm">Taxable investment income tax by year <span className="font-normal text-[var(--muted)]">(GIA only, includes ERI)</span></h3>
-              <div className="rounded-xl border border-[var(--border)] overflow-hidden">
+              <div className="rounded-xl border border-[var(--border)] overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead className="bg-[var(--panel2)] text-[var(--muted)]">
                     <tr>{["Tax year", "Dividends", "Interest", "Dividend tax", "Interest tax", "Total"].map((h, i) => <th key={i} className={"py-2 px-3 font-medium " + (i ? "text-right" : "text-left")}>{h}</th>)}</tr>
@@ -235,7 +235,7 @@ function IncomeTab({ eriTxns, incomeByYear, incomeAllWrappers = {}, txns, income
             <button onClick={addDiv} className="btn-accent"><Plus size={15} /> Add</button>
           </div>
           {incomeEntries.length > 0 && (
-            <div className="rounded-xl border border-[var(--border)] overflow-hidden">
+            <div className="rounded-xl border border-[var(--border)] overflow-x-auto">
               <table className="w-full text-sm">
                 <thead className="bg-[var(--panel2)] text-[var(--muted)] text-xs uppercase tracking-wide">
                   <tr>
@@ -291,7 +291,7 @@ function IncomeTab({ eriTxns, incomeByYear, incomeAllWrappers = {}, txns, income
             <p className="text-xs text-[var(--muted)] num">Preview: {num(eriPreview.units, eriPreview.units % 1 ? 4 : 0)} units held at {er.periodEnd} → ERI {gbp(eriPreview.g || 0)} taxed in {er.distributionDate ? ukTaxYear(er.distributionDate) : "—"}.</p>
           )}
           {eriEntries.length > 0 && (
-            <div className="rounded-xl border border-[var(--border)] overflow-hidden">
+            <div className="rounded-xl border border-[var(--border)] overflow-x-auto">
               <table className="w-full text-sm">
                 <thead className="bg-[var(--panel2)] text-[var(--muted)]">
                   <tr>
@@ -455,7 +455,7 @@ function IncomeCalendarView({ events }) {
           </div>
         </div>
       )}
-      <div className="rounded-xl border border-[var(--border)] overflow-hidden">
+      <div className="rounded-xl border border-[var(--border)] overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="bg-[var(--panel2)] text-[var(--muted)] text-xs uppercase tracking-wide">
             <tr>
@@ -543,7 +543,7 @@ function EriCoverage({ txns, eriEntries, secMeta, setSecMeta }) {
         Every fund ever held unsheltered — open and fully closed positions — with the years held and which have a recorded ERI entry. A closed position still owes ERI for any accounting period that fell inside the time it was held.
         {flagged > 0 && ` ${flagged} fund${flagged === 1 ? "" : "s"} need${flagged === 1 ? "s" : ""} a look.`}
       </p>
-      <div className="rounded-xl border border-[var(--border)] overflow-hidden">
+      <div className="rounded-xl border border-[var(--border)] overflow-x-auto">
         <table className="w-full text-xs">
           <thead className="bg-[var(--panel2)] text-[var(--muted)]">
             <tr>{["Fund", "ISIN", "Held", "Years covered", "Status"].map((h, i) => <th key={i} className="py-2 px-3 font-medium text-left">{h}</th>)}</tr>

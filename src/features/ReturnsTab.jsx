@@ -112,7 +112,7 @@ function ReturnsTab({ returns }) {
       </div>
 
       {/* per-wrapper — click a row to filter the per-holding table below */}
-      <div className="rounded-xl border border-[var(--border)] overflow-hidden">
+      <div className="rounded-xl border border-[var(--border)] overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="bg-[var(--panel2)] text-[var(--muted)] text-xs uppercase tracking-wide">
             <tr>{["Wrapper", "Money in", "Money out + income", "Value now", "Profit", "Simple", "XIRR", "Yield 12m", "Yield fwd"].map((h, i) => (
@@ -325,7 +325,7 @@ function BenchmarkRiskView({ portfolioTWR, perHolding, secMeta, setSecMeta }) {
           <Empty msg="No open holdings to show fees for." />
         ) : (
           <>
-            <div className="rounded-xl border border-[var(--border)] overflow-hidden">
+            <div className="rounded-xl border border-[var(--border)] overflow-x-auto">
               <table className="w-full text-sm">
                 <thead className="bg-[var(--panel2)] text-[var(--muted)] text-xs uppercase tracking-wide">
                   <tr>{["Ticker", "Wrapper", "Value", "OCF %/yr", "Annual cost"].map((h, i) => (

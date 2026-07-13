@@ -166,7 +166,7 @@ function PrivateTab() {
                 {isOpen && (
                   <div className="space-y-2">
                     {holdingEvents.length > 0 && (
-                      <div className="rounded-lg border border-[var(--border)] overflow-hidden">
+                      <div className="rounded-lg border border-[var(--border)] overflow-x-auto">
                         <table className="w-full text-xs">
                           <thead className="bg-[var(--panel2)] text-[var(--muted)] uppercase tracking-wide">
                             <tr><th className="px-2 py-1 text-left">Date</th><th className="px-2 py-1 text-left">Type</th><th className="px-2 py-1 text-right">Amount</th><th className="px-2 py-1 text-left">Notes</th><th></th></tr>

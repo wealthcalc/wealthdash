@@ -120,7 +120,7 @@ function WealthTab({ model, concentration = null }) {
       <LivePricesPanel tickers={tickers} />
 
       {/* per-wrapper roll-up with editable cash */}
-      <div className="rounded-xl border border-[var(--border)] overflow-hidden">
+      <div className="rounded-xl border border-[var(--border)] overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="bg-[var(--panel2)] text-[var(--muted)] text-xs uppercase tracking-wide">
             <tr>{["Wrapper", "Holdings", "Book cost", "Market value", "Unrealised", "Cash", "Total"].map((h, i) => (
@@ -356,7 +356,7 @@ function WealthTab({ model, concentration = null }) {
       </div>
 
       {/* consolidated holdings */}
-      <div className="rounded-xl border border-[var(--border)] overflow-hidden">
+      <div className="rounded-xl border border-[var(--border)] overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="bg-[var(--panel2)] text-[var(--muted)] text-xs uppercase tracking-wide">
             <tr>{["Wrapper", "Ticker", "Quantity", "Avg cost", "Book cost", "Price now", "Market value", "Unrealised", "%"].map((h, i) => (

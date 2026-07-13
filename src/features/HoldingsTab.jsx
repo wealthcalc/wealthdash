@@ -147,7 +147,7 @@ function HoldingsTab({ positions }) {
       {/* Past VIRTUALIZE_THRESHOLD rows this becomes a capped-height scroll
           region with a sticky header and only the visible rows (plus
           overscan) actually in the DOM — see ui/shared.jsx's useVirtualRows. */}
-      <div ref={virtualHoldings ? holdingsScrollRef : undefined} className="rounded-xl border border-[var(--border)] overflow-hidden" style={virtualHoldings ? { maxHeight: "70vh", overflowY: "auto" } : undefined}>
+      <div ref={virtualHoldings ? holdingsScrollRef : undefined} className="rounded-xl border border-[var(--border)] overflow-x-auto" style={virtualHoldings ? { maxHeight: "70vh", overflowY: "auto" } : undefined}>
         <table className="w-full text-sm">
           <thead className="bg-[var(--panel2)] text-[var(--muted)] text-xs uppercase tracking-wide">
             <tr>
