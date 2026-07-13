@@ -34,7 +34,7 @@ export const RESTORE_ONLY = ["avKey", "ibkrToken"];
 export const ID_ARRAYS = [
   "txns", "incomeEntries", "eriEntries", "pensionCashflows", "properties", "mortgages",
   "otherLiabilities", "cashAccounts", "privateHoldings", "privateEvents", "rsuGrants",
-  "rsuEvents", "creditCards",
+  "rsuEvents", "creditCards", "scenarios",
 ];
 // Keys merged into current state rather than replacing it.
 export const MERGE_KEYS = ["secMeta"];
@@ -46,7 +46,7 @@ const TYPES = {
   netWorthSnapshots: "array", pensionCashflows: "array", properties: "array",
   mortgages: "array", otherLiabilities: "array", cashAccounts: "array",
   privateHoldings: "array", privateEvents: "array", rsuGrants: "array",
-  rsuEvents: "array", creditCards: "array",
+  rsuEvents: "array", creditCards: "array", scenarios: "array",
   cash: "object", prices: "object", priceMeta: "object", avMeta: "object",
   secMeta: "object", allowanceOverrides: "object", planInputs: "object",
   income: "number", carried: "number",

@@ -23,6 +23,7 @@ const TOOL_ITEMS = [
   { label: "CGT · Harvesting planner", leaf: "cgt", subKey: "cgt.cgtsubtab", subVal: "planning", hint: "sell within the allowance" },
   { label: "CGT · Bed & ISA", leaf: "cgt", subKey: "cgt.cgtsubtab", subVal: "bedisa", hint: "move gains into shelter" },
   { label: "CGT · Rebalance", leaf: "cgt", subKey: "cgt.cgtsubtab", subVal: "rebalance", hint: "tax-aware drift fix" },
+  { label: "CGT · Asset location", leaf: "cgt", subKey: "cgt.cgtsubtab", subVal: "location", hint: "which asset in which wrapper" },
   { label: "CGT · Report (SA108)", leaf: "cgt", subKey: "cgt.cgtsubtab", subVal: "report", hint: "tax return pack" },
   { label: "CGT · What-if", leaf: "cgt", subKey: "cgt.cgtsubtab", subVal: "whatif", hint: "model a sale" },
   { label: "Plan · Income floor", leaf: "plan", subKey: "plan.subtab", subVal: "floor", hint: "guaranteed income vs essentials" },

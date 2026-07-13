@@ -577,26 +577,25 @@ export default function App() {
                 } : null,
               }} />}
               {tab === "wealth" && <WealthTab model={wealthModel} concentration={exposureConcentration} />}
-              {tab === "returns" && <ReturnsTab {...{ returns, valuations, pensionCashflows, secMeta, setSecMeta, txns }} />}
+              {tab === "returns" && <ReturnsTab returns={returns} />}
               {tab === "gilts" && <GiltsTab data={giltData} />}
-              {tab === "pension" && <PensionTab {...{ txns, setTxns, cash, setCash, secMeta, setSecMeta, prices, setPrices, pensionCashflows, setPensionCashflows, recomputeProviderCost }} />}
+              {tab === "pension" && <PensionTab recomputeProviderCost={recomputeProviderCost} />}
               {tab === "cgt" && <CgtSection {...{
-                taxYears, activeYear, setYear, yearDisposals, liab, income, setIncome, carried, setCarried,
+                taxYears, activeYear, setYear, yearDisposals, liab,
                 carryForward: allYears.carriedForward, exemptGiltDisposalCount,
-                pools: taxablePools, disposals: taxableDisposals, prices, setPrices, txns: giaTxns,
-                allTxns: txns, secMeta, setTxns,
+                pools: taxablePools, disposals: taxableDisposals, txns: giaTxns,
                 positions: wealthModel ? wealthModel.positions : [],
                 yearlyLiab: allYears.results,
               }} />}
-              {tab === "allowances" && <AllowancesTab {...{ txns, pensionCashflows, incomeEntries, eriTxns, income, taxableDisposals, overrides: allowanceOverrides, setOverrides: setAllowanceOverrides }} />}
-              {tab === "income" && <IncomeTab {...{ incomeEntries, setIncomeEntries, eriEntries, setEriEntries, eriTxns, incomeByYear, incomeAllWrappers, income, setIncome, txns: giaTxns, secMeta, setSecMeta, incomeCalendar }} />}
+              {tab === "allowances" && <AllowancesTab eriTxns={eriTxns} taxableDisposals={taxableDisposals} />}
+              {tab === "income" && <IncomeTab {...{ eriTxns, incomeByYear, incomeAllWrappers, txns: giaTxns, incomeCalendar }} />}
               {tab === "holdings" && <HoldingsTab positions={wealthModel ? wealthModel.positions : []} />}
-              {tab === "property" && <PropertyTab {...{ properties, setProperties, mortgages, setMortgages, otherLiabilities, setOtherLiabilities }} />}
-              {tab === "private" && <PrivateTab {...{ holdings: privateHoldings, setHoldings: setPrivateHoldings, events: privateEvents, setEvents: setPrivateEvents }} />}
+              {tab === "property" && <PropertyTab />}
+              {tab === "private" && <PrivateTab />}
               {tab === "rsu" && <RsuTab />}
-              {tab === "ledger" && <LedgerTab {...{ txns, setTxns }} />}
+              {tab === "ledger" && <LedgerTab />}
               {tab === "sync" && <SyncTab />}
-              {tab === "import" && <ImportTab {...{ setTxns, setTab, setIncomeEntries, setEriEntries, secMeta, setPensionCashflows, pensionCashflows, recomputeProviderCost, txns, incomeEntries, eriEntries, ibkrQueryId, setIbkrQueryId, ibkrToken, setIbkrToken, rsuGrants, setRsuGrants, rsuEvents, setRsuEvents }} />}
+              {tab === "import" && <ImportTab setTab={setTab} recomputeProviderCost={recomputeProviderCost} />}
             </Suspense>
             </div>
             )}

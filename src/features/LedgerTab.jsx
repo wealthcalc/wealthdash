@@ -1,7 +1,8 @@
 import React, { useState, useMemo, useCallback, useRef } from "react";
 import { Plus, Wand2, RefreshCw } from "lucide-react";
 import { WRAPPERS, normWrapper } from "../core/portfolio.mjs";
-import { store, num, NumberInput, uid, todayISO, Field, fxToGBP, gbp, useSort, sortRows, SortTh, TwoStepDelete } from "../ui/shared.jsx";
+import { store, num, NumberInput, uid, todayISO, Field, fxToGBP, gbp, useSort, sortRows, SortTh, TwoStepDelete, useVirtualRows, VIRTUALIZE_THRESHOLD } from "../ui/shared.jsx";
+import useAppStore from "../state/appStore.js";
 
 // `fees`: dealing costs NOT already inside the amount (commission, stamp
 // duty, PTM levy) — BUY cost +fees, SELL proceeds −fees in the CGT/returns
@@ -9,7 +10,9 @@ import { store, num, NumberInput, uid, todayISO, Field, fxToGBP, gbp, useSort, s
 // `account`: free-text broker/account label ("HL ISA", "IBKR") so two
 // accounts in the same wrapper stay distinguishable.
 const BLANK = () => ({ id: uid(), date: todayISO(), ticker: "", side: "BUY", quantity: "", nativeCurrency: "GBP", nativeAmount: "", fxRate: 1, gbpAmount: "", fees: "", account: "", wrapper: "GIA", note: "" });
-function LedgerTab({ txns, setTxns }) {
+// Phase 2.8 de-drilling: all raw persisted state from the store.
+function LedgerTab() {
+  const txns = useAppStore((s) => s.txns), setTxns = useAppStore((s) => s.setTxns);
   const [draft, setDraft] = useState(BLANK());
   const [fxBusy, setFxBusy] = useState(false);
 
@@ -70,6 +73,14 @@ function LedgerTab({ txns, setTxns }) {
   }, [txns]);
   const scopedTxns = filterWrapper === "All" ? txns : txns.filter((t) => normWrapper(t.wrapper) === filterWrapper);
   const filteredRows = useMemo(() => sortRows(scopedTxns, sort, SORT_ACCESSORS), [scopedTxns, sort]);
+  // Windowed rendering past VIRTUALIZE_THRESHOLD rows (see ui/shared.jsx) —
+  // a decade of active trading can comfortably run into thousands of rows,
+  // and rendering every <tr> at once gets sluggish well before that.
+  const LEDGER_ROW_H = 40;
+  const virtualLedger = filteredRows.length > VIRTUALIZE_THRESHOLD;
+  const { containerRef: ledgerScrollRef, start: ledgerStart, end: ledgerEnd, topPad: ledgerTopPad, bottomPad: ledgerBottomPad } =
+    useVirtualRows(virtualLedger ? filteredRows.length : 0, LEDGER_ROW_H);
+  const visibleRows = virtualLedger ? filteredRows.slice(ledgerStart, ledgerEnd) : filteredRows;
   // Adding a transaction while filtered to one wrapper should land in that
   // wrapper by default — switching the filter re-defaults the add-form too,
   // without fighting a manual override mid-edit.
@@ -126,30 +137,35 @@ function LedgerTab({ txns, setTxns }) {
         </div>
       </div>
 
-      {/* table — every field editable inline; edits recompute GBP from native×fx same as the add form */}
-      <div className="rounded-xl border border-[var(--border)] overflow-x-auto">
+      {/* table — every field editable inline; edits recompute GBP from native×fx same as the add form.
+          Past VIRTUALIZE_THRESHOLD rows this becomes a capped-height scroll
+          region with a sticky header and only the visible rows (plus
+          overscan) actually in the DOM — see ui/shared.jsx's useVirtualRows. */}
+      <div ref={virtualLedger ? ledgerScrollRef : undefined} className="rounded-xl border border-[var(--border)] overflow-x-auto" style={virtualLedger ? { maxHeight: "70vh", overflowY: "auto" } : undefined}>
         <table className="w-full text-sm">
           <thead className="bg-[var(--panel2)] text-[var(--muted)] text-xs uppercase tracking-wide">
             <tr>
-              <SortTh id="date" label="Date" sort={sort} onSort={toggleSort} className="px-2 py-1.5 font-medium" />
-              <SortTh id="ticker" label="Ticker" sort={sort} onSort={toggleSort} className="px-2 py-1.5 font-medium" />
-              <SortTh id="side" label="Side" sort={sort} onSort={toggleSort} className="px-2 py-1.5 font-medium" />
-              <SortTh id="quantity" label="Qty" sort={sort} onSort={toggleSort} align="right" className="px-2 py-1.5 font-medium" />
-              <SortTh id="nativeCurrency" label="Ccy" sort={sort} onSort={toggleSort} align="right" className="px-2 py-1.5 font-medium" />
-              <SortTh id="nativeAmount" label="Native" sort={sort} onSort={toggleSort} align="right" className="px-2 py-1.5 font-medium" />
-              <SortTh id="fxRate" label="FX" sort={sort} onSort={toggleSort} align="right" className="px-2 py-1.5 font-medium" />
-              <SortTh id="gbpAmount" label="GBP" sort={sort} onSort={toggleSort} align="right" className="px-2 py-1.5 font-medium" />
-              <SortTh id="fees" label="Fees" sort={sort} onSort={toggleSort} align="right" className="px-2 py-1.5 font-medium" />
-              <SortTh id="account" label="Account" sort={sort} onSort={toggleSort} className="px-2 py-1.5 font-medium" />
-              {/* Sticky to the right so it's never scrolled out of view on a
-                  table this wide — the whole point of a delete control is
-                  that it's always reachable, not something you have to go
-                  hunting for past eight other columns. */}
-              <th className="px-2 py-1.5 text-left font-medium sticky right-0 bg-[var(--panel2)] border-l border-[var(--border)]">Delete</th>
+              <SortTh id="date" label="Date" sort={sort} onSort={toggleSort} className="px-2 py-1.5 font-medium sticky top-0 z-10 bg-[var(--panel2)]" />
+              <SortTh id="ticker" label="Ticker" sort={sort} onSort={toggleSort} className="px-2 py-1.5 font-medium sticky top-0 z-10 bg-[var(--panel2)]" />
+              <SortTh id="side" label="Side" sort={sort} onSort={toggleSort} className="px-2 py-1.5 font-medium sticky top-0 z-10 bg-[var(--panel2)]" />
+              <SortTh id="quantity" label="Qty" sort={sort} onSort={toggleSort} align="right" className="px-2 py-1.5 font-medium sticky top-0 z-10 bg-[var(--panel2)]" />
+              <SortTh id="nativeCurrency" label="Ccy" sort={sort} onSort={toggleSort} align="right" className="px-2 py-1.5 font-medium sticky top-0 z-10 bg-[var(--panel2)]" />
+              <SortTh id="nativeAmount" label="Native" sort={sort} onSort={toggleSort} align="right" className="px-2 py-1.5 font-medium sticky top-0 z-10 bg-[var(--panel2)]" />
+              <SortTh id="fxRate" label="FX" sort={sort} onSort={toggleSort} align="right" className="px-2 py-1.5 font-medium sticky top-0 z-10 bg-[var(--panel2)]" />
+              <SortTh id="gbpAmount" label="GBP" sort={sort} onSort={toggleSort} align="right" className="px-2 py-1.5 font-medium sticky top-0 z-10 bg-[var(--panel2)]" />
+              <SortTh id="fees" label="Fees" sort={sort} onSort={toggleSort} align="right" className="px-2 py-1.5 font-medium sticky top-0 z-10 bg-[var(--panel2)]" />
+              <SortTh id="account" label="Account" sort={sort} onSort={toggleSort} className="px-2 py-1.5 font-medium sticky top-0 z-10 bg-[var(--panel2)]" />
+              {/* Sticky to the right (and, above the threshold, also to the
+                  top) so it's never scrolled out of view on a table this
+                  wide — the whole point of a delete control is that it's
+                  always reachable, not something you have to go hunting
+                  for past eight other columns. */}
+              <th className="px-2 py-1.5 text-left font-medium sticky right-0 top-0 z-20 bg-[var(--panel2)] border-l border-[var(--border)]">Delete</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-[var(--border)] bg-[var(--panel)]">
-            {filteredRows.map((t) => {
+            {ledgerTopPad > 0 && <tr aria-hidden="true"><td colSpan={11} style={{ height: ledgerTopPad, padding: 0, border: 0 }} /></tr>}
+            {visibleRows.map((t) => {
               const isGBP = (t.nativeCurrency || "GBP") === "GBP";
               return (
                 <tr key={t.id} className="group hover:bg-[var(--panel2)]">
@@ -182,9 +198,15 @@ function LedgerTab({ txns, setTxns }) {
                 </tr>
               );
             })}
+            {ledgerBottomPad > 0 && <tr aria-hidden="true"><td colSpan={11} style={{ height: ledgerBottomPad, padding: 0, border: 0 }} /></tr>}
           </tbody>
         </table>
       </div>
+      {virtualLedger && (
+        <p className="text-xs text-[var(--muted)]">
+          Showing {visibleRows.length} of {filteredRows.length} transactions in view — scroll for more (rendering all {filteredRows.length} at once past {VIRTUALIZE_THRESHOLD} rows gets sluggish, so only the visible window is in the page).
+        </p>
+      )}
       {/* one shared suggestion list for the add-form and inline Account inputs */}
       <datalist id="ledger-accounts">
         {[...new Set(txns.map((t) => t.account).filter(Boolean))].sort().map((a) => <option key={a} value={a} />)}

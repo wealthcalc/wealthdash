@@ -23,6 +23,12 @@ import WealthTab from "../../features/WealthTab.jsx";
 import GiltsTab from "../../features/GiltsTab.jsx";
 import RsuTab from "../../features/RsuTab.jsx";
 import SyncTab from "../../features/SyncTab.jsx";
+import LedgerTab from "../../features/LedgerTab.jsx";
+import PropertyTab from "../../features/PropertyTab.jsx";
+import PrivateTab from "../../features/PrivateTab.jsx";
+import PensionTab from "../../features/PensionTab.jsx";
+import AllowancesTab from "../../features/AllowancesTab.jsx";
+import ReturnsTab from "../../features/ReturnsTab.jsx";
 
 // Minimal but real derived model — two priced holdings across wrappers.
 const TXNS = [
@@ -84,6 +90,32 @@ test("HomeTab with a null model shows the ledger-error empty state, not a crash"
   assert.ok(html.includes("Transactions tab"));
 });
 
+test("Phase 3.7: HoldingsTab switches to windowed rendering past VIRTUALIZE_THRESHOLD rows without crashing", () => {
+  // renderToString runs no effects, so useVirtualRows' scroll-driven
+  // narrowing never fires here (jsdom-free harness, by design — see the
+  // header comment) — this test exists to catch the windowed-rendering
+  // JSX itself (spacer <tr>s, sticky headers, the "Showing X of Y" note)
+  // throwing or mis-rendering when the row count crosses the threshold,
+  // not to assert the DOM-narrowing behaviour (covered by
+  // core/virtual-rows.test.mjs, which is pure and needs no DOM at all).
+  //
+  // LedgerTab isn't exercised the same way here: it reads `txns` from the
+  // Zustand store rather than a prop, and React's useSyncExternalStore
+  // freezes its server snapshot to whatever the store held at FIRST read —
+  // a useAppStore.setState() call before renderToString is silently
+  // invisible to the component (confirmed with a minimal repro against the
+  // pre-existing `dark` field, unrelated to this change), so there's no way
+  // to inject a >1000-row store state into a renderToString-based test.
+  // HoldingsTab takes `positions` as a plain prop, which isn't subject to
+  // that limitation, so it's the one exercised directly here; the two tabs
+  // share the exact same useVirtualRows/VIRTUALIZE_THRESHOLD code path.
+  const flatten = (html) => html.replaceAll("<!-- -->", "");
+  const manyPositions = Array.from({ length: 1200 }, (_, i) => ({ ticker: `T${i}`, wrapper: "GIA", qty: 10, bookCost: 100 }));
+  const holdingsHtml = flatten(renderToString(React.createElement(HoldingsTab, { positions: manyPositions })));
+  assert.ok(holdingsHtml.includes("Showing 1200 of 1200 positions"));
+  assert.ok(holdingsHtml.includes("T0") && holdingsHtml.includes("T1199"));
+});
+
 test("HoldingsTab renders positions with region/sector tag inputs", () => {
   const html = renderToString(React.createElement(HoldingsTab, { positions: model.positions }));
   assert.ok(html.includes("VWRL"));
@@ -114,6 +146,22 @@ test("SyncTab renders the disabled state with both setup paths", () => {
   assert.ok(html.includes("Create a new sync"));
   assert.ok(html.includes("Connect this device"));
   assert.ok(html.includes("no reset"));
+});
+
+test("de-drilled data tabs render from store defaults without props", () => {
+  // These tabs now read raw state via store selectors (Phase 2.8) — the
+  // exact wiring this suite exists to catch regressions in.
+  for (const [name, el] of [
+    ["Ledger", React.createElement(LedgerTab)],
+    ["Property", React.createElement(PropertyTab)],
+    ["Private", React.createElement(PrivateTab)],
+    ["Pension", React.createElement(PensionTab, { recomputeProviderCost: () => {} })],
+    ["Allowances", React.createElement(AllowancesTab, { eriTxns: [], taxableDisposals: [] })],
+    ["Returns", React.createElement(ReturnsTab, { returns: null })],
+  ]) {
+    const html = renderToString(el);
+    assert.ok(html.length > 50, `${name} rendered almost nothing`);
+  }
 });
 
 test("PlanHealthCard renders the no-plan prompt and a real projection", () => {

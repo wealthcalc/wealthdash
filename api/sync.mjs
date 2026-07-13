@@ -71,7 +71,7 @@ export default async function handler(req, res) {
         return;
       }
       const savedAt = envelope.savedAt || new Date().toISOString();
-      const opts = { access: "public", addRandomSuffix: false, contentType: "application/json" };
+      const opts = { access: "public", addRandomSuffix: false, contentType: "application/json", allowOverwrite: true };
       await put(`${prefix}latest.json`, body, opts);
       await put(`${prefix}v-${savedAt.replace(/[:.]/g, "-")}.json`, body, opts);
 

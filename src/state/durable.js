@@ -48,9 +48,51 @@ export const PERSIST_KEYS = {
   ibkrQueryId: "cgt.ibkrqueryid",
   ibkrToken: "cgt.ibkrtoken",
   creditCards: "cgt.creditcards",
+  scenarios: "cgt.scenarios",
 };
 // Present in any real dataset — used to detect "localStorage was emptied".
 const SENTINEL_LS_KEYS = ["cgt.txns", "cgt.valuations", "cgt.pensioncf"];
+
+// Keys whose value can grow large & unbounded over years of real use — the
+// actual reason localStorage's ~5MB-ish quota becomes a real ceiling (a
+// decade of transactions, daily valuations and a dividend ledger add up;
+// settings-shaped keys like `dark` or `planInputs` never will). For these,
+// IndexedDB (much larger quota, see openDb below) is treated as the
+// authoritative store going forward: appStore.js still writes them to
+// localStorage too for instant, flicker-free boot, but debounced rather
+// than on every keystroke, and if a write ever throws (quota exceeded) it
+// stops retrying for that key rather than paying a repeated failed
+// JSON.stringify on every subsequent change — IndexedDB already has it.
+export const LARGE_KEYS = ["txns", "valuations", "netWorthSnapshots", "incomeEntries", "eriEntries"];
+
+// Rough "how much data does this hold" comparator. Array length is the
+// natural proxy for these append-only collections; falls back to a JSON
+// length so it never throws on an unexpected shape.
+function sizeOf(v) {
+  if (Array.isArray(v)) return v.length;
+  try { return JSON.stringify(v ?? "").length; } catch { return 0; }
+}
+
+// Which of LARGE_KEYS does the IndexedDB mirror hold strictly MORE data for
+// than the value currently in the live store/localStorage? That's the
+// signature of localStorage having fallen behind (a previous session's
+// write hit the quota mid-flight, or a crashed tab never got its last
+// change written) while the debounced mirror — a much larger quota — kept
+// the fuller copy. One-directional on purpose: we only ever adopt the
+// BIGGER dataset, never revert to a smaller one, so this can't clobber a
+// genuine deletion the user just made this session.
+// `current` and `mirror` are both keyed by LOCALSTORAGE key (as produced by
+// loadDurable()/the PERSIST_KEYS values), not by state key.
+// Pure — tested in durable.test.mjs.
+export function keysWhereDurableIsAhead(current, mirror) {
+  const ahead = [];
+  for (const key of LARGE_KEYS) {
+    const lsKey = PERSIST_KEYS[key];
+    const a = sizeOf(current[lsKey]), b = sizeOf(mirror[lsKey]);
+    if (b > a) ahead.push(key);
+  }
+  return ahead;
+}
 
 const DB_NAME = "wealth-dashboard";
 const DB_VERSION = 1;

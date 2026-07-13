@@ -5,6 +5,7 @@ import { xirr } from "../core/returns.mjs";
 import { giltAnalytics } from "../core/gilts.mjs";
 import { growthIndex, maxDrawdown, volatility, benchmarkCumulativeReturn, feeDrag } from "../core/benchmark.mjs";
 import { gbp, WrapperChip, num, todayISO, pct, pctPlain, toneOf, SHORT_SPAN, RateCell, rateIsDisplayable, Stat, Empty, useSort, sortRows, SortTh, store, SubTabs, Field } from "../ui/shared.jsx";
+import useAppStore from "../state/appStore.js";
 
 const BENCHMARK_SUGGESTIONS = [
   ["VWRL.L", "Vanguard FTSE All-World UCITS ETF"],
@@ -14,7 +15,13 @@ const BENCHMARK_SUGGESTIONS = [
   ["^FTAS", "FTSE All-Share index"],
 ];
 
-function ReturnsTab({ returns, valuations, pensionCashflows = [], secMeta = {}, setSecMeta, txns = [] }) {
+// Phase 2.8 de-drilling: raw state from the store; `returns` (derived)
+// stays a prop from the shell.
+function ReturnsTab({ returns }) {
+  const valuations = useAppStore((s) => s.valuations);
+  const pensionCashflows = useAppStore((s) => s.pensionCashflows);
+  const secMeta = useAppStore((s) => s.secMeta), setSecMeta = useAppStore((s) => s.setSecMeta);
+  const txns = useAppStore((s) => s.txns);
   const [sub, setSub] = useState(() => store.get("cgt.returnssubtab", "performance"));
   useEffect(() => store.set("cgt.returnssubtab", sub), [sub]);
   const [selectedWrapper, setSelectedWrapper] = useState(null); // click a per-wrapper row to filter the per-holding table below

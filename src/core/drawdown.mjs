@@ -226,6 +226,20 @@ export function buildProjection(p) {
     ? Math.max(p.inflation, p.earningsGrowth, 2.5) / 100
     : infl;
 
+  // ---- Phase 3.6: goals — one-off dated outflows ----
+  // p.goals: [{ id, label, age, amount (TODAY'S £), enabled }]. Zero goals
+  // = byte-identical projection (tested). Before retirement a goal is
+  // funded from liquid, non-pension wealth in ISA → GIA → LISA(60+)
+  // order — never the pension (pre-access it CAN'T fund a house deposit,
+  // and post-access raiding it for goals would need tax modelling this
+  // deliberately routes through the decumulation waterfall instead).
+  // From retirement onward a goal simply joins that year's net spending
+  // need, so the existing waterfall pays it tax-aware and a too-big goal
+  // shows up as earlier depletion — the honest signal.
+  const goals = (p.goals || []).filter((g) => g && g.enabled !== false && +g.amount > 0 && +g.age > 0);
+  const goalEvents = [];
+  const goalsAt = (age) => goals.filter((g) => Math.round(+g.age) === age);
+
   // ---- accumulation: pension + ISA + GIA + LISA pots ----
   const timeline = [];
   let pot = p.startPot;
@@ -258,6 +272,21 @@ export function buildProjection(p) {
     gia = gia * (1 + gPre) + p.giaContrib;
     giaBasis += p.giaContrib; // basis grows by contributions only
     lisa = lisa * (1 + gPre) + lisaIn + lisaBonus;
+    // Goals due this year leave at year-end, ISA → GIA → LISA (60+ only).
+    // Whatever the liquid pots can't cover is recorded as a SHORTFALL,
+    // never silently taken from the pension. The Monte Carlo contribution
+    // schedule nets the funded amount so randomised paths see the outflow.
+    for (const g of goalsAt(age)) {
+      const nominal = g.amount * inflFactor;
+      let rem = nominal;
+      const fromIsa = Math.min(isa, rem); isa -= fromIsa; rem -= fromIsa;
+      const fromGia = Math.min(gia, rem);
+      if (fromGia > 0) { giaBasis -= gia > 0 ? giaBasis * (fromGia / gia) : 0; gia -= fromGia; rem -= fromGia; }
+      if (age >= 60 && rem > 0) { const fromLisa = Math.min(lisa, rem); lisa -= fromLisa; rem -= fromLisa; }
+      const funded = nominal - rem;
+      if (funded > 0) wealthContribSchedule[i] -= funded;
+      goalEvents.push({ age, label: g.label || "Goal", amountReal: +g.amount, fundedNominal: funded, shortfallNominal: rem, shortfallReal: rem / inflFactor, phase: "accum" });
+    }
     salary *= 1 + p.salaryGrowth / 100;
   }
 
@@ -395,7 +424,16 @@ export function buildProjection(p) {
     const guaranteedCash = statePension + dbPension + annuityInc + btlCash;
     const baseNet = guaranteedCash - baseTax;
 
-    const targetNetNominal = targetNetToday * inflFactor * spendMult(p, age);
+    // Goals due in retirement join this year's NET spending need — the
+    // waterfall below funds them tax-aware (grossing up pension draws as
+    // required), and an unaffordable goal surfaces as earlier depletion.
+    let goalNominal = 0;
+    for (const g of goalsAt(age)) {
+      const nominal = g.amount * inflFactor;
+      goalNominal += nominal;
+      goalEvents.push({ age, label: g.label || "Goal", amountReal: +g.amount, fundedNominal: nominal, shortfallNominal: 0, shortfallReal: 0, phase: "decum" });
+    }
+    const targetNetNominal = targetNetToday * inflFactor * spendMult(p, age) + goalNominal;
     let need = Math.max(0, targetNetNominal - baseNet);
 
     // ---- waterfall over wrappers ----
@@ -599,6 +637,9 @@ export function buildProjection(p) {
     annuityCost,
     totalTaxReal,
     estateReal,
+    // Phase 3.6 goals: per-goal funding record ({age, label, amountReal,
+    // fundedNominal, shortfallNominal/Real, phase}) — empty when no goals.
+    goalEvents,
     // MPAA — see module header. mpaaLimit is echoed back so callers never
     // need to import allowances.mjs's MPAA_LIMIT separately just to render
     // "the £10,000 cap" in a UI string.

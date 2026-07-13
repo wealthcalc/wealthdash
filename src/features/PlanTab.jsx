@@ -12,15 +12,19 @@ import {
 } from "lucide-react";
 import { taxRUK, taxScot, employeeNI } from "../core/uk-income-tax.mjs";
 import {
-  lifeExpectancy, effInflation, btlYearly, replayDecum, STRATEGY_LABELS, buildProjection,
+  lifeExpectancy, effInflation, btlYearly, replayDecum, STRATEGY_LABELS, buildProjection, HIST,
 } from "../core/drawdown.mjs";
+import { bootstrapPairs, TWO_ASSET_DEFAULTS } from "../core/monte-carlo.mjs";
 import { solveSWR } from "../core/swr.mjs";
 import { runGuytonKlinger } from "../core/guyton-klinger.mjs";
 import { rollingStressTest } from "../core/sequence-risk.mjs";
 import { projectIHT, pensionsInEstate, PENSIONS_IN_ESTATE_FROM } from "../core/iht.mjs";
 import { buildIncomeFloor } from "../core/income-floor.mjs";
+import { optimiseDrawdown, TFC_LABELS } from "../core/drawdown-optimiser.mjs";
+import { sequenceHeatmap } from "../core/sequence-heatmap.mjs";
 import { giltIncomeByYear } from "../core/gilt-ladder.mjs";
-import { store } from "../ui/shared.jsx";
+import { store, uid, todayISO } from "../ui/shared.jsx";
+import useAppStore from "../state/appStore.js";
 
 /* ------------------------------------------------------------------ */
 /*  Design tokens — Phase 2.8: mapped onto the APP's CSS variables      */
@@ -124,6 +128,12 @@ function mcInputsFromPlan(p, det) {
     withdrawSchedule: det.withdrawSchedule,
     growthPre: p.growthPre, growthPost: p.growthPost, fee: p.fee, vol: p.vol,
     inflation: effInflation(p), currentAge: p.currentAge,
+    // Phase 2.7 return-model options — defaults reproduce the legacy
+    // single-asset/fixed-inflation engine exactly (see monte-carlo.mjs).
+    model: p.mcModel || "single",
+    glidepath: { start: p.mcEqStart ?? 60, end: p.mcEqEnd ?? 40 },
+    stochasticInflation: !!p.mcStochInfl,
+    ...(p.mcModel === "bootstrap" ? { histPairs: bootstrapPairs(HIST) } : {}),
   };
 }
 
@@ -392,6 +402,13 @@ const DEFAULTS = {
   // essential ("needs, not wants") share of target spending — what the
   // Income floor tab tests guaranteed income against
   essentialPct: 65,
+  // Monte Carlo return model (Phase 2.7): "single" = legacy one-asset
+  // normal; "twoAsset" = correlated equity/bond with a glidepath;
+  // "bootstrap" = resampled historical (return, inflation) year-pairs.
+  mcModel: "single",
+  mcEqStart: 60, // equity % at retirement start (twoAsset)
+  mcEqEnd: 40,   // equity % at plan end — the derisking glidepath
+  mcStochInfl: false,
   // tax-free cash treatment
   tfcMode: "ufpls", // 'ufpls' | 'pcls'
   // phased/part-time retirement: a DC contribution that continues into the
@@ -429,6 +446,9 @@ const DEFAULTS = {
   slowGoPct: 90,
   noGoPct: 80,
   // annuity
+  // Phase 3.6 goals: one-off dated outflows in TODAY'S £ — funded from
+  // ISA→GIA→LISA(60+) before retirement, joining the spending need after.
+  goals: [],
   annuityEnabled: false,
   annuityAge: 70,
   annuityPortion: 30,
@@ -504,6 +524,10 @@ export default function PlanTab({
     const saved = store.get("plan.subtab", "overview");
     return VALID_SUBTABS.includes(saved) ? saved : "overview";
   });
+  // Phase 3.6: named scenario library — full planInputs snapshots in the
+  // store (persisted, mirrored, synced, in backups via PERSIST_KEYS).
+  const scenarios = useAppStore((s) => s.scenarios);
+  const setScenarios = useAppStore((s) => s.setScenarios);
   React.useEffect(() => { store.set("plan.subtab", tab); }, [tab]);
   const [panelOpen, setPanelOpen] = useState(true);
   const [mc, setMc] = useState(null);
@@ -558,7 +582,12 @@ export default function PlanTab({
       );
       setMc(resA);
       if (mcCompareKey !== "none") {
-        const spB = applyScenario(p, mcCompareKey);
+        // "sc:<id>" = a SAVED scenario from the library — compared on the
+        // same common random numbers as the preset tweaks.
+        const saved = mcCompareKey.startsWith("sc:")
+          ? scenarios.find((x) => `sc:${x.id}` === mcCompareKey)
+          : null;
+        const spB = saved ? { ...DEFAULTS, ...saved.inputs } : applyScenario(p, mcCompareKey);
         const detB = buildProjection(spB);
         const resB = await runMonteCarloAsync(
           { ...mcInputsFromPlan(spB, detB), runs: 1000, seed },
@@ -569,7 +598,7 @@ export default function PlanTab({
     } finally {
       setMcRunning(false);
     }
-  }, [p, det, mcCompareKey, runMonteCarloAsync]);
+  }, [p, det, mcCompareKey, runMonteCarloAsync, scenarios]);
 
   // adequacy verdict
   const verdict = (() => {
@@ -662,6 +691,10 @@ export default function PlanTab({
           }}
         >
           <div className="rp-assumptions-grid">
+            <PanelSection title="Scenario library">
+              <ScenarioLibrary p={p} det={det} scenarios={scenarios} setScenarios={setScenarios} setPlanInputs={setPlanInputs} />
+            </PanelSection>
+
             <PanelSection title="You & timing">
               <Field label="Current age" value={p.currentAge} min={18} max={70} onChange={(v) => set("currentAge", v)} suffix="" />
               <Field label="Planned retirement age" value={p.retireAge} min={p.currentAge + 1} max={75} onChange={(v) => set("retireAge", v)}
@@ -821,6 +854,10 @@ export default function PlanTab({
                   <Field label="No-go spend" value={p.noGoPct} min={50} max={120} step={5} suffix="%" onChange={(v) => set("noGoPct", v)} />
                 </>
               )}
+            </PanelSection>
+
+            <PanelSection title="Goals — one-off outflows">
+              <GoalsEditor p={p} det={det} setP={setP} />
             </PanelSection>
 
             <PanelSection title="Annuity (optional)">
@@ -1052,7 +1089,7 @@ export default function PlanTab({
 
           {/* ===== MONTE CARLO ===== */}
           {tab === "adequacy" && (
-            <AdequacyTab p={p} mc={mc} mcB={mcB} progress={mcProgress} compareKey={mcCompareKey} setCompareKey={setMcCompareKey} running={mcRunning} runMC={runMC} det={det} life={life} set={set} />
+            <AdequacyTab p={p} mc={mc} mcB={mcB} progress={mcProgress} compareKey={mcCompareKey} setCompareKey={setMcCompareKey} running={mcRunning} runMC={runMC} det={det} life={life} set={set} savedScenarios={scenarios} />
           )}
 
           {/* ===== INHERITANCE TAX ===== */}
@@ -1067,6 +1104,127 @@ export default function PlanTab({
 /* ------------------------------------------------------------------ */
 /*  Sub-sections                                                       */
 /* ------------------------------------------------------------------ */
+/* ---- Phase 3.6: scenario library (save/load/compare full plans) ------ */
+function ScenarioLibrary({ p, det, scenarios = [], setScenarios, setPlanInputs }) {
+  const [name, setName] = useState("");
+  const [confirmDel, setConfirmDel] = useState(null);
+  // Deterministic quick metrics per scenario — the engine is fast and the
+  // library is short, so this is fine to recompute on render.
+  const metrics = useMemo(() => Object.fromEntries(scenarios.map((sc) => {
+    try {
+      const d = buildProjection({ ...DEFAULTS, ...sc.inputs });
+      return [sc.id, { tax: d.totalTaxReal, lasts: d.depletionAge === null, depletion: d.depletionAge, estate: d.estateReal }];
+    } catch { return [sc.id, null]; }
+  })), [scenarios]);
+
+  const save = () => {
+    const n = name.trim();
+    if (!n) return;
+    setScenarios((prev) => {
+      const existing = prev.find((s) => s.name === n);
+      const entry = { id: existing ? existing.id : uid(), name: n, savedAt: todayISO(), inputs: { ...p } };
+      return existing ? prev.map((s) => (s.id === existing.id ? entry : s)) : [...prev, entry];
+    });
+    setName("");
+  };
+
+  return (
+    <div style={{ display: "grid", gap: 8 }}>
+      <div style={{ display: "flex", gap: 6 }}>
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name this plan — e.g. Retire at 58"
+          style={{ flex: 1, minWidth: 0, fontSize: 12.5, padding: "7px 9px", borderRadius: 8, border: `1px solid ${T.line}`, background: T.surface, color: T.ink }} />
+        <button onClick={save} disabled={!name.trim()}
+          style={{ background: T.ink, color: T.paper, border: "none", borderRadius: 8, padding: "7px 12px", fontWeight: 600, fontSize: 12.5, cursor: "pointer", opacity: name.trim() ? 1 : 0.5 }}>
+          Save
+        </button>
+      </div>
+      {scenarios.length === 0 && (
+        <p style={{ margin: 0, fontSize: 11.5, color: T.muted, lineHeight: 1.5 }}>
+          Save the current inputs under a name, tweak freely, and load back any time. Saved plans appear in the Monte Carlo "Compare against" picker (same random paths) and travel with backups and sync.
+        </p>
+      )}
+      {scenarios.map((sc) => {
+        const m = metrics[sc.id];
+        const dTax = m ? m.tax - det.totalTaxReal : null;
+        return (
+          <div key={sc.id} style={{ border: `1px solid ${T.line}`, borderRadius: 9, padding: "8px 10px", display: "grid", gap: 3 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <span style={{ fontSize: 12.5, fontWeight: 600, color: T.ink, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sc.name}</span>
+              <button onClick={() => setPlanInputs && setPlanInputs({ ...DEFAULTS, ...sc.inputs })} title="Replace the current plan inputs with this scenario"
+                style={{ border: `1px solid ${T.line}`, background: "none", color: T.ink, borderRadius: 7, padding: "3px 9px", fontSize: 11.5, fontWeight: 600, cursor: "pointer" }}>Load</button>
+              <button onClick={() => { if (confirmDel === sc.id) { setScenarios((prev) => prev.filter((s) => s.id !== sc.id)); setConfirmDel(null); } else setConfirmDel(sc.id); }}
+                style={{ border: `1px solid ${confirmDel === sc.id ? T.red : T.line}`, background: "none", color: confirmDel === sc.id ? T.red : T.muted, borderRadius: 7, padding: "3px 9px", fontSize: 11.5, cursor: "pointer" }}>
+                {confirmDel === sc.id ? "Sure?" : "✕"}
+              </button>
+            </div>
+            <div style={{ fontSize: 11, color: T.muted, fontFamily: MONO }}>
+              {sc.savedAt} · {m ? <>
+                {m.lasts ? "lasts" : `gone at ${m.depletion}`} · tax {gbpK(m.tax)}
+                {dTax != null && Math.abs(dTax) > 500 && <span style={{ color: dTax < 0 ? T.green : T.red }}> ({dTax < 0 ? "−" : "+"}{gbpK(Math.abs(dTax))} vs current)</span>}
+              </> : "couldn't project"}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/* ---- Phase 3.6: goals editor (one-off dated outflows) ---------------- */
+function GoalsEditor({ p, det, setP }) {
+  const goals = p.goals || [];
+  const upd = (id, patch) => setP((x) => ({ ...x, goals: (x.goals || []).map((g) => (g.id === id ? { ...g, ...patch } : g)) }));
+  const add = () => setP((x) => ({ ...x, goals: [...(x.goals || []), { id: uid(), label: "", age: Math.max(p.currentAge + 1, 60), amount: 20000, enabled: true }] }));
+  const remove = (id) => setP((x) => ({ ...x, goals: (x.goals || []).filter((g) => g.id !== id) }));
+  const eventFor = (g) => (det.goalEvents || []).find((e) => e.age === Math.round(+g.age) && e.label === (g.label || "Goal"));
+
+  return (
+    <div style={{ display: "grid", gap: 8 }}>
+      {goals.length === 0 && (
+        <p style={{ margin: 0, fontSize: 11.5, color: T.muted, lineHeight: 1.5 }}>
+          House deposit, university fees, a gift — one-off outflows in today's £ at a given age. Funded from ISA → GIA (→ LISA from 60) before retirement, never the pension; from retirement they join that year's spending and the drawdown pays them tax-aware.
+        </p>
+      )}
+      {goals.map((g) => {
+        const ev = g.enabled !== false ? eventFor(g) : null;
+        return (
+          <div key={g.id} style={{ border: `1px solid ${T.line}`, borderRadius: 9, padding: "8px 10px", display: "grid", gap: 6 }}>
+            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+              <input value={g.label} onChange={(e) => upd(g.id, { label: e.target.value })} placeholder="House deposit"
+                style={{ flex: 1, minWidth: 0, fontSize: 12.5, padding: "6px 8px", borderRadius: 7, border: `1px solid ${T.line}`, background: T.surface, color: T.ink }} />
+              <button onClick={() => remove(g.id)} title="Remove goal" style={{ border: "none", background: "none", color: T.muted, cursor: "pointer", fontSize: 14 }}>✕</button>
+            </div>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+              <label style={{ fontSize: 11.5, color: T.muted }}>Age{" "}
+                <input type="number" value={g.age} min={p.currentAge + 1} max={p.planAge} onChange={(e) => upd(g.id, { age: +e.target.value || 0 })}
+                  style={{ width: 54, fontSize: 12, padding: "4px 6px", borderRadius: 6, border: `1px solid ${T.line}`, background: T.surface, color: T.ink, fontFamily: MONO }} />
+              </label>
+              <label style={{ fontSize: 11.5, color: T.muted }}>£ today{" "}
+                <input type="number" value={g.amount} min={0} step={1000} onChange={(e) => upd(g.id, { amount: +e.target.value || 0 })}
+                  style={{ width: 90, fontSize: 12, padding: "4px 6px", borderRadius: 6, border: `1px solid ${T.line}`, background: T.surface, color: T.ink, fontFamily: MONO }} />
+              </label>
+              <label style={{ fontSize: 11.5, color: T.muted, display: "flex", alignItems: "center", gap: 4, cursor: "pointer" }}>
+                <input type="checkbox" checked={g.enabled !== false} onChange={(e) => upd(g.id, { enabled: e.target.checked })} /> on
+              </label>
+            </div>
+            {ev && (
+              <div style={{ fontSize: 11, fontFamily: MONO, color: ev.shortfallNominal > 0 ? T.red : T.green }}>
+                {ev.shortfallNominal > 0
+                  ? `⚠ short by ${gbpK(ev.shortfallReal)} (today's £) — liquid pots can't cover it at ${g.age}`
+                  : ev.phase === "accum" ? `funded from ISA/GIA at ${g.age} ✓` : `paid through drawdown at ${g.age} ✓`}
+              </div>
+            )}
+          </div>
+        );
+      })}
+      <button onClick={add}
+        style={{ border: `1px dashed ${T.line}`, background: "none", color: T.ink2, borderRadius: 8, padding: "7px 10px", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
+        + Add goal
+      </button>
+    </div>
+  );
+}
+
 function PanelSection({ title, children }) {
   return (
     <div style={{ marginBottom: 22 }}>
@@ -1420,31 +1578,19 @@ function FloorTab({ p, det, set, giltCashflows = [] }) {
 }
 
 function DrawdownTab({ p, det, set }) {
-  const strategies = Object.keys(STRATEGY_LABELS);
-  const runs = useMemo(
-    () =>
-      strategies.map((s) => {
-        const r = buildProjection({ ...p, drawStrategy: s });
-        return {
-          key: s,
-          label: STRATEGY_LABELS[s],
-          tax: r.totalTaxReal,
-          depletion: r.depletionAge,
-          estate: r.estateReal,
-          lasts: r.depletionAge === null,
-        };
-      }),
-    [p]
-  );
-  // rank: survive first, then lowest lifetime tax, then biggest estate
-  const ranked = [...runs].sort((a, b) => {
-    if (a.lasts !== b.lasts) return a.lasts ? -1 : 1;
-    if (Math.abs(a.tax - b.tax) > 500) return a.tax - b.tax;
-    return b.estate - a.estate;
-  });
-  const best = ranked[0];
-  const worst = runs.reduce((m, r) => (r.tax > m.tax ? r : m), runs[0]);
-  const saving = worst.tax - best.tax;
+  // Phase 3.1: the comparison now runs through the node-tested optimiser
+  // (core/drawdown-optimiser.mjs) — 5 strategies × 2 tax-free-cash modes,
+  // ranked survival > lifetime tax > estate. Two upgrades over the old
+  // in-component version: TFC mode is part of the search (PCLS-vs-UFPLS
+  // often moves more tax than the ordering itself), and the headline
+  // saving is vs YOUR CURRENT pick, not vs the worst candidate — "you
+  // could save £X" only means something measured from where you stand.
+  const opt = useMemo(() => optimiseDrawdown(p), [p]);
+  const ranked = opt.candidates;
+  const best = opt.best;
+  const saving = Math.max(0, opt.taxSaving ?? 0);
+  const isCurrent = (c) => opt.current && c.strategy === opt.current.strategy && c.tfcMode === opt.current.tfcMode;
+  const isBest = (c) => c.strategy === best.strategy && c.tfcMode === best.tfcMode;
 
   // source mix over time for the current strategy
   const mix = det.timeline
@@ -1467,25 +1613,25 @@ function DrawdownTab({ p, det, set }) {
           <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700 }}>Drawdown sequencing optimiser</h3>
         </div>
         <p style={{ margin: "0 0 14px", fontSize: 12.5, color: T.muted }}>
-          The order you tap pension, ISA, GIA and LISA barely changes how long the money lasts — but it changes lifetime <strong>tax</strong> a lot. Here's every strategy run on your exact plan.
+          The order you tap pension, ISA, GIA and LISA — and whether you take tax-free cash up front (PCLS) or 25% of each withdrawal (UFPLS) — barely changes how long the money lasts, but changes lifetime <strong>tax</strong> a lot. All {ranked.length} combinations, run on your exact plan.
         </p>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px,1fr))", gap: 12 }}>
           <Card style={{ background: T.greenSoft, border: "none" }}>
-            <Stat label="Best strategy" value={best.label} sub={`${gbp(best.tax)} lifetime tax (today's £)`} tone="green" />
+            <Stat label="Best combination" value={best.label} sub={`${TFC_LABELS[best.tfcMode]} · ${gbp(best.lifetimeTaxReal)} lifetime tax (today's £)`} tone="green" />
           </Card>
           <Card style={{ background: T.paper, border: "none" }}>
-            <Stat label="Potential tax saving" value={gbp(saving)} sub={`vs "${worst.label}"`} tone={saving > 1000 ? "green" : "ink"} />
+            <Stat label="Switching saves you" value={gbp(saving)} sub="lifetime tax vs your current pick" tone={saving > 1000 ? "green" : "ink"} />
           </Card>
           <Card style={{ background: T.paper, border: "none" }}>
-            <Stat label="Your current choice" value={STRATEGY_LABELS[p.drawStrategy]} sub={p.drawStrategy === best.key ? "already optimal ✓" : "not the cheapest"} tone={p.drawStrategy === best.key ? "green" : "amber"} />
+            <Stat label="Your current choice" value={STRATEGY_LABELS[p.drawStrategy]} sub={opt.alreadyOptimal ? `${TFC_LABELS[p.tfcMode || "ufpls"]} — already optimal ✓` : TFC_LABELS[p.tfcMode || "ufpls"]} tone={opt.alreadyOptimal ? "green" : "amber"} />
           </Card>
         </div>
-        {p.drawStrategy !== best.key && (
+        {!opt.alreadyOptimal && (
           <button
-            onClick={() => set("drawStrategy", best.key)}
+            onClick={() => { set("drawStrategy", best.strategy); set("tfcMode", best.tfcMode); }}
             style={{ marginTop: 12, background: T.ink, color: T.paper, border: "none", borderRadius: 9, padding: "9px 16px", fontWeight: 600, fontSize: 13, cursor: "pointer" }}
           >
-            Switch to "{best.label}"
+            Adopt "{best.label}" with {best.tfcMode.toUpperCase()} — save {gbp(saving)}
           </button>
         )}
       </Card>
@@ -1494,22 +1640,23 @@ function DrawdownTab({ p, det, set }) {
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
           <thead>
             <tr style={{ background: T.lineSoft }}>
-              {["Strategy", "Lifetime tax", "Money lasts to", "Estate left"].map((h, i) => (
-                <th key={h} style={{ textAlign: i === 0 ? "left" : "right", padding: "11px 16px", fontSize: 11, letterSpacing: ".04em", textTransform: "uppercase", color: T.muted, fontWeight: 700 }}>{h}</th>
+              {["Strategy", "Tax-free cash", "Lifetime tax", "Money lasts to", "Estate left"].map((h, i) => (
+                <th key={h} style={{ textAlign: i <= 1 ? "left" : "right", padding: "11px 16px", fontSize: 11, letterSpacing: ".04em", textTransform: "uppercase", color: T.muted, fontWeight: 700 }}>{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
             {ranked.map((r) => (
-              <tr key={r.key} style={{ borderTop: `1px solid ${T.line}`, background: r.key === p.drawStrategy ? T.greenSoft : "transparent" }}>
+              <tr key={r.strategy + r.tfcMode} style={{ borderTop: `1px solid ${T.line}`, background: isCurrent(r) ? T.greenSoft : "transparent" }}>
                 <td style={{ padding: "12px 16px", fontWeight: 600 }}>
                   {r.label}
-                  {r.key === best.key && <span style={{ marginLeft: 8, fontSize: 10.5, color: T.green, fontWeight: 700 }}>BEST</span>}
-                  {r.key === p.drawStrategy && <span style={{ marginLeft: 8, fontSize: 10.5, color: T.muted }}>(current)</span>}
+                  {isBest(r) && <span style={{ marginLeft: 8, fontSize: 10.5, color: T.green, fontWeight: 700 }}>BEST</span>}
+                  {isCurrent(r) && <span style={{ marginLeft: 8, fontSize: 10.5, color: T.muted }}>(current)</span>}
                 </td>
-                <td style={cellMono}>{gbp(r.tax)}</td>
-                <td style={{ ...cellMono, color: r.lasts ? T.green : T.amber }}>{r.lasts ? `${p.planAge}+` : `age ${r.depletion}`}</td>
-                <td style={cellMono}>{gbpK(r.estate)}</td>
+                <td style={{ padding: "12px 16px", color: T.ink2 }}>{r.tfcMode.toUpperCase()}</td>
+                <td style={cellMono}>{gbp(r.lifetimeTaxReal)}</td>
+                <td style={{ ...cellMono, color: r.depletionAge === null ? T.green : T.amber }}>{r.depletionAge === null ? `${p.planAge}+` : `age ${r.depletionAge}`}</td>
+                <td style={cellMono}>{gbpK(r.estateReal)}</td>
               </tr>
             ))}
           </tbody>
@@ -1691,6 +1838,51 @@ function BtlTab({ p, det, set }) {
 }
 
 /* ---- Stress / scenarios tab ---- */
+/* ---- Phase 3.5: sequence-risk heatmap (core/sequence-heatmap.mjs) ----
+   One cell per historical start year: would THIS plan's withdrawal
+   schedule have survived retiring into that year's actual sequence of
+   returns and inflation? Raw history (minus your fee), withdrawals
+   re-priced along each window's real inflation. */
+function SequenceHeatmap({ p, det }) {
+  const hm = useMemo(() => sequenceHeatmap(p, det), [p, det]);
+  if (!hm.summary) return null;
+  const s = hm.summary;
+  const cellStyle = (w) => {
+    if (w.lasts) return { background: T.green, opacity: w.partial ? 0.45 : 0.9 };
+    const short = p.retireAge + s.horizonYears - w.depletion; // years short
+    const bad = Math.min(1, short / s.horizonYears);
+    return { background: bad > 0.4 ? T.red : T.amber, opacity: w.partial ? 0.45 : 0.55 + 0.45 * bad };
+  };
+  const decades = [];
+  for (const w of hm.windows) {
+    const d = Math.floor(w.startYear / 10) * 10;
+    (decades[decades.length - 1]?.d === d ? decades[decades.length - 1].cells : decades[decades.push({ d, cells: [] }) - 1].cells).push(w);
+  }
+  return (
+    <Card style={{ marginTop: 14 }}>
+      <h3 style={{ margin: "0 0 2px", fontSize: 15, fontWeight: 700 }}>Every retirement start since {hm.windows[0].startYear} — the sequence-risk heatmap</h3>
+      <p style={{ margin: "0 0 10px", fontSize: 12.5, color: T.muted, maxWidth: 680 }}>
+        Your exact withdrawal schedule ({s.horizonYears} years, fee-adjusted) replayed against every rolling window of real history. Survived <strong>{s.fullWindows - s.failures} of {s.fullWindows}</strong> full windows ({pct(s.successRate, 0)}){s.failures > 0 ? <> — worst start <strong>{s.worstStart}</strong>, money gone at age <strong>{s.worstDepletionAge}</strong></> : " — no historical start defeats this plan"}.
+      </p>
+      <div style={{ display: "grid", gap: 4 }}>
+        {decades.map(({ d, cells }) => (
+          <div key={d} style={{ display: "flex", alignItems: "center", gap: 3 }}>
+            <span style={{ width: 42, fontSize: 11, color: T.muted, fontFamily: MONO }}>{d}s</span>
+            {cells.map((w) => (
+              <div key={w.startYear} title={`Start ${w.startYear}${w.partial ? ` (${w.histYears} historical yrs, rest assumed)` : ""}: ${w.lasts ? `lasts — ${gbpK(w.finalReal)} left (real)` : `money gone at age ${w.depletion}`}`}
+                style={{ width: 20, height: 20, borderRadius: 4, cursor: "default", border: w.partial ? `1px dashed ${T.muted}` : "none", ...cellStyle(w) }} />
+            ))}
+          </div>
+        ))}
+      </div>
+      <Legendlet items={[{ c: T.green, t: "Lasts the full plan" }, { c: T.amber, t: "Depleted late" }, { c: T.red, t: "Depleted early" }, { c: T.muted, t: "Dashed: partial window (assumption tail)", dash: true }]} />
+      <p style={{ margin: "10px 0 0", fontSize: 11.5, color: T.muted, maxWidth: 680 }}>
+        Series: S&amp;P 500 total returns + US CPI, 1926–2025 (transcribed from slickcharts.com, 2026 — see core/market-history.mjs). US data, 100% equity, no bond damping: absolute rates are indicative for a GBP investor, the ORDERING of good and bad start years is the point. Withdrawals inflate with each window's actual inflation — the 1966 cell is red because prices tripled, not just because markets fell.
+      </p>
+    </Card>
+  );
+}
+
 function StressTab({ p, det, results }) {
   const chartData = results.map((r) => ({ label: r.label, potReal: r.potReal, income: r.incomeToday }));
   return (
@@ -1748,6 +1940,7 @@ function StressTab({ p, det, results }) {
       </Note>
 
       <HistoricalReplay p={p} det={det} />
+      <SequenceHeatmap p={p} det={det} />
     </div>
   );
 }
@@ -1856,9 +2049,15 @@ function mergeFans(fanA, fanB) {
   return [...byAge.values()].sort((x, y) => x.age - y.age);
 }
 
-function AdequacyTab({ p, mc, mcB, progress = 0, compareKey = "none", setCompareKey, running, runMC, det, life, set }) {
+function AdequacyTab({ p, mc, mcB, progress = 0, compareKey = "none", setCompareKey, running, runMC, det, life, set, savedScenarios = [] }) {
   const planShort = p.planAge < life.q25; // planning shorter than 1-in-4 longevity
-  const compareOptions = [{ value: "none", label: "None" }, ...SCENARIOS.filter((s) => s.key !== "base").map((s) => ({ value: s.key, label: s.label }))];
+  const compareOptions = [
+    { value: "none", label: "None" },
+    ...SCENARIOS.filter((s) => s.key !== "base").map((s) => ({ value: s.key, label: s.label })),
+    // Saved plans from the scenario library — compared on the same common
+    // random numbers as the preset tweaks.
+    ...savedScenarios.map((s) => ({ value: `sc:${s.id}`, label: s.name })),
+  ];
   const compareLabel = compareOptions.find((o) => o.value === compareKey)?.label || "comparison";
   const mergedFan = useMemo(() => mergeFans(mc ? mc.fan : [], mcB ? mcB.fan : []), [mc, mcB]);
 
@@ -1940,6 +2139,33 @@ function AdequacyTab({ p, mc, mcB, progress = 0, compareKey = "none", setCompare
           </button>
         </div>
         <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+        {/* Return model (Phase 2.7) */}
+        <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px solid ${T.line}` }}>
+          <div style={{ fontSize: 12.5, color: T.ink2, fontWeight: 600, marginBottom: 6 }}>Return model</div>
+          <Segmented value={p.mcModel || "single"} onChange={(v) => set("mcModel", v)} accent={T.green}
+            options={[
+              { value: "single", label: "Simple" },
+              { value: "twoAsset", label: "Equity + bonds" },
+              { value: "bootstrap", label: "Historical bootstrap" },
+            ]} />
+          <p style={{ margin: "6px 0 0", fontSize: 11.5, color: T.muted, maxWidth: 640 }}>
+            {(p.mcModel || "single") === "single" && `One blended asset at your growth/volatility sliders, fixed ${effInflation(p)}% inflation — the original model.`}
+            {p.mcModel === "twoAsset" && `Correlated equity (${TWO_ASSET_DEFAULTS.equityMean}%/${TWO_ASSET_DEFAULTS.equityVol}%) and bonds (${TWO_ASSET_DEFAULTS.bondMean}%/${TWO_ASSET_DEFAULTS.bondVol}%, ρ=${TWO_ASSET_DEFAULTS.correlation}), derisking along your glidepath through retirement. Your growth sliders are ignored in this mode — the mix drives the return.`}
+            {p.mcModel === "bootstrap" && "Resamples (return, inflation) YEAR-PAIRS from the app's historical stress sequences (2008 GFC, 1970s stagflation, 2000s lost decade) — fat tails and inflation shocks arrive together, as they did. Small pool by design: it tests \"years like these, reshuffled\", not all of market history."}
+          </p>
+          {p.mcModel === "twoAsset" && (
+            <div style={{ display: "flex", gap: 16, marginTop: 8, flexWrap: "wrap", alignItems: "center" }}>
+              <Field label="Equity % at retirement" value={p.mcEqStart ?? 60} min={0} max={100} step={5} suffix="%" onChange={(v) => set("mcEqStart", v)} />
+              <Field label="Equity % at plan end" value={p.mcEqEnd ?? 40} min={0} max={100} step={5} suffix="%" onChange={(v) => set("mcEqEnd", v)} />
+            </div>
+          )}
+          {p.mcModel !== "bootstrap" && (
+            <div style={{ marginTop: 8 }}>
+              <Toggle label={`Stochastic inflation (AR(1) around ${effInflation(p)}%) — withdrawals re-price along each simulated path`} checked={!!p.mcStochInfl} onChange={(v) => set("mcStochInfl", v)} />
+            </div>
+          )}
+        </div>
+
         <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px solid ${T.line}` }}>
           <div style={{ fontSize: 12.5, color: T.ink2, fontWeight: 600, marginBottom: 6 }}>Compare against (Scenario A/B)</div>
           <Segmented value={compareKey} onChange={setCompareKey} options={compareOptions} accent={T.blue} />

@@ -6,6 +6,7 @@ import {
   ISA_LIMIT, LISA_LIMIT, isaSubscriptionsByYear, pensionAllowanceStatus, realisedForYear,
 } from "../core/allowances.mjs";
 import { gbp0, num, todayISO, CurrencyInput, Field } from "../ui/shared.jsx";
+import useAppStore from "../state/appStore.js";
 
 /* ======================================================================
    ALLOWANCES HUB — one screen for the annual limits that actually drive
@@ -47,10 +48,14 @@ function Gauge({ label, used, limit, sub, warnOver = true }) {
   );
 }
 
-export default function AllowancesTab({
-  txns = [], pensionCashflows = [], incomeEntries = [], eriTxns = [],
-  income = 0, taxableDisposals = [], overrides = {}, setOverrides,
-}) {
+// Phase 2.8 de-drilling: raw state from the store; derived (eriTxns,
+// taxableDisposals) stays props from the shell.
+export default function AllowancesTab({ eriTxns = [], taxableDisposals = [] }) {
+  const txns = useAppStore((s) => s.txns);
+  const pensionCashflows = useAppStore((s) => s.pensionCashflows);
+  const incomeEntries = useAppStore((s) => s.incomeEntries);
+  const income = useAppStore((s) => s.income);
+  const overrides = useAppStore((s) => s.allowanceOverrides), setOverrides = useAppStore((s) => s.setAllowanceOverrides);
   const year = ukTaxYear(todayISO());
   const ov = overrides[year] || {};
   const setOv = (k, v) => setOverrides && setOverrides((o) => ({ ...o, [year]: { ...(o[year] || {}), [k]: v } }));

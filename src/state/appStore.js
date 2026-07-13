@@ -14,7 +14,7 @@ import { create } from "zustand";
 import { store as ls, SAMPLE, SECURITY_SEED, todayISO } from "../ui/shared.jsx";
 // state key -> localStorage key lives in durable.js (single source of truth
 // shared with the IndexedDB mirror, so new keys can't silently miss it).
-import { PERSIST_KEYS, saveDurable, saveDailySnapshot } from "./durable.js";
+import { PERSIST_KEYS, LARGE_KEYS, saveDurable, saveDailySnapshot, loadDurable, keysWhereDurableIsAhead } from "./durable.js";
 import { schedulePush } from "./sync.js";
 
 // First-run theme follows the OS (prefers-color-scheme) instead of a
@@ -110,33 +110,110 @@ const useAppStore = create((set) => {
     // from net worth, same "own array, own setter" shape as cashAccounts.
     // See core/credit-cards.mjs. [{id, label, issuer, balance, notes}]
     creditCards: ls.get("cgt.creditcards", []), setCreditCards: upd("creditCards"),
+    // Phase 3.6: named plan scenarios — [{id, name, savedAt, inputs}].
+    // Full planInputs snapshots, so loading one restores the exact plan.
+    scenarios: ls.get("cgt.scenarios", []), setScenarios: upd("scenarios"),
+    // NOT persisted anywhere — a session-only diagnostic. Names of LARGE_KEYS
+    // that have hit localStorage's quota this session, so SyncTab can tell
+    // the user their data is still safe (IndexedDB has it) instead of
+    // failing completely silently. See the debounced writer below.
+    storageOverflow: [], setStorageOverflow: upd("storageOverflow"),
   };
 });
 
 // Persist on change — one subscription, writing only the keys that changed
 // (replaces the 16 per-key useEffect hooks that serialised on every render).
-// localStorage stays the synchronous primary; a debounced full-state mirror
-// goes to IndexedDB (durable.js) as eviction insurance, plus one snapshot
-// per day (rolling 30) as a corruption fallback.
+//
+// IndexedDB-primary storage (Phase 3.7): localStorage's ~5MB quota is a real
+// ceiling once `txns`/`valuations`/etc. grow across years of use, and every
+// keystroke that edits one of them used to synchronously JSON.stringify the
+// WHOLE array into localStorage. Two changes fix that without touching the
+// synchronous, flicker-free boot path (still `ls.get(...)` at store
+// creation, above):
+//   1. LARGE_KEYS (durable.js) get a short debounced localStorage write
+//      instead of an immediate one, so rapid edits (typing a number
+//      character-by-character, a bulk import) coalesce into one write.
+//   2. If that write ever throws (QuotaExceededError), we stop retrying it
+//      for the rest of the session — IndexedDB's debounced mirror below
+//      still gets every change from live state regardless, so nothing is
+//      lost, we just stop paying for a doomed localStorage write on every
+//      change. `storageOverflow` surfaces which keys this happened to
+//      (read by SyncTab) instead of failing silently.
+// Settings-shaped keys (dark, planInputs, ...) are small and bounded, so
+// they keep the original immediate, synchronous write.
+const _largeKeyTimers = {};
+const _skipLocalStorage = new Set();
+function writeLargeKeyDebounced(key, lsKey, value) {
+  clearTimeout(_largeKeyTimers[key]);
+  _largeKeyTimers[key] = setTimeout(() => {
+    if (_skipLocalStorage.has(key)) return;
+    try {
+      localStorage.setItem(lsKey, JSON.stringify(value === undefined ? null : value));
+    } catch {
+      _skipLocalStorage.add(key);
+      useAppStore.setState((s) => (s.storageOverflow.includes(key) ? s : { storageOverflow: [...s.storageOverflow, key] }));
+    }
+  }, 300);
+}
+
 let _durableTimer = null;
+function flushDurable() {
+  clearTimeout(_durableTimer);
+  _durableTimer = null;
+  const s = useAppStore.getState();
+  const byLsKey = {};
+  for (const [key, lsKey] of Object.entries(PERSIST_KEYS)) byLsKey[lsKey] = s[key];
+  saveDurable(byLsKey);
+  saveDailySnapshot(todayISO(), byLsKey);
+  // Encrypted sync push (state/sync.js) — no-op unless the user enabled
+  // sync; reads state back from localStorage itself, so nothing extra
+  // is passed here. Its own debounce coalesces bursts further.
+  schedulePush();
+}
+
 useAppStore.subscribe((state, prev) => {
   let changed = false;
   for (const [key, lsKey] of Object.entries(PERSIST_KEYS)) {
-    if (state[key] !== prev[key]) { ls.set(lsKey, state[key]); changed = true; }
+    if (state[key] === prev[key]) continue;
+    changed = true;
+    if (LARGE_KEYS.includes(key)) writeLargeKeyDebounced(key, lsKey, state[key]);
+    else ls.set(lsKey, state[key]);
   }
   if (!changed) return;
   clearTimeout(_durableTimer);
-  _durableTimer = setTimeout(() => {
-    const s = useAppStore.getState();
-    const byLsKey = {};
-    for (const [key, lsKey] of Object.entries(PERSIST_KEYS)) byLsKey[lsKey] = s[key];
-    saveDurable(byLsKey);
-    saveDailySnapshot(todayISO(), byLsKey);
-    // Encrypted sync push (state/sync.js) — no-op unless the user enabled
-    // sync; reads state back from localStorage itself, so nothing extra
-    // is passed here. Its own debounce coalesces bursts further.
-    schedulePush();
-  }, 1500);
+  _durableTimer = setTimeout(flushDurable, 1500);
 });
+
+if (typeof document !== "undefined") {
+  // Best-effort durability net: if the tab is closed/backgrounded inside the
+  // 1500ms debounce window above, the IndexedDB mirror (and sync push)
+  // would otherwise miss the last change. "visibilitychange" to "hidden"
+  // fires reliably before teardown (unlike "beforeunload", which async
+  // IndexedDB writes can't outlive), so flush immediately when it does.
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden" && _durableTimer) flushDurable();
+  });
+}
+
+// Boot-time reconciliation (IndexedDB-primary, part 2): localStorage is read
+// synchronously above so first paint never waits on IndexedDB, but if a
+// PREVIOUS session hit localStorage's quota mid-write, localStorage can be
+// left holding a shorter version of a LARGE_KEYS collection than the
+// debounced IndexedDB mirror (much larger quota) has. Compare sizes once,
+// shortly after boot, and adopt IndexedDB's copy where — and only where —
+// it's strictly bigger (keysWhereDurableIsAhead never shrinks a key).
+if (typeof window !== "undefined") {
+  loadDurable().then((mirror) => {
+    if (!mirror) return;
+    const state = useAppStore.getState();
+    const current = {};
+    for (const [key, lsKey] of Object.entries(PERSIST_KEYS)) current[lsKey] = state[key];
+    const ahead = keysWhereDurableIsAhead(current, mirror);
+    if (!ahead.length) return;
+    const patch = {};
+    for (const key of ahead) patch[key] = mirror[PERSIST_KEYS[key]];
+    useAppStore.setState(patch);
+  }).catch(() => { /* IndexedDB unavailable — localStorage boot stands as-is */ });
+}
 
 export default useAppStore;

@@ -5,6 +5,7 @@ import {
   mortgagesEndingSoon, HPI_REGIONS, regionLabel, FOREIGN_CURRENCIES,
 } from "../core/property.mjs";
 import { gbp, gbp0, num, uid, todayISO, fxToGBP, Field, Stat, Empty, useSort, sortRows, SortTh, TwoStepDelete } from "../ui/shared.jsx";
+import useAppStore from "../state/appStore.js";
 
 const CURRENCIES = ["GBP", ...FOREIGN_CURRENCIES];
 const CCY_SYMBOL = { GBP: "£", EUR: "€" };
@@ -31,10 +32,11 @@ const MORTGAGE_BLANK = (propertyId) => ({
 });
 const LIABILITY_BLANK = () => ({ id: uid(), label: "", balance: "", rate: "", notes: "" });
 
-function PropertyTab({
-  properties = [], setProperties, mortgages = [], setMortgages,
-  otherLiabilities = [], setOtherLiabilities,
-}) {
+// Phase 2.8 de-drilling: all raw persisted state from the store.
+function PropertyTab() {
+  const properties = useAppStore((s) => s.properties), setProperties = useAppStore((s) => s.setProperties);
+  const mortgages = useAppStore((s) => s.mortgages), setMortgages = useAppStore((s) => s.setMortgages);
+  const otherLiabilities = useAppStore((s) => s.otherLiabilities), setOtherLiabilities = useAppStore((s) => s.setOtherLiabilities);
   const [form, setForm] = useState(PROPERTY_BLANK());
   const [mForm, setMForm] = useState(MORTGAGE_BLANK());
   const [lForm, setLForm] = useState(LIABILITY_BLANK());

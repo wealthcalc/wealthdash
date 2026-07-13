@@ -54,10 +54,46 @@ function percentile(arr, q) {
 // `progressEvery` runs (and on the last run) — the Web Worker wrapper
 // relays this back to the UI as a real progress percentage, unlike the
 // old fake `setTimeout` spinner delay.
+// Default two-asset parameters (annual, %). Deliberately conservative,
+// commonly-cited long-run figures — overridable per call. Correlation is
+// mildly positive (post-2000 stock/bond correlation is regime-dependent;
+// 0.1 neither banks on the diversification of the 2010s nor the pain of
+// 2022).
+export const TWO_ASSET_DEFAULTS = {
+  equityMean: 6.5, equityVol: 16, bondMean: 3.5, bondVol: 7, correlation: 0.1,
+};
+export const STOCH_INFL_DEFAULTS = { vol: 1.5, persistence: 0.7 }; // AR(1)
+
+// Bootstrap pairs: (portfolio return %, inflation %) drawn TOGETHER so a
+// sampled year keeps its own return/inflation relationship. Sourced from
+// the app's existing illustrative historical sequences (core/drawdown.mjs
+// HIST — 2008 GFC, 1970s stagflation, 2000s lost decade) rather than a
+// fabricated longer series; ~30 real-ish year-pairs including the fat
+// left tail. Documented limitation: it's a small pool — this mode tests
+// "years like these, reshuffled", not the full sweep of market history.
+export function bootstrapPairs(HIST) {
+  const pairs = [];
+  for (const seq of Object.values(HIST)) {
+    for (let i = 0; i < seq.returns.length; i++) {
+      pairs.push({ ret: seq.returns[i], infl: seq.infl[i] ?? 2.5 });
+    }
+  }
+  return pairs;
+}
+
 export function runMonteCarlo({
   startWealth = 0, accumYears = 0, wealthContribSchedule = [], withdrawSchedule = [],
   growthPre = 0, growthPost = 0, fee = 0, vol = 0, inflation = 0, currentAge = 0,
   runs = 600, seed = null, onProgress = null, progressEvery = 50,
+  // --- Phase 2.7 extensions, all optional; defaults reproduce the legacy
+  //     single-asset/fixed-inflation engine draw-for-draw. ---
+  model = "single",            // "single" | "twoAsset" | "bootstrap"
+  twoAsset = {},               // overrides for TWO_ASSET_DEFAULTS
+  glidepath = null,            // { start, end } equity % across DECUMULATION
+  stochasticInflation = false, // AR(1) inflation around `inflation`
+  inflVol = STOCH_INFL_DEFAULTS.vol,
+  inflPersistence = STOCH_INFL_DEFAULTS.persistence,
+  histPairs = null,            // bootstrap pool; required for model="bootstrap"
 } = {}) {
   const decYears = withdrawSchedule.length;
   const totalYears = accumYears + decYears;
@@ -68,6 +104,24 @@ export function runMonteCarlo({
   const infl = inflation / 100;
   const rng = seed != null ? mulberry32(seed) : Math.random;
 
+  const ta = { ...TWO_ASSET_DEFAULTS, ...twoAsset };
+  const eqMu = ta.equityMean / 100, eqVol = ta.equityVol / 100;
+  const bMu = ta.bondMean / 100, bVol = ta.bondVol / 100;
+  const rho = Math.max(-1, Math.min(1, ta.correlation));
+  const rhoC = Math.sqrt(1 - rho * rho);
+  const feeFrac = fee / 100;
+  // Equity share: glidepath.start through accumulation, then a straight
+  // line to glidepath.end across the decumulation years (derisking
+  // through retirement). Both in %, e.g. { start: 60, end: 40 }.
+  const eqShareAt = (y) => {
+    const gp = glidepath || { start: 60, end: 60 };
+    if (y < accumYears || decYears <= 1) return gp.start / 100;
+    const f = (y - accumYears) / (decYears - 1);
+    return (gp.start + (gp.end - gp.start) * f) / 100;
+  };
+  const pool = model === "bootstrap" ? (histPairs && histPairs.length ? histPairs : null) : null;
+  if (model === "bootstrap" && !pool) throw new Error("bootstrap mode needs histPairs (see bootstrapPairs()).");
+
   let successes = 0;
   const cols = Array.from({ length: totalYears }, () => []);
   const potAtRetireDist = [];
@@ -75,19 +129,46 @@ export function runMonteCarlo({
   for (let r = 0; r < runs; r++) {
     let pot = startWealth;
     let survived = true;
+    // Per-run inflation state: cumDet tracks the DETERMINISTIC path the
+    // nominal withdrawSchedule was built with; cumSim tracks this run's
+    // simulated path. Withdrawals re-scale by cumSim/cumDet, so an
+    // inflation shock raises the money the plan actually needs — the
+    // mechanism that breaks retirements in the real world.
+    let cumDet = 1, cumSim = 1, inflState = infl;
     for (let y = 0; y < totalYears; y++) {
-      const real = pot / Math.pow(1 + infl, y);
+      const real = pot / cumSim;
       cols[y].push(real);
+
+      // This year's return and inflation, by model. Draw order within a
+      // year is fixed so seeded runs are reproducible per model.
+      let ret, inflY = infl;
+      if (model === "bootstrap") {
+        const pair = pool[Math.floor(rng() * pool.length)];
+        ret = pair.ret / 100 - feeFrac;
+        inflY = pair.infl / 100;
+      } else if (model === "twoAsset") {
+        const z1 = randn(rng), z2 = randn(rng);
+        const re = eqMu + eqVol * z1;
+        const rb = bMu + bVol * (rho * z1 + rhoC * z2);
+        const share = eqShareAt(y);
+        ret = share * re + (1 - share) * rb - feeFrac;
+        if (stochasticInflation) { inflState = infl + inflPersistence * (inflState - infl) + (inflVol / 100) * randn(rng); inflY = inflState; }
+      } else {
+        ret = (y < accumYears ? muPre + volPre * randn(rng) : muPost + volPost * randn(rng));
+        if (stochasticInflation) { inflState = infl + inflPersistence * (inflState - infl) + (inflVol / 100) * randn(rng); inflY = inflState; }
+      }
+
       if (y < accumYears) {
-        const ret = muPre + volPre * randn(rng);
         pot = pot * (1 + ret) + (wealthContribSchedule[y] || 0);
         if (y === accumYears - 1) potAtRetireDist.push(pot);
       } else {
         const di = y - accumYears;
-        const ret = muPost + volPost * randn(rng);
-        pot = (pot - (withdrawSchedule[di] || 0)) * (1 + ret);
+        const w = (withdrawSchedule[di] || 0) * (cumSim / cumDet);
+        pot = (pot - w) * (1 + ret);
         if (pot <= 0 && withdrawSchedule[di] > 0) survived = false;
       }
+      cumDet *= 1 + infl;
+      cumSim *= 1 + inflY;
     }
     if (survived && pot >= 0) successes++;
     if (onProgress && (r % progressEvery === 0 || r === runs - 1)) onProgress((r + 1) / runs);

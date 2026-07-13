@@ -5,6 +5,7 @@ import {
   getSyncConfig, setSyncConfig, disableSync, pushNow, pullAndApply, lastSyncResult,
 } from "../state/sync.js";
 import { todayISO } from "../ui/shared.jsx";
+import useAppStore from "../state/appStore.js";
 
 /* ======================================================================
    BACKUP & SYNC — optional end-to-end-encrypted sync via /api/sync
@@ -26,7 +27,13 @@ function PassphraseWarning() {
   );
 }
 
+const OVERFLOW_LABEL = {
+  txns: "transactions", valuations: "valuation history", netWorthSnapshots: "net-worth history",
+  incomeEntries: "dividend/interest ledger", eriEntries: "excess reportable income entries",
+};
+
 export default function SyncTab() {
+  const storageOverflow = useAppStore((s) => s.storageOverflow);
   const [cfg, setCfg] = useState(getSyncConfig());
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
@@ -115,6 +122,15 @@ export default function SyncTab() {
         </p>
         {msg && <div role="status" className="text-xs rounded-lg border border-[var(--border)] bg-[var(--panel2)] px-3 py-2">{msg}</div>}
       </div>
+
+      {storageOverflow.length > 0 && (
+        <div role="status" className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 text-xs text-[var(--muted)] leading-relaxed flex items-start gap-1.5">
+          <AlertTriangle size={13} className="mt-0.5 shrink-0 text-[var(--m-bb)]" aria-hidden="true" />
+          <span>
+            Your {storageOverflow.map((k) => OVERFLOW_LABEL[k] || k).join(", ")} {storageOverflow.length > 1 ? "have" : "has"} grown past what the browser's quick-access storage (localStorage) can hold on this device. Nothing is lost — the full data is kept in this browser's larger IndexedDB store instead, and (if enabled above) synced normally. This only affects how it's cached locally, not what's saved.
+          </span>
+        </div>
+      )}
 
       {!cfg.enabled && (
         <div className="grid sm:grid-cols-2 gap-4">
