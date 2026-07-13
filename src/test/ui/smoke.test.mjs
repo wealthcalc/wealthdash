@@ -116,21 +116,38 @@ test("Phase 3.7: HoldingsTab switches to windowed rendering past VIRTUALIZE_THRE
   assert.ok(holdingsHtml.includes("T0") && holdingsHtml.includes("T1199"));
 });
 
-test("HoldingsTab renders positions with region/sector tag inputs", () => {
-  const html = renderToString(React.createElement(HoldingsTab, { positions: model.positions }));
+test("HoldingsTab renders positions, tag inputs, and the allocation & exposure panel", () => {
+  // The allocation/exposure panel (concentration, region/sector bars, fund
+  // overlap) moved here from the Balance sheet tab — it only renders when the
+  // shell passes `model`; `concentration` drives the single-company stats.
+  const html = renderToString(React.createElement(HoldingsTab, {
+    positions: model.positions,
+    model,
+    concentration: { total: 12000, rows: [], top1: { ticker: "VWRL", weight: 0.8 }, top5Weight: 1, hhi: 0.68, effectiveN: 1.47, alerts: [] },
+  })).replaceAll("&amp;", "&");
   assert.ok(html.includes("VWRL"));
   assert.ok(html.includes("Region"));
   assert.ok(html.includes("Sector"));
+  assert.ok(html.includes("Allocation & exposure"));
+  assert.ok(html.includes("Effective holdings"));
 });
 
-test("WealthTab renders totals and the exposure panel", () => {
+test("WealthTab renders the net-worth headline and balance-sheet breakdown", () => {
+  // Balance sheet now shows the true household net-worth figure and a link
+  // over to Holdings — the per-position table and exposure panel moved out.
   const html = renderToString(React.createElement(WealthTab, {
     model,
-    concentration: { total: 12000, rows: [], top1: { ticker: "VWRL", weight: 0.8 }, top5Weight: 1, hhi: 0.68, effectiveN: 1.47, alerts: [] },
-  }));
-  assert.ok(html.includes("Total wealth"));
-  assert.ok(html.includes("Allocation"));
-  assert.ok(html.includes("Effective holdings"));
+    netWorth: {
+      investedTotal: 12000, propertyValue: 400000, propertyDebt: 250000, propertyEquity: 150000,
+      privateValue: 0, rsuValue: 0, otherLiabilities: 5000, creditCardDebt: 1200,
+      totalLiabilities: 256200, netWorth: 155800,
+    },
+    setTab: () => {},
+  })).replaceAll("&amp;", "&");
+  assert.ok(html.includes("Net worth"));
+  assert.ok(html.includes("Property equity")); // balance-sheet breakdown strip
+  assert.ok(html.includes("Holdings"));         // one-line link to Portfolio ▸ Holdings
+  assert.ok(!html.includes("Effective holdings")); // exposure panel no longer here
 });
 
 test("GiltsTab and RsuTab render their empty states from store defaults", () => {

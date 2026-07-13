@@ -1,8 +1,9 @@
-import React, { useState, useMemo, useCallback, useRef } from "react";
+import React, { useState, useMemo } from "react";
+import { AlertTriangle, PieChart } from "lucide-react";
 import { isWrapperTaxable } from "../core/portfolio.mjs";
-import { parseExposurePaste } from "../core/lookthrough.mjs";
+import { parseExposurePaste, portfolioExposure, overlapMatrix } from "../core/lookthrough.mjs";
 import LivePricesPanel from "../ui/LivePricesPanel.jsx";
-import { gbp, gbp0, WrapperChip, num, pct, Stat, Empty, useSort, sortRows, SortTh, todayISO, useVirtualRows, VIRTUALIZE_THRESHOLD } from "../ui/shared.jsx";
+import { gbp, gbp0, WrapperChip, num, pct, KIND_LABEL, AllocBar, Stat, Empty, useSort, sortRows, SortTh, todayISO, useVirtualRows, VIRTUALIZE_THRESHOLD } from "../ui/shared.jsx";
 import useAppStore from "../state/appStore.js";
 
 /* Factsheet exposure editor — look-through v1 (core/lookthrough.mjs).
@@ -76,13 +77,33 @@ function ExposureEditor({ tickers, secMeta, setSecMeta }) {
 }
 
 // Raw persisted state (prices, security meta) comes from the store via
-// selectors; only DERIVED data (positions, from the shell's wealth model)
-// arrives as a prop. Part of the Phase 2.8 de-drilling pass.
-function HoldingsTab({ positions }) {
+// selectors; only DERIVED data arrives as props: `positions` (from the
+// shell's wealth model), plus `model` (for its allocation buckets) and
+// `concentration` (single-company risk incl. RSU shares, core/exposure.mjs)
+// — the "how am I invested" views moved here from the Net worth ▸ Balance
+// sheet tab, since concentration and region/sector exposure are a portfolio
+// question, not a balance-sheet one. Part of the Phase 2.8 de-drilling pass.
+function HoldingsTab({ positions, model = null, concentration = null }) {
   const prices = useAppStore((s) => s.prices), setPrices = useAppStore((s) => s.setPrices);
   const secMeta = useAppStore((s) => s.secMeta), setSecMeta = useAppStore((s) => s.setSecMeta);
   const open = positions.filter((p) => p.qty > 1e-6);
   const [sort, toggleSort] = useSort("wrapper", "asc");
+  // Look-through v1 (core/lookthrough.mjs) — blends pasted factsheet exposure
+  // tables over hand tags over untagged, coverage reported. Kept above the
+  // early return so hook order is stable whether or not there are open
+  // holdings this render.
+  const regionExposure = useMemo(
+    () => portfolioExposure({ positions, secMeta, field: "region" }),
+    [positions, secMeta]
+  );
+  const sectorExposure = useMemo(
+    () => portfolioExposure({ positions, secMeta, field: "sector" }),
+    [positions, secMeta]
+  );
+  const similarity = useMemo(
+    () => overlapMatrix({ positions, secMeta, field: "region" }),
+    [positions, secMeta]
+  );
   if (!open.length) return <Empty msg="No open holdings yet. Add buy transactions (any wrapper) to see your positions and unrealised gains." />;
 
   const setISIN = (tk, v) => setSecMeta((m) => ({ ...m, [tk]: { ...m[tk], isin: v.toUpperCase().trim() } }));
@@ -143,6 +164,70 @@ function HoldingsTab({ positions }) {
       <LivePricesPanel tickers={tickers} />
 
       <ExposureEditor tickers={tickers} secMeta={secMeta} setSecMeta={setSecMeta} />
+
+      {/* allocation & exposure — moved here from the Net worth ▸ Balance sheet
+          tab: "how am I invested" (concentration, region/sector mix, fund
+          overlap) is a portfolio question. Driven by the same priced market
+          value as the table above; the region/sector bars read the factsheet
+          tables pasted in the editor directly above. */}
+      {model && (
+        <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 space-y-4">
+          <div className="text-sm font-medium flex items-center gap-2"><PieChart size={15} className="text-[var(--accent)]" /> Allocation &amp; exposure <span className="text-xs font-normal text-[var(--muted)]">— by priced market value; unpriced holdings excluded</span></div>
+
+          {/* concentration (core/exposure.mjs — includes RSU-held employer shares) */}
+          {concentration && concentration.total > 0 && (
+            <div>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                <Stat label="Top holding" value={`${pct(concentration.top1.weight)}`} sub={concentration.top1.ticker} />
+                <Stat label="Top 5 holdings" value={pct(concentration.top5Weight)} sub={`of ${gbp0(concentration.total)} priced (incl. RSU shares)`} />
+                <Stat label="Effective holdings" value={num(concentration.effectiveN, 1)}
+                  sub="1 ÷ HHI — what the weights behave like" />
+              </div>
+              {concentration.alerts.length > 0 && (
+                <p className="text-xs mt-2 text-[var(--m-bb)]">
+                  <AlertTriangle size={12} className="inline mr-1 -mt-0.5" aria-hidden="true" />
+                  Single-company risk: {concentration.alerts.map((a) => `${a.ticker} is ${pct(a.weight)} (${gbp0(a.value)})`).join(", ")} — diversified funds are exempt from this flag; one company isn't.
+                </p>
+              )}
+            </div>
+          )}
+
+          <AllocBar title="By wrapper" buckets={model.allocation.wrapper} />
+          <AllocBar title="By asset class" buckets={model.allocation.assetClass} labelOf={(k) => KIND_LABEL[k] || k} />
+          <AllocBar title="By native currency" buckets={model.allocation.currency} />
+          <AllocBar title="By fund domicile" buckets={model.allocation.geography} labelOf={(k) => (k === "unknown" ? "Unset" : k)} />
+          {regionExposure.total > 0 && regionExposure.coverage.untaggedPct < 1 && (
+            <AllocBar title="By region (look-through)" buckets={regionExposure.buckets} labelOf={(k) => (k === "untagged" ? "Untagged" : k)} />
+          )}
+          {sectorExposure.total > 0 && sectorExposure.coverage.untaggedPct < 1 && (
+            <AllocBar title="By sector (look-through)" buckets={sectorExposure.buckets} labelOf={(k) => (k === "untagged" ? "Untagged" : k)} />
+          )}
+
+          {/* region-mix similarity — a PROXY for fund overlap, said plainly */}
+          {similarity.length > 0 && (
+            <div>
+              <div className="text-xs font-medium mb-1">Fund mix similarity (region)</div>
+              <div className="flex flex-wrap gap-2">
+                {similarity.slice(0, 6).map((p) => (
+                  <span key={p.a + p.b}
+                    className={"text-xs px-2 py-1 rounded border num " + (p.similarity >= 0.8 ? "border-[var(--m-bb)] text-[var(--m-bb)]" : "border-[var(--border)] text-[var(--muted)]")}
+                    title={p.similarity >= 0.8 ? "These two funds hold a near-identical region mix — check you're not paying two OCFs for one exposure." : "Region-mix overlap between these two funds."}>
+                    {p.a} ↔ {p.b}: {pct(p.similarity)}
+                  </span>
+                ))}
+              </div>
+              <p className="text-xs text-[var(--muted)] mt-1">Similarity of region MIX from pasted factsheet tables — a proxy, not constituent overlap (two funds can hold the same countries via different stocks).</p>
+            </div>
+          )}
+
+          <p className="text-xs text-[var(--muted)] leading-relaxed">
+            Currency is each line's native trading currency (a proxy for listing, not look-through exposure — a USD-quoted S&amp;P 500 ETF and a GBP-quoted one hold the same underlying). Domicile comes from the ISIN registry (IE = Irish-domiciled fund, GB = UK).
+            {" "}Region/sector bars blend the factsheet tables pasted above over your single tags over untagged:
+            {" "}{pct(regionExposure.coverage.lookthroughPct)} of value has factsheet-grade exposure, {pct(regionExposure.coverage.taggedPct)} rides a hand tag, {pct(regionExposure.coverage.untaggedPct)} is untagged.
+            {" "}Constituent-level look-through (real holdings files) remains a future feature — these are the issuers' own published breakdowns.
+          </p>
+        </div>
+      )}
 
       {/* Past VIRTUALIZE_THRESHOLD rows this becomes a capped-height scroll
           region with a sticky header and only the visible rows (plus

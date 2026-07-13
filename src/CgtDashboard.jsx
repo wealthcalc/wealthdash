@@ -576,7 +576,7 @@ export default function App() {
                   creditCardDebt: netWorth.creditCardDebt,
                 } : null,
               }} />}
-              {tab === "wealth" && <WealthTab model={wealthModel} concentration={exposureConcentration} />}
+              {tab === "wealth" && <WealthTab model={wealthModel} netWorth={netWorth} setTab={setTab} />}
               {tab === "returns" && <ReturnsTab returns={returns} />}
               {tab === "gilts" && <GiltsTab data={giltData} />}
               {tab === "pension" && <PensionTab recomputeProviderCost={recomputeProviderCost} />}
@@ -589,7 +589,7 @@ export default function App() {
               }} />}
               {tab === "allowances" && <AllowancesTab eriTxns={eriTxns} taxableDisposals={taxableDisposals} />}
               {tab === "income" && <IncomeTab {...{ eriTxns, incomeByYear, incomeAllWrappers, txns: giaTxns, incomeCalendar }} />}
-              {tab === "holdings" && <HoldingsTab positions={wealthModel ? wealthModel.positions : []} />}
+              {tab === "holdings" && <HoldingsTab positions={wealthModel ? wealthModel.positions : []} model={wealthModel} concentration={exposureConcentration} />}
               {tab === "property" && <PropertyTab />}
               {tab === "private" && <PrivateTab />}
               {tab === "rsu" && <RsuTab />}

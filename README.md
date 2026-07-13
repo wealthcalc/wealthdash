@@ -4,6 +4,49 @@ Client-side React (Vite) CGT tracker + wealth dashboard, with a Yahoo Finance
 price proxy running as a Vercel serverless function. All personal data stays in
 the browser's localStorage; the deployment ships only code.
 
+## Net worth / Portfolio restructure: one true balance sheet, no duplicated holdings table
+
+Two screens had drifted into overlap: **Net worth ▸ Balance sheet**
+(`WealthTab`) carried a full per-position holdings table AND an
+allocation/exposure panel, while its "Total wealth" headline summed only
+positions + cash — property equity and liabilities, entered one sub-tab over
+on **Property & debts**, never reached it. **Portfolio ▸ Holdings**
+(`HoldingsTab`) had essentially the same per-position table, only richer
+(ISIN, region/sector tagging, factsheet exposure editor) — a straight
+duplicate. This step splits the two screens along the question each answers.
+
+- **Balance sheet is now a true balance sheet.** The headline is the single
+  `householdNetWorth` figure (`core/property.mjs`) — investments + cash +
+  property equity + private/RSU holdings − other liabilities − credit cards —
+  the *same* number the Home tab shows, so the two can never quote a
+  different "net worth" (the whole problem was that no single number tied the
+  sub-tabs together). A breakdown strip itemises the pieces (Investments +
+  cash / Property equity / Private / RSU / Other liabilities / Credit cards),
+  shown only once there's a non-investment asset or liability to break down —
+  same `hasBalanceSheetExtras` test HomeTab uses, so an existing user with no
+  property/liabilities entered sees `netWorth.netWorth === total.total` and no
+  redundant strip. The per-wrapper rollup, cash accounts, credit cards, and
+  the Property & debts sub-tab all stay; their totals now feed the headline.
+- **The per-position table is gone from the Balance sheet**, replaced by a
+  one-line link across to Portfolio ▸ Holdings (`setTab("holdings")`). Editing
+  a price line-by-line is a portfolio task, not a balance-sheet one; the
+  Holdings table already does it better.
+- **Allocation & exposure moved to Portfolio ▸ Holdings** — concentration
+  (incl. RSU-held employer shares, `core/exposure.mjs`), the by-wrapper /
+  asset-class / currency / domicile bars, region/sector look-through bars, and
+  the fund-mix overlap proxy. "How am I invested" belongs next to the
+  factsheet-exposure editor that feeds those very bars (it's on the same tab),
+  not on the balance sheet. The look-through memos (`core/lookthrough.mjs`)
+  moved with it, kept above `HoldingsTab`'s empty-state early return so hook
+  order stays stable.
+- **Wiring only, no engine changes.** `CgtDashboard` now passes `netWorth` +
+  `setTab` to `WealthTab` (dropping `concentration`) and `model` +
+  `concentration` to `HoldingsTab`; the sidebar IA (Net worth = Balance sheet
+  + Property & debts; Portfolio = Holdings + Returns + Gilts) is unchanged, so
+  every deep-link keeps working. UI smoke tests updated to assert the panel's
+  new home and the net-worth headline (574 core + 12 UI tests green, ESLint
+  clean, production build clean).
+
 ## Phase 2, step 1: property, mortgages & liabilities — completing the balance sheet
 
 Theme for Phase 2: stop describing only the investment portfolio and start
