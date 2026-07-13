@@ -1,9 +1,10 @@
 import React, { useState, useMemo } from "react";
-import { Building2, PlusCircle, AlertTriangle, Info, ChevronDown, ChevronUp } from "lucide-react";
+import { Building2, PlusCircle, AlertTriangle, Info, ChevronDown, ChevronUp, Upload, ClipboardPaste } from "lucide-react";
 import {
   holdingSummary, cgtExemptionStatus, reliefByYear, lossReliefEligible, privateTotals,
   PRIVATE_TYPES, TYPE_LABEL, RELIEF_RATE, EIS_ANNUAL_CAP, EIS_ANNUAL_CAP_KI, SEIS_ANNUAL_CAP,
 } from "../core/private-investments.mjs";
+import { parseInvestmentCsv, parseDistributionPaste, reconcileImportRows } from "../core/private-import.mjs";
 import { gbp, gbp0, num, uid, todayISO, Field, Stat, Empty, TwoStepDelete, RateCell } from "../ui/shared.jsx";
 import useAppStore from "../state/appStore.js";
 
@@ -45,6 +46,11 @@ function PrivateTab() {
   const [form, setForm] = useState(HOLDING_BLANK());
   const [eventForms, setEventForms] = useState({}); // holdingId -> draft event
   const [expanded, setExpanded] = useState({});     // holdingId -> bool (event ledger open)
+  const [importOpen, setImportOpen] = useState({}); // holdingId -> bool (import panel open)
+  const [csvDraft, setCsvDraft] = useState({});     // holdingId -> pasted transactions CSV
+  const [csvMsg, setCsvMsg] = useState({});         // holdingId -> import result message
+  const [distDraft, setDistDraft] = useState({});   // holdingId -> pasted distribution receipt
+  const [distMsg, setDistMsg] = useState({});       // holdingId -> parse result message
 
   const today = todayISO();
   const totals = useMemo(() => privateTotals(holdings, events, today), [holdings, events, today]);
@@ -73,6 +79,54 @@ function PrivateTab() {
     setEventForms((f) => ({ ...f, [holdingId]: EVENT_BLANK(holdingId) }));
   };
   const removeEvent = (id) => setEvents((e) => e.filter((x) => x.id !== id));
+
+  // Import a pasted transactions CSV (Date,Transaction,Amount,…) onto one
+  // holding: Investment -> call, Extinguish -> return-of-capital distribution
+  // (core/private-import.mjs). Genuine in-file duplicates are preserved;
+  // re-pasting the same export is idempotent via a multiset diff against the
+  // holding's existing events (reconcileImportRows).
+  const eventKey = (e) => `${e.date}|${e.type}|${(+e.amount || 0).toFixed(2)}`;
+  const importCsv = (holdingId) => {
+    const parsed = parseInvestmentCsv(csvDraft[holdingId] || "");
+    if (!parsed.rows.length) {
+      setCsvMsg((m) => ({ ...m, [holdingId]: parsed.skipped.length
+        ? `Nothing importable — ${parsed.skipped.length} row(s) not recognised. Expected a "Date,Transaction,Amount,…" CSV with Investment / Extinguish rows.`
+        : "Nothing to import — paste the transactions CSV first." }));
+      return;
+    }
+    const existing = events.filter((e) => e.holdingId === holdingId);
+    const { rows, skipped } = reconcileImportRows(parsed.rows, existing, eventKey);
+    if (rows.length) {
+      const additions = rows.map((r) => ({
+        id: uid(), holdingId, date: r.date, type: r.type, amount: +r.amount,
+        notes: r.transaction === "Extinguish" ? "Return of capital (Extinguish, imported)" : "Imported",
+      }));
+      setEvents((e) => [...e, ...additions]);
+      setCsvDraft((d) => ({ ...d, [holdingId]: "" }));
+    }
+    const calls = rows.filter((r) => r.type === "call").length;
+    const dists = rows.length - calls;
+    setCsvMsg((m) => ({ ...m, [holdingId]:
+      `Imported ${rows.length} event${rows.length === 1 ? "" : "s"}` +
+      (rows.length ? ` (${calls} investment${calls === 1 ? "" : "s"}${dists ? `, ${dists} return of capital` : ""})` : "") +
+      (skipped ? `; skipped ${skipped} already in the ledger` : "") +
+      (parsed.skipped.length ? `; ignored ${parsed.skipped.length} unrecognised row${parsed.skipped.length === 1 ? "" : "s"}` : "") + "." }));
+  };
+
+  // Parse a pasted "Distribution Summary" receipt and prefill the add-event
+  // form below with the amount — the user picks capital vs income and the
+  // date before saving (the receipt carries no date and doesn't disambiguate
+  // capital/income), per the deliberate "ask each time" choice.
+  const parseDist = (holdingId) => {
+    const out = parseDistributionPaste(distDraft[holdingId] || "");
+    if (out.error) { setDistMsg((m) => ({ ...m, [holdingId]: out.error })); return; }
+    const bits = [];
+    if (out.unitsHeld != null) bits.push(`${num(out.unitsHeld, 2)} units`);
+    if (out.returnPerUnit != null) bits.push(`£${out.returnPerUnit}/unit`);
+    setEventForm(holdingId, { type: "distribution_income", amount: String(out.amount), date: today, notes: `Distribution${bits.length ? ` (${bits.join(", ")})` : ""}` });
+    setDistMsg((m) => ({ ...m, [holdingId]:
+      `Parsed £${num(out.amount, 2)} (${out.net != null ? "net" : "gross"} return)${out.fund ? ` for ${out.fund}` : ""}. Pick capital or income in the form below, set the date, then Add.` }));
+  };
 
   const reliefYears = Object.keys(relief).sort((a, b) => (a < b ? 1 : -1));
   const anyOverCap = reliefYears.some((y) => relief[y].EIS.overCap || relief[y].SEIS.overCap);
@@ -166,7 +220,7 @@ function PrivateTab() {
                 {isOpen && (
                   <div className="space-y-2">
                     {holdingEvents.length > 0 && (
-                      <div className="rounded-lg border border-[var(--border)] overflow-hidden">
+                      <div className="rounded-lg border border-[var(--border)] overflow-x-auto">
                         <table className="w-full text-xs">
                           <thead className="bg-[var(--panel2)] text-[var(--muted)] uppercase tracking-wide">
                             <tr><th className="px-2 py-1 text-left">Date</th><th className="px-2 py-1 text-left">Type</th><th className="px-2 py-1 text-right">Amount</th><th className="px-2 py-1 text-left">Notes</th><th></th></tr>
@@ -185,6 +239,39 @@ function PrivateTab() {
                         </table>
                       </div>
                     )}
+                    {/* paste import — transactions CSV + distribution receipt */}
+                    <div className="rounded-lg border border-dashed border-[var(--border)] p-2 space-y-2">
+                      <button onClick={() => setImportOpen((x) => ({ ...x, [h.id]: !x[h.id] }))} className="text-xs text-[var(--accent)] hover:underline flex items-center gap-1" aria-expanded={!!importOpen[h.id]}>
+                        <Upload size={12} /> Import by paste {importOpen[h.id] ? "▾" : "▸"}
+                      </button>
+                      {importOpen[h.id] && (
+                        <div className="space-y-3">
+                          <div className="space-y-1">
+                            <div className="text-xs font-medium flex items-center gap-1"><ClipboardPaste size={12} /> Transactions CSV</div>
+                            <textarea value={csvDraft[h.id] || ""} onChange={(e) => setCsvDraft((d) => ({ ...d, [h.id]: e.target.value }))} rows={4}
+                              placeholder={"Date,Transaction,Amount,Shares,Share Price,Type\n2024-01-29,Investment,149.51,,,\"Fund\"\n2022-03-09,Extinguish,11.46,,,"}
+                              className="input w-full font-mono text-[11px]" />
+                            <div className="flex items-center gap-2">
+                              <button onClick={() => importCsv(h.id)} className="btn-accent !h-auto !py-1 text-xs">Import transactions</button>
+                              <span className="text-[11px] text-[var(--muted)]">Investment → capital call · Extinguish → return of capital</span>
+                            </div>
+                            {csvMsg[h.id] && <div role="status" className="text-[11px] rounded border border-[var(--border)] bg-[var(--panel2)] px-2 py-1">{csvMsg[h.id]}</div>}
+                          </div>
+                          <div className="space-y-1 pt-2 border-t border-[var(--border)]">
+                            <div className="text-xs font-medium flex items-center gap-1"><ClipboardPaste size={12} /> Distribution receipt</div>
+                            <textarea value={distDraft[h.id] || ""} onChange={(e) => setDistDraft((d) => ({ ...d, [h.id]: e.target.value }))} rows={4}
+                              placeholder={"Distribution Summary\nJamJar Ventures II LP\nTotal units held\n535,140.13\nReturns per unit\n£0.0004286167\nGross return\n£229.37\nNet return\n£229.37"}
+                              className="input w-full font-mono text-[11px]" />
+                            <div className="flex items-center gap-2">
+                              <button onClick={() => parseDist(h.id)} className="btn-accent !h-auto !py-1 text-xs">Parse receipt</button>
+                              <span className="text-[11px] text-[var(--muted)]">fills the form below — you pick capital vs income</span>
+                            </div>
+                            {distMsg[h.id] && <div role="status" className="text-[11px] rounded border border-[var(--border)] bg-[var(--panel2)] px-2 py-1">{distMsg[h.id]}</div>}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
                     <div className="flex flex-wrap gap-1.5 items-end">
                       <input type="date" value={ef.date} onChange={(e) => setEventForm(h.id, { date: e.target.value })} className="input num text-xs py-1 w-32" />
                       <select value={ef.type} onChange={(e) => setEventForm(h.id, { type: e.target.value })} className="input text-xs py-1">

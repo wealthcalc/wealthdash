@@ -99,6 +99,14 @@ const useAppStore = create((set) => {
     // grant date) and events (vest tranches + sales — see core/rsu.mjs).
     rsuGrants: ls.get("cgt.rsugrants", []), setRsuGrants: upd("rsuGrants"),
     rsuEvents: ls.get("cgt.rsuevents", []), setRsuEvents: upd("rsuEvents"),
+    // Deferred cash comp (vesting cash awards, e.g. a deferred bonus paid in
+    // tranches over several years) — same "own array, own setter" shape as
+    // rsuGrants/rsuEvents: awards (identity, label, award date) and tranches
+    // (scheduled/paid cash payouts — see core/deferred-cash.mjs). Only the
+    // UNVESTED tranches feed net worth (vested ones have been paid and are
+    // tracked as ordinary cash).
+    deferredCashAwards: ls.get("cgt.deferredcashawards", []), setDeferredCashAwards: upd("deferredCashAwards"),
+    deferredCashVests: ls.get("cgt.deferredcashvests", []), setDeferredCashVests: upd("deferredCashVests"),
     // IBKR Flex Web Service credentials (Import tab's live pull) — same
     // "client holds it, sent per-request, never stored server-side"
     // pattern as avKey. Still persisted locally like avKey so it doesn't

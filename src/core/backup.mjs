@@ -9,9 +9,10 @@
    the same medicine to backups). backup.test.mjs fails if a new
    PERSIST_KEYS entry is missing from the TYPES table below.
 
-   v15 additions over v14: transactions may carry `fees` (s38 dealing
-   costs) and `account` (broker label) — they ride inside the txns array,
-   so v14-and-earlier files restore unchanged.
+   v16 adds `deferredCashAwards`/`deferredCashVests` (deferred-cash comp —
+   core/deferred-cash.mjs); older files simply omit them and restore
+   unchanged. v15 added `fees` (s38 dealing costs) and `account` (broker
+   label) inside the txns array, so v14-and-earlier files restore unchanged.
 
    Deliberate policy, unchanged from v13/v14:
    - EXCLUDED from export: secrets (avKey, ibkrToken — plaintext in a file
@@ -26,7 +27,7 @@
    ====================================================================== */
 import { PERSIST_KEYS } from "../state/durable.js";
 
-export const BACKUP_VERSION = 15;
+export const BACKUP_VERSION = 16;
 
 export const EXPORT_EXCLUDED = ["dark", "tab", "dmoReportDate", "avKey", "ibkrToken"];
 export const RESTORE_ONLY = ["avKey", "ibkrToken"];
@@ -34,7 +35,7 @@ export const RESTORE_ONLY = ["avKey", "ibkrToken"];
 export const ID_ARRAYS = [
   "txns", "incomeEntries", "eriEntries", "pensionCashflows", "properties", "mortgages",
   "otherLiabilities", "cashAccounts", "privateHoldings", "privateEvents", "rsuGrants",
-  "rsuEvents", "creditCards", "scenarios",
+  "rsuEvents", "deferredCashAwards", "deferredCashVests", "creditCards", "scenarios",
 ];
 // Keys merged into current state rather than replacing it.
 export const MERGE_KEYS = ["secMeta"];
@@ -46,7 +47,8 @@ const TYPES = {
   netWorthSnapshots: "array", pensionCashflows: "array", properties: "array",
   mortgages: "array", otherLiabilities: "array", cashAccounts: "array",
   privateHoldings: "array", privateEvents: "array", rsuGrants: "array",
-  rsuEvents: "array", creditCards: "array", scenarios: "array",
+  rsuEvents: "array", deferredCashAwards: "array", deferredCashVests: "array",
+  creditCards: "array", scenarios: "array",
   cash: "object", prices: "object", priceMeta: "object", avMeta: "object",
   secMeta: "object", allowanceOverrides: "object", planInputs: "object",
   income: "number", carried: "number",

@@ -152,7 +152,7 @@ function RsuTab() {
                 {isOpen && (
                   <div className="space-y-2">
                     {sched.length > 0 && (
-                      <div className="rounded-lg border border-[var(--border)] overflow-hidden">
+                      <div className="rounded-lg border border-[var(--border)] overflow-x-auto">
                         <table className="w-full text-xs">
                           <thead className="bg-[var(--panel2)] text-[var(--muted)] uppercase tracking-wide">
                             <tr><th className="px-2 py-1 text-left">Date</th><th className="px-2 py-1 text-right">Shares</th><th className="px-2 py-1 text-left">Status</th><th></th></tr>
@@ -171,7 +171,7 @@ function RsuTab() {
                       </div>
                     )}
                     {events.filter((e) => e.grantId === g.id && e.type === "sale").length > 0 && (
-                      <div className="rounded-lg border border-[var(--border)] overflow-hidden">
+                      <div className="rounded-lg border border-[var(--border)] overflow-x-auto">
                         <table className="w-full text-xs">
                           <thead className="bg-[var(--panel2)] text-[var(--muted)] uppercase tracking-wide">
                             <tr><th className="px-2 py-1 text-left">Sale date</th><th className="px-2 py-1 text-right">Shares</th><th className="px-2 py-1 text-right">Proceeds (GBP)</th><th></th></tr>

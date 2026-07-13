@@ -10,6 +10,7 @@ import { householdNetWorth } from "./core/property.mjs";
 import { totalCreditCardDebt } from "./core/credit-cards.mjs";
 import { privateTotals } from "./core/private-investments.mjs";
 import { rsuTotals } from "./core/rsu.mjs";
+import { deferredCashTotals, deferredCashCalendar } from "./core/deferred-cash.mjs";
 import { effectiveCashByWrapper } from "./core/cash.mjs";
 import { buildIncomeCalendar } from "./core/income-calendar.mjs";
 import { buildNetWorthSnapshot, upsertDailySnapshot } from "./core/net-worth-series.mjs";
@@ -42,6 +43,7 @@ const PropertyTab = lazy(() => import("./features/PropertyTab.jsx"));
 const PrivateTab = lazy(() => import("./features/PrivateTab.jsx"));
 const RsuTab = lazy(() => import("./features/RsuTab.jsx"));
 const SyncTab = lazy(() => import("./features/SyncTab.jsx"));
+const DeferredCashTab = lazy(() => import("./features/DeferredCashTab.jsx"));
 
 /* ============================== app =================================== */
 export default function App() {
@@ -60,6 +62,7 @@ export default function App() {
     planInputs, setPlanInputs,
     privateHoldings, setPrivateHoldings, privateEvents, setPrivateEvents,
     rsuGrants, setRsuGrants, rsuEvents, setRsuEvents,
+    deferredCashAwards, deferredCashVests,
     ibkrQueryId, setIbkrQueryId, ibkrToken, setIbkrToken,
     creditCards, setCreditCards,
   } = useAppStore();
@@ -212,6 +215,14 @@ export default function App() {
     [rsuGrants, rsuEvents, prices]
   );
 
+  // Deferred cash comp — only the UNVESTED (`outstanding`) tranches feed net
+  // worth; vested ones have been paid and are already counted as cash. Full
+  // schedule detail lives in DeferredCashTab; see core/deferred-cash.mjs.
+  const deferredCashSummary = useMemo(
+    () => deferredCashTotals(deferredCashAwards, deferredCashVests, todayISO()),
+    [deferredCashAwards, deferredCashVests]
+  );
+
   // Phase 2: true household net worth = investments + cash (the existing
   // wealth model) + property equity + private-holding valuations + held RSU
   // value − other (non-mortgage) liabilities − credit card balances.
@@ -220,8 +231,9 @@ export default function App() {
   const netWorth = useMemo(() => householdNetWorth({
     investedTotal: wealthModel ? wealthModel.total.total : 0,
     properties, mortgages, otherLiabilities, privateValue: privateSummary.currentValue, rsuValue: rsuSummary.currentValueGBP,
+    deferredCashValue: deferredCashSummary.outstanding,
     creditCardDebt,
-  }), [wealthModel, properties, mortgages, otherLiabilities, privateSummary, rsuSummary, creditCardDebt]);
+  }), [wealthModel, properties, mortgages, otherLiabilities, privateSummary, rsuSummary, deferredCashSummary, creditCardDebt]);
 
   // Daily household net-worth snapshot (core/net-worth-series.mjs) — the
   // headline number's own history. Unlike the `valuations` effect above,
@@ -255,8 +267,12 @@ export default function App() {
   const incomeCalendar = useMemo(() => buildIncomeCalendar({
     incomeEntries, txns,
     cashAccounts, giltCashflows: giltData ? giltData.cashflows : [],
+    // Deferred-cash tranche payouts are contractually scheduled cash inflows
+    // — folded in as a "deferred-cash" source (core/deferred-cash.mjs shapes
+    // them, bounded to future/in-horizon).
+    deferredCash: deferredCashCalendar(deferredCashAwards, deferredCashVests, todayISO(), 365),
     today: todayISO(), horizonDays: 365,
-  }), [incomeEntries, txns, cashAccounts, giltData]);
+  }), [incomeEntries, txns, cashAccounts, giltData, deferredCashAwards, deferredCashVests]);
 
   // Individual gilts are CGT-exempt (TCGA 1992 s115), but `matched` (the raw
   // matching engine output) doesn't know about instrument type — it'll happily
@@ -576,7 +592,7 @@ export default function App() {
                   creditCardDebt: netWorth.creditCardDebt,
                 } : null,
               }} />}
-              {tab === "wealth" && <WealthTab model={wealthModel} concentration={exposureConcentration} />}
+              {tab === "wealth" && <WealthTab model={wealthModel} netWorth={netWorth} setTab={setTab} />}
               {tab === "returns" && <ReturnsTab returns={returns} />}
               {tab === "gilts" && <GiltsTab data={giltData} />}
               {tab === "pension" && <PensionTab recomputeProviderCost={recomputeProviderCost} />}
@@ -589,10 +605,11 @@ export default function App() {
               }} />}
               {tab === "allowances" && <AllowancesTab eriTxns={eriTxns} taxableDisposals={taxableDisposals} />}
               {tab === "income" && <IncomeTab {...{ eriTxns, incomeByYear, incomeAllWrappers, txns: giaTxns, incomeCalendar }} />}
-              {tab === "holdings" && <HoldingsTab positions={wealthModel ? wealthModel.positions : []} />}
+              {tab === "holdings" && <HoldingsTab positions={wealthModel ? wealthModel.positions : []} model={wealthModel} concentration={exposureConcentration} />}
               {tab === "property" && <PropertyTab />}
               {tab === "private" && <PrivateTab />}
               {tab === "rsu" && <RsuTab />}
+              {tab === "deferredcash" && <DeferredCashTab />}
               {tab === "ledger" && <LedgerTab />}
               {tab === "sync" && <SyncTab />}
               {tab === "import" && <ImportTab setTab={setTab} recomputeProviderCost={recomputeProviderCost} />}

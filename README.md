@@ -4,6 +4,116 @@ Client-side React (Vite) CGT tracker + wealth dashboard, with a Yahoo Finance
 price proxy running as a Vercel serverless function. All personal data stays in
 the browser's localStorage; the deployment ships only code.
 
+## Private-investment import: transactions CSV + distribution-receipt paste
+
+Two paste-to-import paths on each **Private investments** holding card, for the
+formats a venture-LP / EIS platform (e.g. Seedrs) hands you — turned into the
+capital-call / distribution events `core/private-investments.mjs` already
+models. Both are per-holding (you're on one fund's page when you copy), so the
+parsed rows attach to whichever holding you paste them onto.
+
+- **`core/private-import.mjs`** (new, pure, 7 node tests):
+  - `parseInvestmentCsv` — a "Date,Transaction,Amount,Shares,Share Price,Type"
+    export. **Investment → a capital call**; **Extinguish → a return-of-capital
+    distribution** (`distribution_capital`) — a deliberate mapping confirmed
+    against a real Passion Capital notice (Seedrs "Re-Investment Cash": funds
+    returned to the nominee from a wind-down / loan-note repayment), not a
+    guess. Any other transaction word is skipped and reported, never coerced.
+  - `parseDistributionPaste` — the "Distribution Summary" block (fund, total
+    units held, returns per unit, gross/net return). The receipt has no date
+    and doesn't say whether a distribution is capital or income, so the parser
+    returns figures only and the UI supplies the date + asks capital-vs-income
+    per paste (the deliberate "ask each time" choice).
+  - `reconcileImportRows` — a **multiset diff**, not the app's usual set-based
+    `dedupeAgainstExisting`. Some platforms legitimately list two identical
+    same-day contributions (the real JamJar Fund 2 export doubles every line,
+    summing to £8,279.02 across all 50 rows), and set-dedupe would wrongly
+    halve the cost basis. This keeps genuine in-file duplicates on first
+    import while still making a re-paste of the same export idempotent
+    (drops only as many rows as already exist in that holding's ledger).
+- **Private tab UI** — a collapsible "Import by paste" panel inside each
+  holding's event ledger: a transactions-CSV box (imports directly, reporting
+  imported / already-in-ledger / ignored counts) and a distribution-receipt
+  box (parses, then prefills the add-event form so you choose capital vs income
+  and the date before saving). GBP-only, matching the data.
+
+## Deferred cash: vesting cash comp, in net worth and the income calendar
+
+A new **Other assets ▸ Deferred cash** tab, mirroring the RSU tracker but for
+deferred compensation paid in *cash* rather than stock — a bonus awarded now
+and paid out in tranches over several years, common in finance comp.
+
+- **`core/deferred-cash.mjs`** (new, pure, node-tested) — same "award +
+  tranche events" shape as `core/rsu.mjs`, but simpler: a tranche's value IS
+  its GBP amount (no ticker, no live price). `vestingSchedule`,
+  `awardSummary`, `deferredCashTotals`, and `deferredCashCalendar` (shapes
+  future payouts for the income calendar).
+- **Only UNVESTED tranches count toward net worth** — the deliberate inverse
+  of RSUs. An RSU vest becomes a share you still *hold* until you sell it, so
+  RSUs count the vested-unsold side; deferred cash, once a tranche's date
+  passes, is *paid into a bank account* and already tracked under ordinary
+  cash — counting it here too would double-count it. So `householdNetWorth`
+  gains a `deferredCashValue` component fed from `outstanding` (sum of
+  unvested tranches only), and it shows in the Home and Balance-sheet net-worth
+  breakdowns alongside property/private/RSU.
+- **Vesting calendar in two places** — an "Upcoming payouts" table on the tab
+  itself (like RSU's "Upcoming vests"), and each future tranche also folds
+  into the **Income tab's 12-month forward calendar** as a `deferred-cash`
+  scheduled source (no wrapper tax badge — it's employment income taxed via
+  PAYE at payment, not wrapper-based investment income).
+- **No interest/forfeiture modelling** — a tranche is worth exactly the amount
+  entered; unvested comp is counted at face value as an expected entitlement,
+  not risk-adjusted. Stated in the UI, same "don't fabricate precision" stance
+  as mortgage balances and named cash accounts.
+- **Backup version 16** — adds `deferredCashAwards`/`deferredCashVests`
+  (registered in `durable.js`'s `PERSIST_KEYS` + the backup `TYPES`/`ID_ARRAYS`
+  tables, with the existing exhaustiveness tests updated); v15-and-earlier
+  files restore unchanged, just without this data. 583 core + 12 UI tests
+  green, ESLint clean, build clean.
+
+## Net worth / Portfolio restructure: one true balance sheet, no duplicated holdings table
+
+Two screens had drifted into overlap: **Net worth ▸ Balance sheet**
+(`WealthTab`) carried a full per-position holdings table AND an
+allocation/exposure panel, while its "Total wealth" headline summed only
+positions + cash — property equity and liabilities, entered one sub-tab over
+on **Property & debts**, never reached it. **Portfolio ▸ Holdings**
+(`HoldingsTab`) had essentially the same per-position table, only richer
+(ISIN, region/sector tagging, factsheet exposure editor) — a straight
+duplicate. This step splits the two screens along the question each answers.
+
+- **Balance sheet is now a true balance sheet.** The headline is the single
+  `householdNetWorth` figure (`core/property.mjs`) — investments + cash +
+  property equity + private/RSU holdings − other liabilities − credit cards —
+  the *same* number the Home tab shows, so the two can never quote a
+  different "net worth" (the whole problem was that no single number tied the
+  sub-tabs together). A breakdown strip itemises the pieces (Investments +
+  cash / Property equity / Private / RSU / Other liabilities / Credit cards),
+  shown only once there's a non-investment asset or liability to break down —
+  same `hasBalanceSheetExtras` test HomeTab uses, so an existing user with no
+  property/liabilities entered sees `netWorth.netWorth === total.total` and no
+  redundant strip. The per-wrapper rollup, cash accounts, credit cards, and
+  the Property & debts sub-tab all stay; their totals now feed the headline.
+- **The per-position table is gone from the Balance sheet**, replaced by a
+  one-line link across to Portfolio ▸ Holdings (`setTab("holdings")`). Editing
+  a price line-by-line is a portfolio task, not a balance-sheet one; the
+  Holdings table already does it better.
+- **Allocation & exposure moved to Portfolio ▸ Holdings** — concentration
+  (incl. RSU-held employer shares, `core/exposure.mjs`), the by-wrapper /
+  asset-class / currency / domicile bars, region/sector look-through bars, and
+  the fund-mix overlap proxy. "How am I invested" belongs next to the
+  factsheet-exposure editor that feeds those very bars (it's on the same tab),
+  not on the balance sheet. The look-through memos (`core/lookthrough.mjs`)
+  moved with it, kept above `HoldingsTab`'s empty-state early return so hook
+  order stays stable.
+- **Wiring only, no engine changes.** `CgtDashboard` now passes `netWorth` +
+  `setTab` to `WealthTab` (dropping `concentration`) and `model` +
+  `concentration` to `HoldingsTab`; the sidebar IA (Net worth = Balance sheet
+  + Property & debts; Portfolio = Holdings + Returns + Gilts) is unchanged, so
+  every deep-link keeps working. UI smoke tests updated to assert the panel's
+  new home and the net-worth headline (574 core + 12 UI tests green, ESLint
+  clean, production build clean).
+
 ## Phase 2, step 1: property, mortgages & liabilities — completing the balance sheet
 
 Theme for Phase 2: stop describing only the investment portfolio and start
@@ -1869,7 +1979,7 @@ that.
 
 ## Tests
 ```
-npm test        # node --test: 574 core tests + 12 UI smoke tests (test:ui)
+npm test        # node --test: 590 core tests + 12 UI smoke tests (test:ui)
 ```
 
 ## Deploy (recommended: Git → new Vercel project)

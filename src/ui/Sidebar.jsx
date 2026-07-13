@@ -22,7 +22,7 @@ export const SCREENS = [
   { key: "portfolio", label: "Portfolio", icon: Wallet, leaves: ["holdings", "returns", "gilts"] },
   { key: "income", label: "Income", icon: PoundSterling, leaves: ["income"] },
   { key: "pension", label: "Pensions", icon: PiggyBank, leaves: ["pension"] },
-  { key: "other", label: "Other assets", icon: Building2, leaves: ["private", "rsu"] },
+  { key: "other", label: "Other assets", icon: Building2, leaves: ["private", "rsu", "deferredcash"] },
   { key: "tax", label: "Tax", icon: TableProperties, leaves: ["cgt", "allowances"] },
   { key: "data", label: "Data", icon: Database, leaves: ["ledger", "import", "sync"] },
 ];
@@ -33,7 +33,7 @@ export const LEAF_LABELS = {
   wealth: "Balance sheet", property: "Property & debts",
   holdings: "Holdings", returns: "Returns", gilts: "Gilts",
   income: "Income", pension: "Pension & LISA",
-  private: "Private investments", rsu: "RSUs",
+  private: "Private investments", rsu: "RSUs", deferredcash: "Deferred cash",
   cgt: "Capital gains", allowances: "Allowances",
   ledger: "Transactions", import: "Import", sync: "Backup & sync",
 };

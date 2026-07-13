@@ -381,7 +381,7 @@ function PropertyTab() {
       <div className="space-y-2">
         <h3 className="text-sm font-semibold flex items-center gap-2"><CreditCard size={15} className="text-[var(--accent)]" /> Other liabilities</h3>
         {otherLiabilities.length > 0 && (
-          <div className="rounded-xl border border-[var(--border)] overflow-hidden">
+          <div className="rounded-xl border border-[var(--border)] overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="bg-[var(--panel2)] text-[var(--muted)] text-xs uppercase tracking-wide">
                 <tr><th className="px-3 py-2 text-left font-medium">Label</th><th className="px-3 py-2 text-right font-medium">Balance</th><th className="px-3 py-2 text-right font-medium">Rate</th><th className="px-3 py-2 text-left font-medium">Notes</th><th className="px-3 py-2"></th></tr>

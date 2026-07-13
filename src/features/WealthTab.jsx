@@ -1,14 +1,13 @@
-import React, { useState, useMemo, useCallback, useRef } from "react";
-import { AlertCircle, PieChart, Banknote, AlertTriangle, CreditCard } from "lucide-react";
+import React, { useState } from "react";
+import { AlertCircle, Banknote, AlertTriangle, CreditCard, ArrowRight } from "lucide-react";
 import { WRAPPERS } from "../core/portfolio.mjs";
 import {
   cashAccountsByWrapper, totalCashAccounts, weightedAverageRate, accountsMaturingSoon,
 } from "../core/cash.mjs";
 import { totalCreditCardDebt } from "../core/credit-cards.mjs";
-import { portfolioExposure, overlapMatrix } from "../core/lookthrough.mjs";
 import LivePricesPanel from "../ui/LivePricesPanel.jsx";
 import {
-  gbp, gbp0, WrapperChip, num, CurrencyInput, KIND_LABEL, ALLOC_COLORS, AllocBar, pct, Stat, Empty,
+  gbp, gbp0, num, CurrencyInput, Stat, Empty,
   uid, todayISO, Field, useSort, sortRows, SortTh, TwoStepDelete,
 } from "../ui/shared.jsx";
 import useAppStore from "../state/appStore.js";
@@ -20,13 +19,15 @@ const ACCOUNT_BLANK = () => ({
 const CARD_BLANK = () => ({ id: uid(), label: "", issuer: "", balance: "", notes: "" });
 
 // Raw persisted state comes from the store via selectors; only DERIVED
-// data (model, concentration) arrives as props — Phase 2.8 de-drilling.
-function WealthTab({ model, concentration = null }) {
+// data (model, netWorth) arrives as props — Phase 2.8 de-drilling.
+// `netWorth` (householdNetWorth, core/property.mjs) folds property equity,
+// mortgages, other liabilities and credit cards into a single balance-sheet
+// total; `setTab` powers the one-line link over to Portfolio ▸ Holdings,
+// where the per-position table and allocation/exposure views now live.
+function WealthTab({ model, netWorth = null, setTab }) {
   const cash = useAppStore((s) => s.cash), setCash = useAppStore((s) => s.setCash);
   const cashAccounts = useAppStore((s) => s.cashAccounts), setCashAccounts = useAppStore((s) => s.setCashAccounts);
   const creditCards = useAppStore((s) => s.creditCards), setCreditCards = useAppStore((s) => s.setCreditCards);
-  const prices = useAppStore((s) => s.prices), setPrices = useAppStore((s) => s.setPrices);
-  const secMeta = useAppStore((s) => s.secMeta);
   // Hooks must run in the same order every render regardless of whether
   // `model` is null this time round, so anything stateful lives above both
   // early-return guards below (this file previously had no hooks at all,
@@ -34,20 +35,6 @@ function WealthTab({ model, concentration = null }) {
   const [acctForm, setAcctForm] = useState(ACCOUNT_BLANK());
   const [acctSort, toggleAcctSort] = useSort("wrapper", "asc");
   const [cardForm, setCardForm] = useState(CARD_BLANK());
-  // Look-through v1 (core/lookthrough.mjs) — blends pasted factsheet
-  // exposure tables over hand tags over untagged, coverage reported.
-  const regionExposure = useMemo(
-    () => portfolioExposure({ positions: model?.positions || [], secMeta, field: "region" }),
-    [model, secMeta]
-  );
-  const sectorExposure = useMemo(
-    () => portfolioExposure({ positions: model?.positions || [], secMeta, field: "sector" }),
-    [model, secMeta]
-  );
-  const similarity = useMemo(
-    () => overlapMatrix({ positions: model?.positions || [], secMeta, field: "region" }),
-    [model, secMeta]
-  );
 
   if (!model) return <Empty msg="Couldn't build the portfolio model — check the Transactions tab for ledger errors." />;
   const { positions, byWrapper, total, income } = model;
@@ -92,14 +79,28 @@ function WealthTab({ model, concentration = null }) {
   const pensionTotal = PENSION_WRAPPERS.reduce((s, w) => s + (byWrapper[w]?.total || 0), 0);
   const readilyAvailable = total.total - pensionTotal;
 
+  // True balance-sheet headline: investments + cash + property equity +
+  // private/RSU holdings − other liabilities − credit cards, from the one
+  // householdNetWorth figure (core/property.mjs) the Home tab already uses,
+  // so the two screens can never quote a different "net worth". Falls back
+  // to invested+cash only if the shell hasn't computed netWorth yet (it
+  // always does when a model exists, but the guard keeps this pure-ish).
+  const headlineValue = netWorth ? netWorth.netWorth : total.total;
+  // The property/private/RSU/credit-card breakdown line only earns its place
+  // once there's something to break down — for an existing user with no
+  // property or liabilities entered, netWorth.netWorth === total.total
+  // exactly, so a lone "Investments + cash" row would be pure noise. Same
+  // test as HomeTab's hasBalanceSheetExtras.
+  const hasBalanceSheetExtras = !!netWorth && (netWorth.propertyValue > 0 || netWorth.otherLiabilities > 0 || netWorth.privateValue > 0 || netWorth.rsuValue > 0 || netWorth.deferredCashValue > 0 || netWorth.creditCardDebt > 0);
+
   return (
     <div className="space-y-4">
       {/* headline */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] px-4 py-3 col-span-2 sm:col-span-1">
-          <div className="text-xs text-[var(--muted)]">Total wealth</div>
-          <div className="num font-semibold text-2xl mt-0.5">{gbp0(total.total)}</div>
-          <div className="text-xs text-[var(--muted)] mt-0.5">{total.positions} holding{total.positions === 1 ? "" : "s"} + cash across {wrapperOrder.length} wrapper{wrapperOrder.length === 1 ? "" : "s"}</div>
+          <div className="text-xs text-[var(--muted)]">Net worth</div>
+          <div className="num font-semibold text-2xl mt-0.5">{gbp0(headlineValue)}</div>
+          <div className="text-xs text-[var(--muted)] mt-0.5">{hasBalanceSheetExtras ? "assets − liabilities, whole household" : `${total.positions} holding${total.positions === 1 ? "" : "s"} + cash across ${wrapperOrder.length} wrapper${wrapperOrder.length === 1 ? "" : "s"}`}</div>
           <div className="mt-2 pt-2 border-t border-[var(--border)] flex justify-between gap-3 text-xs">
             <span><span className="text-[var(--muted)]">Readily available</span> <span className="num font-medium">{gbp0(readilyAvailable)}</span></span>
             <span><span className="text-[var(--muted)]">Pension (SIPP+LISA)</span> <span className="num font-medium">{gbp0(pensionTotal)}</span></span>
@@ -110,17 +111,38 @@ function WealthTab({ model, concentration = null }) {
         <Stat label="Unrealised gain" value={total.priced ? gbp0(total.unrealised) : "—"} sub={total.bookCostPriced ? `${total.unrealised >= 0 ? "+" : ""}${num((total.unrealised / total.bookCostPriced) * 100)}% on priced book cost` : undefined} tone={total.unrealised >= 0 ? "gain" : "loss"} />
       </div>
 
+      {/* balance-sheet breakdown — the pieces that make up net worth, tying
+          the invested wealth model together with the Property & debts sub-tab
+          and the credit cards below. Only shown once there's a non-investment
+          asset or liability to show (see hasBalanceSheetExtras). */}
+      {hasBalanceSheetExtras && (
+        <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] px-4 py-3">
+          <div className="flex flex-wrap gap-x-5 gap-y-1 text-sm num">
+            <span><span className="text-[var(--muted)]">Investments + cash</span> <span className="font-medium">{gbp0(total.total)}</span></span>
+            <span><span className="text-[var(--muted)]">Property equity</span> <span className="font-medium">{gbp0(netWorth.propertyEquity)}</span></span>
+            {netWorth.privateValue > 0 && <span><span className="text-[var(--muted)]">Private holdings</span> <span className="font-medium">{gbp0(netWorth.privateValue)}</span></span>}
+            {netWorth.rsuValue > 0 && <span><span className="text-[var(--muted)]">RSU holdings</span> <span className="font-medium">{gbp0(netWorth.rsuValue)}</span></span>}
+            {netWorth.deferredCashValue > 0 && <span><span className="text-[var(--muted)]">Deferred cash</span> <span className="font-medium">{gbp0(netWorth.deferredCashValue)}</span></span>}
+            {netWorth.otherLiabilities > 0 && <span><span className="text-[var(--muted)]">Other liabilities</span> <span className="font-medium text-[var(--loss)]">−{gbp0(netWorth.otherLiabilities)}</span></span>}
+            {netWorth.creditCardDebt > 0 && <span><span className="text-[var(--muted)]">Credit cards</span> <span className="font-medium text-[var(--loss)]">−{gbp0(netWorth.creditCardDebt)}</span></span>}
+          </div>
+          <p className="text-xs text-[var(--muted)] mt-2 leading-relaxed">
+            Property, mortgages and other liabilities are entered on the <span className="font-medium text-[var(--fg)]">Property &amp; debts</span> sub-tab; credit cards below. Mortgages are netted inside property equity, not subtracted twice.
+          </p>
+        </div>
+      )}
+
       {total.unpriced > 0 && (
         <div className="flex items-start gap-2 text-xs rounded-lg px-3 py-2 border border-[var(--border)] bg-[var(--panel)] text-[var(--muted)]">
           <AlertCircle size={14} className="mt-0.5 shrink-0 text-[var(--m-bb)]" />
-          <span>{total.unpriced} holding{total.unpriced === 1 ? "" : "s"} without a price ({total.unpricedTickers.join(", ")}) — excluded from market value and allocation until priced. Fetch live prices below or type a price into the table.</span>
+          <span>{total.unpriced} holding{total.unpriced === 1 ? "" : "s"} without a price ({total.unpricedTickers.join(", ")}) — excluded from market value until priced. Fetch live prices below, or set a price by hand on Portfolio ▸ Holdings.</span>
         </div>
       )}
 
       <LivePricesPanel tickers={tickers} />
 
       {/* per-wrapper roll-up with editable cash */}
-      <div className="rounded-xl border border-[var(--border)] overflow-hidden">
+      <div className="rounded-xl border border-[var(--border)] overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="bg-[var(--panel2)] text-[var(--muted)] text-xs uppercase tracking-wide">
             <tr>{["Wrapper", "Holdings", "Book cost", "Market value", "Unrealised", "Cash", "Total"].map((h, i) => (
@@ -297,101 +319,21 @@ function WealthTab({ model, concentration = null }) {
         </div>
       </div>
 
-      {/* allocation & exposure */}
-      <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 space-y-4">
-        <div className="text-sm font-medium flex items-center gap-2"><PieChart size={15} className="text-[var(--accent)]" /> Allocation &amp; exposure <span className="text-xs font-normal text-[var(--muted)]">— by priced market value; unpriced holdings excluded</span></div>
-
-        {/* concentration (core/exposure.mjs — includes RSU-held employer shares) */}
-        {concentration && concentration.total > 0 && (
-          <div>
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-              <Stat label="Top holding" value={`${pct(concentration.top1.weight)}`} sub={concentration.top1.ticker} />
-              <Stat label="Top 5 holdings" value={pct(concentration.top5Weight)} sub={`of ${gbp0(concentration.total)} priced (incl. RSU shares)`} />
-              <Stat label="Effective holdings" value={num(concentration.effectiveN, 1)}
-                sub="1 ÷ HHI — what the weights behave like" />
-            </div>
-            {concentration.alerts.length > 0 && (
-              <p className="text-xs mt-2 text-[var(--m-bb)]">
-                <AlertTriangle size={12} className="inline mr-1 -mt-0.5" aria-hidden="true" />
-                Single-company risk: {concentration.alerts.map((a) => `${a.ticker} is ${pct(a.weight)} (${gbp0(a.value)})`).join(", ")} — diversified funds are exempt from this flag; one company isn't.
-              </p>
-            )}
-          </div>
-        )}
-
-        <AllocBar title="By wrapper" buckets={model.allocation.wrapper} />
-        <AllocBar title="By asset class" buckets={model.allocation.assetClass} labelOf={(k) => KIND_LABEL[k] || k} />
-        <AllocBar title="By native currency" buckets={model.allocation.currency} />
-        <AllocBar title="By fund domicile" buckets={model.allocation.geography} labelOf={(k) => (k === "unknown" ? "Unset" : k)} />
-        {regionExposure.total > 0 && regionExposure.coverage.untaggedPct < 1 && (
-          <AllocBar title="By region (look-through)" buckets={regionExposure.buckets} labelOf={(k) => (k === "untagged" ? "Untagged" : k)} />
-        )}
-        {sectorExposure.total > 0 && sectorExposure.coverage.untaggedPct < 1 && (
-          <AllocBar title="By sector (look-through)" buckets={sectorExposure.buckets} labelOf={(k) => (k === "untagged" ? "Untagged" : k)} />
-        )}
-
-        {/* region-mix similarity — a PROXY for fund overlap, said plainly */}
-        {similarity.length > 0 && (
-          <div>
-            <div className="text-xs font-medium mb-1">Fund mix similarity (region)</div>
-            <div className="flex flex-wrap gap-2">
-              {similarity.slice(0, 6).map((p) => (
-                <span key={p.a + p.b}
-                  className={"text-xs px-2 py-1 rounded border num " + (p.similarity >= 0.8 ? "border-[var(--m-bb)] text-[var(--m-bb)]" : "border-[var(--border)] text-[var(--muted)]")}
-                  title={p.similarity >= 0.8 ? "These two funds hold a near-identical region mix — check you're not paying two OCFs for one exposure." : "Region-mix overlap between these two funds."}>
-                  {p.a} ↔ {p.b}: {pct(p.similarity)}
-                </span>
-              ))}
-            </div>
-            <p className="text-xs text-[var(--muted)] mt-1">Similarity of region MIX from pasted factsheet tables — a proxy, not constituent overlap (two funds can hold the same countries via different stocks).</p>
-          </div>
-        )}
-
-        <p className="text-xs text-[var(--muted)] leading-relaxed">
-          Currency is each line's native trading currency (a proxy for listing, not look-through exposure — a USD-quoted S&amp;P 500 ETF and a GBP-quoted one hold the same underlying). Domicile comes from the ISIN registry (IE = Irish-domiciled fund, GB = UK).
-          {" "}Region/sector bars blend real factsheet tables (paste them per fund on the Holdings tab) over your single tags over untagged:
-          {" "}{pct(regionExposure.coverage.lookthroughPct)} of value has factsheet-grade exposure, {pct(regionExposure.coverage.taggedPct)} rides a hand tag, {pct(regionExposure.coverage.untaggedPct)} is untagged.
-          {" "}Constituent-level look-through (real holdings files) remains a future feature — these are the issuers' own published breakdowns.
-        </p>
-      </div>
-
-      {/* consolidated holdings */}
-      <div className="rounded-xl border border-[var(--border)] overflow-hidden">
-        <table className="w-full text-sm">
-          <thead className="bg-[var(--panel2)] text-[var(--muted)] text-xs uppercase tracking-wide">
-            <tr>{["Wrapper", "Ticker", "Quantity", "Avg cost", "Book cost", "Price now", "Market value", "Unrealised", "%"].map((h, i) => (
-              <th key={i} className={"px-3 py-2 font-medium " + (i <= 1 ? "text-left" : "text-right")}>{h}</th>
-            ))}</tr>
-          </thead>
-          <tbody className="divide-y divide-[var(--border)] bg-[var(--panel)]">
-            {positions.map((p) => (
-              <tr key={p.wrapper + p.ticker} className="hover:bg-[var(--panel2)]">
-                <td className="px-3 py-2">
-                  <WrapperChip wrapper={p.wrapper} />
-                </td>
-                <td className="px-3 py-2 font-medium">
-                  <div className="flex items-center gap-1.5">
-                    <span>{p.ticker}</span>
-                    {p.cgtExempt && <span title="CGT-exempt instrument (individual gilt, TCGA 1992 s115)" className="text-[11px] font-semibold px-1.5 py-0.5 rounded bg-[color:color-mix(in_srgb,var(--m-same)_18%,transparent)] text-[var(--m-same)] align-middle">CGT-free</span>}
-                  </div>
-                  {p.name && <div className="text-xs font-normal text-[var(--muted)] truncate max-w-[220px]" title={p.name}>{p.name}</div>}
-                </td>
-                <td className="px-3 py-2 num text-right">{num(p.qty, p.qty % 1 ? 2 : 0)}</td>
-                <td className="px-3 py-2 num text-right text-[var(--muted)]">{gbp(p.avgCost)}</td>
-                <td className="px-3 py-2 num text-right">{gbp(p.bookCost)}</td>
-                <td className="px-3 py-2 text-right">
-                  <input type="number" value={prices[p.ticker] ?? ""} placeholder="—"
-                    onChange={(e) => setPrices((pr) => ({ ...pr, [p.ticker]: e.target.value === "" ? undefined : +e.target.value }))}
-                    className="input num w-24 text-right py-1" />
-                </td>
-                <td className="px-3 py-2 num text-right">{p.priced ? gbp(p.marketValue) : "—"}</td>
-                <td className={"px-3 py-2 num text-right font-medium " + (!p.priced ? "text-[var(--muted)]" : p.unrealised >= 0 ? "text-[var(--gain)]" : "text-[var(--loss)]")}>{p.priced ? gbp(p.unrealised) : "—"}</td>
-                <td className={"px-3 py-2 num text-right " + (!p.priced || p.unrealisedPct == null ? "text-[var(--muted)]" : p.unrealisedPct >= 0 ? "text-[var(--gain)]" : "text-[var(--loss)]")}>{p.priced && p.unrealisedPct != null ? `${p.unrealisedPct >= 0 ? "+" : ""}${num(p.unrealisedPct * 100)}%` : "—"}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      {/* Per-position detail (the Wrapper/Ticker/Qty/cost/price/value table)
+          and the allocation/exposure views (concentration, region/sector
+          look-through, fund overlap) both moved to Portfolio ▸ Holdings —
+          "what do I hold / how am I invested" is a portfolio question, not a
+          balance-sheet one. This screen keeps the per-wrapper rollup above;
+          the line below is the one-hop link to the detail. */}
+      <button
+        onClick={() => setTab && setTab("holdings")}
+        className="w-full rounded-xl border border-[var(--border)] bg-[var(--panel)] px-4 py-3 flex items-center justify-between gap-3 text-left hover:bg-[var(--panel2)] transition">
+        <span className="text-sm">
+          <span className="font-medium">Per-holding detail &amp; allocation</span>
+          <span className="text-[var(--muted)]"> — every position, plus concentration and region/sector exposure, live on Portfolio ▸ Holdings.</span>
+        </span>
+        <span className="flex items-center gap-1 text-sm font-medium text-[var(--accent)] shrink-0">Holdings <ArrowRight size={15} aria-hidden="true" /></span>
+      </button>
 
       {/* income strip */}
       {income.total.total > 0 && (
@@ -404,7 +346,7 @@ function WealthTab({ model, concentration = null }) {
       )}
 
       <p className="text-xs text-[var(--muted)] leading-relaxed">
-        This view rolls up every wrapper; a price entered here is the same price the GIA-only Holdings tab uses (prices are per ticker, GBP). Cash balances are per wrapper, entered manually, and count toward total wealth. Tax stays gated where it belongs: only GIA holdings feed the CGT and Income tabs, and CGT-exempt instruments are flagged. Same ticker in two wrappers = two independent Section 104 pools, as HMRC requires only for the unsheltered one — sheltered pools reuse the same engine purely for book-cost consistency.
+        This is the household balance sheet: the per-wrapper rollup and cash above, plus property equity and liabilities (Property &amp; debts sub-tab) and credit cards, summed into one net-worth figure — the same number the Home tab shows. Per-position detail and allocation live on Portfolio ▸ Holdings. Cash balances are per wrapper, entered manually, and count toward net worth. Tax stays gated where it belongs: only GIA holdings feed the CGT and Income tabs, and CGT-exempt instruments are flagged. Same ticker in two wrappers = two independent Section 104 pools, as HMRC requires only for the unsheltered one — sheltered pools reuse the same engine purely for book-cost consistency.
       </p>
     </div>
   );
