@@ -354,12 +354,13 @@ const SOURCE_LABELS = {
   dividend: "Dividend",
   interest: "Interest",
   "cash-maturity": "Cash maturity",
+  "deferred-cash": "Deferred cash",
 };
 // Fixed per-source colour mapping for the forecast chart below (same "fixed
 // mapping, not an index-based palette" reasoning as WRAPPER_COLOR above —
 // a source keeps its colour as bars are added/removed month to month).
-const SOURCE_COLOR = { dividend: "var(--accent)", interest: "var(--gain)", "gilt-coupon": "var(--m-same)", "gilt-redemption": "var(--m-pool)", "cash-maturity": "var(--m-bb)" };
-const SOURCE_ORDER = ["dividend", "interest", "gilt-coupon", "gilt-redemption", "cash-maturity"];
+const SOURCE_COLOR = { dividend: "var(--accent)", interest: "var(--gain)", "gilt-coupon": "var(--m-same)", "gilt-redemption": "var(--m-pool)", "cash-maturity": "var(--m-bb)", "deferred-cash": "color-mix(in srgb, var(--accent) 45%, var(--m-pool))" };
+const SOURCE_ORDER = ["dividend", "interest", "gilt-coupon", "gilt-redemption", "cash-maturity", "deferred-cash"];
 const sourceColor = (s) => SOURCE_COLOR[s] || "var(--muted)";
 
 // Tax-treatment badge for a calendar row — wrapper name + taxed/tax-free/
@@ -374,7 +375,9 @@ const sourceColor = (s) => SOURCE_COLOR[s] || "var(--muted)";
 // a wrapper — interest defaults to taxed unless it's known to sit in a
 // sheltered account.
 function taxTag(e) {
-  if (e.source === "gilt-redemption" || e.source === "cash-maturity") return null;
+  // Deferred cash is employment income taxed via PAYE at payment, not
+  // wrapper-based investment income — no GIA/ISA-style badge applies.
+  if (e.source === "gilt-redemption" || e.source === "cash-maturity" || e.source === "deferred-cash") return null;
   const taxed = isWrapperTaxable(e.wrapper);
   const wrapperNorm = normWrapper(e.wrapper);
   // "Interest" with no ticker attached (un-attributed cash interest) has no

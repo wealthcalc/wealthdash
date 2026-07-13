@@ -99,7 +99,7 @@ export function nextOccurrences(lastDate, stepDays, today, horizonDays = 365) {
 // doesn't recompute gilt schedules, just folds them in.
 export function buildIncomeCalendar({
   incomeEntries = [], txns = [], cashAccounts = [],
-  giltCashflows = [], today, horizonDays = 365,
+  giltCashflows = [], deferredCash = [], today, horizonDays = 365,
 } = {}) {
   if (!today) throw new Error("buildIncomeCalendar requires `today` (ISO date) — pure functions don't read the clock themselves.");
   const events = [];
@@ -157,6 +157,19 @@ export function buildIncomeCalendar({
     if (a.rateType !== "fixed" || !a.maturityDate) continue;
     if (a.maturityDate > today && a.maturityDate <= horizonISO) {
       events.push({ date: a.maturityDate, source: "cash-maturity", label: a.label || a.institution || a.wrapper, amount: +a.balance || 0, certainty: "scheduled", wrapper: a.wrapper || "GIA" });
+    }
+  }
+
+  // 4. Deferred-cash tranche payouts — contractually scheduled cash inflows
+  // (core/deferred-cash.mjs already bounds these to future/in-horizon and
+  // shapes them; this module doesn't need to know the award record shape).
+  // No wrapper: it's employment income taxed via PAYE at payment, not
+  // investment income sitting in a GIA/ISA/etc — the UI shows no wrapper
+  // tax badge for this source rather than implying one.
+  for (const p of deferredCash) {
+    if (!p || !p.date) continue;
+    if (p.date > today && p.date <= horizonISO) {
+      events.push({ date: p.date, source: "deferred-cash", label: p.label || "Deferred cash", amount: +p.amount || 0, certainty: "scheduled", wrapper: null });
     }
   }
 

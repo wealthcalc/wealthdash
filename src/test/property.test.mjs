@@ -135,6 +135,14 @@ test("householdNetWorth: private holding valuations (EIS/SEIS/LP) add straight i
   assert.equal(out.netWorth, 145000);
 });
 
+test("householdNetWorth: deferred cash (unvested) adds straight in, like private/RSU value", () => {
+  const out = householdNetWorth({ investedTotal: 100000, deferredCashValue: 30000 });
+  assert.equal(out.deferredCashValue, 30000);
+  assert.equal(out.netWorth, 130000);
+  // defaults to 0 when not passed (existing call sites unaffected)
+  assert.equal(householdNetWorth({ investedTotal: 100000 }).deferredCashValue, 0);
+});
+
 test("householdNetWorth: credit card debt is subtracted like other liabilities, alongside them", () => {
   const out = householdNetWorth({
     investedTotal: 100000,

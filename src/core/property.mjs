@@ -174,15 +174,19 @@ export function mortgagesEndingSoon(mortgages = [], today, withinDays = 180) {
 // straight in, not netted against a debt figure) plus held RSU shares'
 // current value (core/rsu.mjs — same "added straight in" treatment, no
 // leverage concept), minus any other, non-mortgage debts (including credit
-// card balances — see core/credit-cards.mjs) = true household net worth.
-// `privateValue`/`rsuValue`/`creditCardDebt` default to 0 so every existing
-// call site (and every existing test) is unaffected until a caller
-// actually has that kind of holding/debt to pass in.
-export function householdNetWorth({ investedTotal = 0, properties = [], mortgages = [], otherLiabilities = [], privateValue = 0, rsuValue = 0, creditCardDebt = 0 } = {}) {
+// card balances — see core/credit-cards.mjs) plus outstanding deferred-cash
+// comp (the UNVESTED tranches only — vested ones have been paid into a bank
+// account and are already counted as cash; see core/deferred-cash.mjs) =
+// true household net worth. `privateValue`/`rsuValue`/`deferredCashValue`/
+// `creditCardDebt` default to 0 so every existing call site (and every
+// existing test) is unaffected until a caller actually has that kind of
+// holding/debt to pass in.
+export function householdNetWorth({ investedTotal = 0, properties = [], mortgages = [], otherLiabilities = [], privateValue = 0, rsuValue = 0, deferredCashValue = 0, creditCardDebt = 0 } = {}) {
   const prop = netPropertyWorth(properties, mortgages);
   const otherDebt = totalOtherLiabilities(otherLiabilities);
   const pv = Number.isFinite(+privateValue) ? +privateValue : 0;
   const rv = Number.isFinite(+rsuValue) ? +rsuValue : 0;
+  const dc = Number.isFinite(+deferredCashValue) ? +deferredCashValue : 0;
   const ccDebt = Number.isFinite(+creditCardDebt) ? +creditCardDebt : 0;
   return {
     investedTotal,
@@ -191,9 +195,10 @@ export function householdNetWorth({ investedTotal = 0, properties = [], mortgage
     propertyEquity: prop.equity,
     privateValue: pv,
     rsuValue: rv,
+    deferredCashValue: dc,
     otherLiabilities: otherDebt,
     creditCardDebt: ccDebt,
     totalLiabilities: prop.debt + otherDebt + ccDebt,
-    netWorth: investedTotal + prop.equity + pv + rv - otherDebt - ccDebt,
+    netWorth: investedTotal + prop.equity + pv + rv + dc - otherDebt - ccDebt,
   };
 }

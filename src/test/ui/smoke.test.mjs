@@ -26,6 +26,7 @@ import SyncTab from "../../features/SyncTab.jsx";
 import LedgerTab from "../../features/LedgerTab.jsx";
 import PropertyTab from "../../features/PropertyTab.jsx";
 import PrivateTab from "../../features/PrivateTab.jsx";
+import DeferredCashTab from "../../features/DeferredCashTab.jsx";
 import PensionTab from "../../features/PensionTab.jsx";
 import AllowancesTab from "../../features/AllowancesTab.jsx";
 import ReturnsTab from "../../features/ReturnsTab.jsx";
@@ -172,6 +173,7 @@ test("de-drilled data tabs render from store defaults without props", () => {
     ["Ledger", React.createElement(LedgerTab)],
     ["Property", React.createElement(PropertyTab)],
     ["Private", React.createElement(PrivateTab)],
+    ["DeferredCash", React.createElement(DeferredCashTab)],
     ["Pension", React.createElement(PensionTab, { recomputeProviderCost: () => {} })],
     ["Allowances", React.createElement(AllowancesTab, { eriTxns: [], taxableDisposals: [] })],
     ["Returns", React.createElement(ReturnsTab, { returns: null })],

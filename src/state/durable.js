@@ -45,6 +45,8 @@ export const PERSIST_KEYS = {
   privateEvents: "cgt.privateevents",
   rsuGrants: "cgt.rsugrants",
   rsuEvents: "cgt.rsuevents",
+  deferredCashAwards: "cgt.deferredcashawards",
+  deferredCashVests: "cgt.deferredcashvests",
   ibkrQueryId: "cgt.ibkrqueryid",
   ibkrToken: "cgt.ibkrtoken",
   creditCards: "cgt.creditcards",

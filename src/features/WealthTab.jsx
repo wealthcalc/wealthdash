@@ -91,7 +91,7 @@ function WealthTab({ model, netWorth = null, setTab }) {
   // property or liabilities entered, netWorth.netWorth === total.total
   // exactly, so a lone "Investments + cash" row would be pure noise. Same
   // test as HomeTab's hasBalanceSheetExtras.
-  const hasBalanceSheetExtras = !!netWorth && (netWorth.propertyValue > 0 || netWorth.otherLiabilities > 0 || netWorth.privateValue > 0 || netWorth.rsuValue > 0 || netWorth.creditCardDebt > 0);
+  const hasBalanceSheetExtras = !!netWorth && (netWorth.propertyValue > 0 || netWorth.otherLiabilities > 0 || netWorth.privateValue > 0 || netWorth.rsuValue > 0 || netWorth.deferredCashValue > 0 || netWorth.creditCardDebt > 0);
 
   return (
     <div className="space-y-4">
@@ -122,6 +122,7 @@ function WealthTab({ model, netWorth = null, setTab }) {
             <span><span className="text-[var(--muted)]">Property equity</span> <span className="font-medium">{gbp0(netWorth.propertyEquity)}</span></span>
             {netWorth.privateValue > 0 && <span><span className="text-[var(--muted)]">Private holdings</span> <span className="font-medium">{gbp0(netWorth.privateValue)}</span></span>}
             {netWorth.rsuValue > 0 && <span><span className="text-[var(--muted)]">RSU holdings</span> <span className="font-medium">{gbp0(netWorth.rsuValue)}</span></span>}
+            {netWorth.deferredCashValue > 0 && <span><span className="text-[var(--muted)]">Deferred cash</span> <span className="font-medium">{gbp0(netWorth.deferredCashValue)}</span></span>}
             {netWorth.otherLiabilities > 0 && <span><span className="text-[var(--muted)]">Other liabilities</span> <span className="font-medium text-[var(--loss)]">−{gbp0(netWorth.otherLiabilities)}</span></span>}
             {netWorth.creditCardDebt > 0 && <span><span className="text-[var(--muted)]">Credit cards</span> <span className="font-medium text-[var(--loss)]">−{gbp0(netWorth.creditCardDebt)}</span></span>}
           </div>
