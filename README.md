@@ -1977,6 +1977,14 @@ that.
   unmodified. Below the threshold — the overwhelming majority of users —
   tables render exactly as before; nothing changes for them.
 
+## Home £ formatting: whole pounds everywhere a glance lands
+Audit of 2dp `gbp()` in Home-visible contexts (most figures were already
+`gbp0()`): the wrapper-strip "unrealised gain on book cost" hover tooltip
+and PlanHealthCard's visible "Year-1 net income" now render whole pounds —
+pence on a glance card is noise. Deliberately UNCHANGED: the shared
+AllocBar hover tooltip keeps 2dp — surfacing the exact value is what a
+tooltip is for, and that component serves every tab, not just Home.
+
 ## Tests
 ```
 npm test        # node --test: 590 core tests + 12 UI smoke tests (test:ui)

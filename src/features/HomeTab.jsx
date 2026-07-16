@@ -8,7 +8,7 @@ import { allocationDrift } from "../core/rebalancing.mjs";
 import { buildActionQueue } from "../core/action-queue.mjs";
 import PlanHealthCard from "../ui/PlanHealthCard.jsx";
 import {
-  store, gbp, gbp0, num, pct, WrapperChip, AllocBar, KIND_LABEL, RateCell, Empty, todayISO,
+  store, gbp0, num, pct, WrapperChip, AllocBar, KIND_LABEL, RateCell, Empty, todayISO,
 } from "../ui/shared.jsx";
 import { refreshAllPrices } from "../ui/priceRefresh.js";
 import useAppStore from "../state/appStore.js";
@@ -570,7 +570,7 @@ export default function HomeTab({
               </div>
               {gain != null && (
                 <div className={"text-xs num mt-0.5 " + (gain >= 0 ? "text-[var(--gain)]" : "text-[var(--loss)]")}
-                  title={`Unrealised gain on book cost of ${gbp(agg.bookCostPriced)}`}>
+                  title={`Unrealised gain on book cost of ${gbp0(agg.bookCostPriced)}`}>
                   {gain >= 0 ? "+" : ""}{gbp0(gain)}{agg.bookCostPriced > 0 && ` (${num((gain / agg.bookCostPriced) * 100, 1)}%)`}
                 </div>
               )}
