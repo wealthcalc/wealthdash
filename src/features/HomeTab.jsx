@@ -3,6 +3,7 @@ import { TrendingUp, TrendingDown, AlertTriangle, PieChart, RefreshCw, CalendarC
 import { WRAPPERS } from "../core/portfolio.mjs";
 import { mortgagesEndingSoon } from "../core/property.mjs";
 import { snapshotAtOrBefore, overlaySeries } from "../core/net-worth-series.mjs";
+import { pensionXirrByWrapper } from "../core/returns.mjs";
 import { accountsMaturingSoon } from "../core/cash.mjs";
 import { allocationDrift } from "../core/rebalancing.mjs";
 import { buildActionQueue } from "../core/action-queue.mjs";
@@ -402,6 +403,19 @@ export default function HomeTab({
   // been bitten once by a memo placed after an early return (see README).
   const mortgagesSoon = useMemo(() => mortgagesEndingSoon(mortgages, todayISO(), 180), [mortgages]);
   const cashMaturing = useMemo(() => accountsMaturingSoon(cashAccounts, todayISO(), 90), [cashAccounts]);
+  const pensionCashflows = useAppStore((s) => s.pensionCashflows);
+  // Combined pension XIRR for the SIPP/LISA boxes (core/returns.mjs) —
+  // the ledger-based engine can't see pension contribution history (one
+  // consolidated snapshot per fund), which is why those boxes showed
+  // nothing. Same figure and ◆ semantics as the Returns tab.
+  const pensionXirr = useMemo(() => pensionXirrByWrapper({
+    txns, secMeta, pensionCashflows,
+    valueByWrapper: {
+      SIPP: model?.byWrapper?.SIPP?.marketValue ?? 0,
+      LISA: model?.byWrapper?.LISA?.marketValue ?? 0,
+    },
+    today: todayISO(),
+  }), [txns, secMeta, pensionCashflows, model]);
   // Rebalance targets are owned by the CGT tab's Rebalance sub-tab (same
   // localStorage key). Read once per mount — Home remounts on every tab
   // switch, so a target edited over there is always fresh by the time
@@ -561,7 +575,14 @@ export default function HomeTab({
             <div key={w} className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3">
               <div className="flex items-center justify-between">
                 <WrapperChip wrapper={w} />
-                {r?.xirr && <span className="text-xs" title="Money-weighted return (XIRR), annualised"><RateCell r={r.xirr} /></span>}
+                {(pensionXirr[w] || r?.xirr) && (
+                  <span className="text-xs"
+                    title={pensionXirr[w]
+                      ? `Money-weighted return (XIRR), annualised — combined across ${pensionXirr[w].providers} provider${pensionXirr[w].providers > 1 ? "s" : ""}' real contribution dates (Pension & LISA tab)${pensionXirr[w].excludedFx ? `; ${pensionXirr[w].excludedFx} unresolved-FX row(s) excluded` : ""}`
+                      : "Money-weighted return (XIRR), annualised"}>
+                    <RateCell r={pensionXirr[w] || r.xirr} />{pensionXirr[w] && <span className="text-[11px] text-[var(--muted)]">◆</span>}
+                  </span>
+                )}
               </div>
               <div className="text-lg font-semibold num mt-1.5">{gbp0(agg.total)}</div>
               <div className="text-xs text-[var(--muted)] num">

@@ -380,3 +380,41 @@ export function computeReturns({
     portfolioTWR,
   };
 }
+
+/* --------------------- pension XIRR by wrapper ------------------------ */
+// Combined money-weighted return for the SIPP/LISA wrappers from REAL
+// contribution dates (pensionCashflows), not the transaction ledger — the
+// ledger only holds one consolidated snapshot per pension fund, not a
+// purchase history, so computeReturns() above rightly shows nothing for
+// them. This is the aggregation the Pension tab's per-provider XIRRs
+// can't provide on their own: ALL providers' contribution flows for a
+// wrapper are combined into ONE xirr() call with a single terminal value
+// (the wrapper's current market value), which is the correct way to blend
+// money-weighted returns — averaging per-provider rates would weight them
+// wrongly. Zero providers → key absent; rows without a resolved GBP
+// amount are excluded (an unresolved FX row isn't a £0 contribution),
+// their count reported as `excludedFx`.
+// Extracted from ReturnsTab (Fable pass, item 4) so Home's wrapper strip
+// and the Returns tab share one tested implementation.
+export function pensionXirrByWrapper({ txns = [], secMeta = {}, pensionCashflows = [], valueByWrapper = {}, today } = {}) {
+  if (!today) throw new Error("pensionXirrByWrapper requires `today` — pure functions don't read the clock.");
+  const out = {};
+  for (const w of ["SIPP", "LISA"]) {
+    // A provider belongs to this wrapper if any of its funds (secMeta
+    // provider tag) has ledger rows in the wrapper.
+    const providers = new Set(
+      Object.entries(secMeta)
+        .filter(([tk, m]) => m && m.provider && txns.some((t) => t.ticker === tk && normWrapper(t.wrapper) === w))
+        .map(([, m]) => m.provider)
+    );
+    if (!providers.size) continue;
+    const all = pensionCashflows.filter((c) => providers.has(c.provider));
+    const usable = all.filter((c) => c.gbpAmount != null);
+    if (!usable.length) continue;
+    const flows = usable.map((c) => ({ date: c.date, amount: -Math.abs(c.gbpAmount) }));
+    const currentValue = +valueByWrapper[w] || 0;
+    if (currentValue > 0) flows.push({ date: today, amount: currentValue });
+    out[w] = { ...xirr(flows), providers: providers.size, nCashflows: usable.length, excludedFx: all.length - usable.length };
+  }
+  return out;
+}

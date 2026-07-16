@@ -1985,9 +1985,25 @@ pence on a glance card is noise. Deliberately UNCHANGED: the shared
 AllocBar hover tooltip keeps 2dp — surfacing the exact value is what a
 tooltip is for, and that component serves every tab, not just Home.
 
+## Home SIPP/LISA boxes: combined pension XIRR
+Home's wrapper strip showed nothing for SIPP/LISA — not a formatting bug:
+the ledger-based returns engine can't see pension contribution history
+(the ledger holds one consolidated snapshot per pension fund), and the
+real XIRRs lived only per-provider on the Pension tab. Fix: the wrapper-
+level aggregation that already existed inside ReturnsTab is EXTRACTED to
+`core/returns.mjs` as `pensionXirrByWrapper()` (3 tests) — ALL of a
+wrapper's providers' contribution flows combined into ONE xirr() call
+with the wrapper's market value as the single terminal flow (the correct
+blend; averaging per-provider rates would weight them wrongly; tested
+that the combined rate sits between the providers' individual rates).
+Zero/one/many providers handled; unresolved-FX rows excluded and counted.
+Home and the Returns tab now share the one tested implementation, with
+the same ◆ "from real contribution dates" marker; the Pension tab's
+per-provider breakdown is untouched.
+
 ## Tests
 ```
-npm test        # node --test: 590 core tests + 12 UI smoke tests (test:ui)
+npm test        # node --test: 593 core tests + 12 UI smoke tests (test:ui)
 ```
 
 ## Deploy (recommended: Git → new Vercel project)
