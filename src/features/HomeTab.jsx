@@ -57,7 +57,7 @@ function FirstRunPanel({ setTab }) {
           </button>
         ))}
       </div>
-      <p className="text-xs text-[var(--muted)]">Everything is stored locally in this browser (plus an IndexedDB mirror) — nothing is sent anywhere except live price/FX/gilt/HPI lookups you trigger. Use the download icon above to back up any time.</p>
+      <p className="text-xs text-[var(--muted)]">Everything saves automatically to this browser and stays on your device — nothing is sent anywhere except the price/FX lookups you trigger. The Backup button (top right) downloads a copy any time, and Data → Backup &amp; sync adds encrypted multi-device sync when you want it.</p>
     </div>
   );
 }

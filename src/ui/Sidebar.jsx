@@ -67,7 +67,7 @@ function NavSections({ tab, onSelect, onOpenPalette }) {
           className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-sm border border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)] hover:bg-[var(--panel2)]"
           title="Jump anywhere — screens, tools, holdings">
           <Search size={14} aria-hidden="true" /> <span className="truncate">Search…</span>
-          <kbd className="ml-auto text-[11px] px-1 py-0.5 rounded border border-[var(--border)] text-[var(--muted)]">⌘K</kbd>
+          <kbd className="ml-auto text-[11px] px-1 py-0.5 rounded border border-[var(--border)] text-[var(--muted)] hidden sm:inline">⌘K</kbd>
         </button>
       )}
       {SECTIONS.map((sec) => (
@@ -109,7 +109,7 @@ export function DesktopSidebar({ tab, setTab, onOpenPalette }) {
 // close button on open (and back to the menu-opening button on close, via
 // the caller keeping a ref) — a minimal, real focus/keyboard story rather
 // than relying on the backdrop click alone.
-export function MobileDrawer({ tab, setTab, open, onClose }) {
+export function MobileDrawer({ tab, setTab, open, onClose, onOpenPalette }) {
   const closeRef = useRef(null);
   useEffect(() => {
     if (!open) return;
@@ -129,7 +129,13 @@ export function MobileDrawer({ tab, setTab, open, onClose }) {
           <span className="font-semibold text-sm truncate">Wealth Dashboard</span>
           <button ref={closeRef} className="ml-auto text-[var(--muted)]" onClick={onClose} aria-label="Close menu"><X size={18} aria-hidden="true" /></button>
         </div>
-        <nav aria-label="Main navigation"><NavSections tab={tab} onSelect={(k) => { setTab(k); onClose(); }} /></nav>
+        {/* The palette was keyboard-only (⌘K) + a desktop-sidebar button —
+            a dead end on touch. The drawer closes first so the palette
+            isn't stacked under the drawer's own overlay. */}
+        <nav aria-label="Main navigation">
+          <NavSections tab={tab} onSelect={(k) => { setTab(k); onClose(); }}
+            onOpenPalette={onOpenPalette ? () => { onClose(); onOpenPalette(); } : undefined} />
+        </nav>
       </div>
     </div>
   );

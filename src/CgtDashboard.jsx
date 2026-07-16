@@ -487,7 +487,7 @@ export default function App() {
       </a>
       <div className="root min-h-screen bg-[var(--bg)] text-[var(--fg)] flex" style={{ fontFamily: "ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif" }}>
         {!mobileSummaryMode && <DesktopSidebar tab={tab} setTab={setTab} onOpenPalette={() => setPaletteOpen(true)} />}
-        {!mobileSummaryMode && <MobileDrawer tab={tab} setTab={setTab} open={mobileNavOpen} onClose={() => setMobileNavOpen(false)} />}
+        {!mobileSummaryMode && <MobileDrawer tab={tab} setTab={setTab} open={mobileNavOpen} onClose={() => setMobileNavOpen(false)} onOpenPalette={() => setPaletteOpen(true)} />}
         <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} setTab={setTab}
           tickers={wealthModel ? [...new Set(wealthModel.positions.filter((p) => p.qty > 1e-9).map((p) => p.ticker))].sort() : []} />
         <main id="main-content" tabIndex={-1} className="flex-1 min-w-0">
@@ -506,7 +506,7 @@ export default function App() {
                     <Receipt size={20} className="text-[var(--accent)] sm:hidden" aria-hidden="true" /> Wealth Dashboard
                   </h1>
                   <p className="text-sm text-[var(--muted)] mt-0.5">
-                    {mobileSummaryMode ? "Read-only summary" : "Total wealth across GIA · ISA · SIPP · LISA · VCT. All figures GBP."}
+                    {mobileSummaryMode ? "Read-only summary" : "Net worth, tax & retirement — all figures GBP, all data on your device."}
                   </p>
                 </div>
               </div>
@@ -522,11 +522,11 @@ export default function App() {
                   <>
                     <button onClick={exportJSON} title="Full backup: transactions, dividends/interest, ERI, prices and settings. API keys and the IBKR token are NOT included — re-enter those on a new machine. Also copies to clipboard as a fallback."
                       className="inline-flex items-center gap-1.5 text-sm font-medium px-3 h-9 rounded-lg border border-[var(--border)] bg-[var(--panel)] hover:bg-[var(--panel2)] text-[var(--fg)]">
-                      <Download size={16} aria-hidden="true" /> Save
+                      <Download size={16} aria-hidden="true" /> Backup
                     </button>
                     <button onClick={() => fileRef.current && fileRef.current.click()} title="Restore from a full backup file (or import a legacy transactions-only JSON)"
                       className="inline-flex items-center gap-1.5 text-sm font-medium px-3 h-9 rounded-lg border border-[var(--border)] bg-[var(--panel)] hover:bg-[var(--panel2)] text-[var(--fg)]">
-                      <Upload size={16} aria-hidden="true" /> Load
+                      <Upload size={16} aria-hidden="true" /> Restore
                     </button>
                   </>
                 )}

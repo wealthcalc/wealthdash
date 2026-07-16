@@ -2038,6 +2038,28 @@ asset-class ordering).
   returns engine (forward income on current units) via a new
   `forwardDividends` prop.
 
+## UX pass: terminology, self-description, palette on touch
+Four confident, non-structural fixes from a fresh intuitiveness review
+(the ranked list of larger candidates lives in the session notes — the
+structural ones weren't built without discussion, per the review brief):
+
+- **"Save"/"Load" → "Backup"/"Restore"** — three different things were
+  competing for file-ish verbs (header Save/Load, Data ▸ Import for CSVs,
+  Data ▸ Backup & sync). Worse, "Save" actively implied the app doesn't
+  persist otherwise — it autosaves everything, and the button's real job
+  is downloading a backup file.
+- **Header subtitle** no longer recites the wrapper alphabet ("Total
+  wealth across GIA · ISA · SIPP · LISA · VCT…") — implementation detail
+  as self-description, and stale anyway (the headline number has been
+  full net worth incl. property since Phase 2). Now: "Net worth, tax &
+  retirement — all figures GBP, all data on your device."
+- **First-run panel copy** updated to match (no more "download icon
+  above"; autosave stated plainly; points at Backup and Backup & sync).
+- **Command palette reachable on touch** — it was ⌘K + a desktop-sidebar
+  button only, a dead end on phones/tablets: the mobile drawer now has
+  the same Search… button (drawer closes first so the palette isn't
+  stacked under its overlay; the ⌘K hint hides on small screens).
+
 ## Tests
 ```
 npm test        # node --test: 599 core tests + 12 UI smoke tests (test:ui)
