@@ -2001,9 +2001,46 @@ Home and the Returns tab now share the one tested implementation, with
 the same ◆ "from real contribution dates" marker; the Pension tab's
 per-provider breakdown is untouched.
 
+## Expense run-off: what pays the bills before anything is sold
+New Plan sub-tab ("Run-off") answering "if I spend £X/yr, where does it
+come from, year by year — and when does the selling start?" — distinct
+from the income floor (binary guaranteed-vs-essential check, no waterfall)
+and from drawdown.mjs's STRATEGY waterfall (wrapper/tax ordering, not
+asset-class ordering).
+
+- **`core/runoff-model.mjs`** (node-tested, 6 tests) — funds each year's
+  uprated expense in strict order: gilt ladder → cash float → deferred-
+  cash tranches → RSU vests → recurring dividends → portfolio disposals.
+  The genuinely new mechanic: **a year's gilt surplus BANKS into a
+  carry-forward balance** that funds later years still ahead of cash — a
+  front-loaded maturity isn't wasted for arriving a year early (the
+  centrepiece test walks a £100k maturity across three years). Surplus
+  from deferred/RSU/dividend income beyond a year's need becomes CASH
+  (once paid out it IS cash) rather than vanishing. Two cliffs reported
+  with income-floor's honesty rule: first-disposal year AND the
+  permanent-disposal year (a late maturity or vest can rescue a year
+  after the first breach — tested).
+- **Modelling decisions stated in the module header and echoed in the
+  UI footer**: nominal £ throughout (gilt/deferred flows are contractual
+  nominal, expense uprated at effInflation); cash and the gilt bank earn
+  NOTHING (crediting interest would quietly stretch the runway); RSUs
+  mean SELL-ON-VEST at today's price, and vested-and-held shares are
+  deliberately NOT a source (they're already inside the portfolio this
+  view protects — counting them twice would double-count); dividends
+  held flat with both distortions disclosed (no growth, no shrinkage
+  from later disposals — circularity disclosed, not half-modelled);
+  unpriced RSU tickers excluded and counted.
+- UI: spend + horizon knobs (persisted per-browser like rebalance
+  targets), verdict cards (first sale / selling-every-year-from / total
+  sold / ladder end), and a per-year audit table — every source column,
+  the running gilt bank, the cash float, uncovered years tinted. In the
+  ⌘K palette as "Plan · Run-off". Dividend estimate arrives from the
+  returns engine (forward income on current units) via a new
+  `forwardDividends` prop.
+
 ## Tests
 ```
-npm test        # node --test: 593 core tests + 12 UI smoke tests (test:ui)
+npm test        # node --test: 599 core tests + 12 UI smoke tests (test:ui)
 ```
 
 ## Deploy (recommended: Git → new Vercel project)

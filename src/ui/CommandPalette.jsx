@@ -27,6 +27,7 @@ const TOOL_ITEMS = [
   { label: "CGT · Report (SA108)", leaf: "cgt", subKey: "cgt.cgtsubtab", subVal: "report", hint: "tax return pack" },
   { label: "CGT · What-if", leaf: "cgt", subKey: "cgt.cgtsubtab", subVal: "whatif", hint: "model a sale" },
   { label: "Plan · Income floor", leaf: "plan", subKey: "plan.subtab", subVal: "floor", hint: "guaranteed income vs essentials" },
+  { label: "Plan · Run-off", leaf: "plan", subKey: "plan.subtab", subVal: "runoff", hint: "when does the selling start?" },
   { label: "Plan · Monte Carlo", leaf: "plan", subKey: "plan.subtab", subVal: "adequacy", hint: "success probability" },
   { label: "Plan · Inheritance tax", leaf: "plan", subKey: "plan.subtab", subVal: "iht", hint: "estate projection" },
   { label: "Plan · Sequencing", leaf: "plan", subKey: "plan.subtab", subVal: "drawdown", hint: "withdrawal order" },

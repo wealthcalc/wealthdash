@@ -570,6 +570,9 @@ export default function App() {
                 // from giltAnalytics) — the Income floor sub-tab stacks them
                 // under State Pension/DB/annuity as contractual income.
                 giltCashflows: giltData ? giltData.cashflows : [],
+                // Recurring-dividend estimate for the Run-off sub-tab
+                // (forward income on current units, from the returns engine).
+                forwardDividends: returns?.total?.forwardIncome ?? 0,
                 // wrapper totals (holdings + cash) for one-click plan prefill
                 livePots: wealthModel ? Object.fromEntries(["SIPP", "ISA", "GIA", "LISA"].map((w) => [w, wealthModel.byWrapper[w]?.total ?? null])) : null,
                 liveSalary: income,
