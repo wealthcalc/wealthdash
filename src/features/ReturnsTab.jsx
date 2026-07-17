@@ -78,7 +78,7 @@ function ReturnsTab({ returns }) {
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <Stat label="Money-weighted return (XIRR)"
           value={rateIsDisplayable(total.xirr) ? pct(total.xirr.rate) : "n/a"}
-          sub={rateIsDisplayable(total.xirr) ? "annualised, since first transaction"
+          sub={rateIsDisplayable(total.xirr) ? `annualised, since first transaction${total.xirr.xirrScope?.snapshotOnlyExcluded ? ` — ${total.xirr.xirrScope.snapshotOnlyExcluded} snapshot-dated pension fund(s) excluded (their real XIRR is the ◆ per-wrapper figure)` : ""}`
             : total.xirr.rate == null ? total.xirr.reason
             : `only ${total.xirr.spanDays} days of history — annualised figures this young are noise (shows from ${SHORT_SPAN} days)`}
           tone={rateIsDisplayable(total.xirr) ? toneOf(total.xirr.rate) : undefined} big />

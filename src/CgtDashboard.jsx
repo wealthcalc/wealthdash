@@ -196,9 +196,9 @@ export default function App() {
 
   // Returns & income analytics (build step 3) — all wrappers, pre-tax.
   const returns = useMemo(() => {
-    try { return computeReturns({ txns, incomeEntries, eriTxns, prices, valuations }); }
+    try { return computeReturns({ txns, incomeEntries, eriTxns, prices, valuations, secMeta }); }
     catch { return null; }
-  }, [txns, incomeEntries, eriTxns, prices, valuations]);
+  }, [txns, incomeEntries, eriTxns, prices, valuations, secMeta]);
 
   // Private investments (EIS/SEIS/LP funds) — current valuations only; the
   // called/distributed/MOIC/relief detail lives entirely in PrivateTab.

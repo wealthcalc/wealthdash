@@ -66,3 +66,28 @@ test("wrappers with no tagged providers or no usable cashflows are absent", () =
   assert.equal(noCfs.SIPP, undefined);
   assert.throws(() => pensionXirrByWrapper({}), /today/);
 });
+
+test("total XIRR excludes snapshot-only (provider-tagged) tickers — the 23.5% bug", async () => {
+  const { computeReturns } = await import("../core/returns.mjs");
+  const txns = [
+    // real ledger holding: bought 2 years ago, doubled
+    { id: "a", ticker: "VWRL", wrapper: "GIA", side: "BUY", date: "2024-07-12", quantity: 100, gbpAmount: 10000 },
+    // pension snapshot: £200k "bought" 10 days ago at roughly current value
+    { id: "b", ticker: "LGF1", wrapper: "SIPP", side: "BUY", date: "2026-07-02", quantity: 1000, gbpAmount: 200000 },
+  ];
+  const prices = { VWRL: 200, LGF1: 201 };
+  const secMeta = { LGF1: { provider: "L&G", kind: "fund" } };
+  const withMeta = computeReturns({ txns, prices, secMeta, asOf: "2026-07-12" });
+  const withoutMeta = computeReturns({ txns, prices, asOf: "2026-07-12" });
+  // ~41.4%/yr for a clean doubling over 2 years
+  assert.ok(Math.abs(withMeta.total.xirr.rate - (Math.sqrt(2) - 1)) < 0.001,
+    `clean total ${withMeta.total.xirr.rate}`);
+  assert.equal(withMeta.total.xirr.xirrScope.snapshotOnlyExcluded, 1);
+  assert.equal(withMeta.total.xirr.xirrScope.excludedValue, 201000);
+  // without secMeta the snapshot row poisons the total (the old behaviour)
+  assert.ok(Math.abs(withoutMeta.total.xirr.rate - withMeta.total.xirr.rate) > 0.005,
+    "snapshot row should distort the unscoped total — that distortion is what the fix removes");
+  // per-wrapper and profit aggregates unchanged by the exclusion
+  assert.equal(withMeta.total.moneyIn, 210000);
+  assert.ok(withMeta.byWrapper.SIPP);
+});

@@ -2060,9 +2060,37 @@ structural ones weren't built without discussion, per the review brief):
   the same Search… button (drawer closes first so the palette isn't
   stacked under its overlay; the ⌘K hint hides on small screens).
 
+## Fix: total XIRR ingested snapshot-dated pension rows (23.5% → 11.1%)
+The "portfolio XIRR looks too high" investigation, concluded on a real
+backup. Three findings, in order of blame:
+
+1. **`xirr()` itself is correct** (sanity: a clean 2-year doubling
+   computes √2−1 exactly).
+2. **The suspected RSU mis-dating is real but MINOR**: every WFC ledger
+   BUY is dated 8–22 days after its actual vest (sell-to-cover events
+   confirm the mapping); re-dating them moves WFC's own XIRR 49.2%→41.9%
+   and the PORTFOLIO total by 0.03pp. Two "355-days-late" lots turned out
+   to be annual Jan-16 DRIP purchases priced at market — correctly dated,
+   left alone. A corrected backup (5 rows re-dated, notes appended) was
+   produced for the user; dates matter more for CGT matching windows than
+   for XIRR.
+3. **The real culprit was CODE**: `computeReturns()`'s TOTAL money-
+   weighted return ingested the flows of SNAPSHOT-ONLY pension funds —
+   single consolidated rows dated whenever last edited, which the
+   per-fund display already suppresses as meaningless (◆ convention).
+   On the real portfolio, £1.28M of pension snapshots "contributed" days
+   before their valuation pushed the total from 11.14% to 23.53%. Fix:
+   `computeReturns` now takes `secMeta` and excludes provider-tagged
+   tickers' flows AND value from the total XIRR (value too — else the
+   solver sees value with no matching cost and inflates the other way);
+   `total.xirr.xirrScope` reports the exclusion and the Returns headline
+   says so, pointing at the ◆ per-wrapper figure (real contribution
+   dates) as the pension truth. Regression test included: a snapshot row
+   at near-current value must not move the clean total.
+
 ## Tests
 ```
-npm test        # node --test: 599 core tests + 12 UI smoke tests (test:ui)
+npm test        # node --test: 600 core tests + 12 UI smoke tests (test:ui)
 ```
 
 ## Deploy (recommended: Git → new Vercel project)
