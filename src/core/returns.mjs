@@ -250,6 +250,18 @@ export function holdingIncome({ rows, incomeEvents = [], qty, marketValue = null
 // results (their XIRR is complete and final) and in wrapper/total flows.
 export function computeReturns({
   txns = [], incomeEntries = [], eriTxns = [], prices = {}, valuations = [], asOf,
+  // secMeta identifies SNAPSHOT-ONLY holdings (pension funds tagged with a
+  // `provider`): their single consolidated ledger row is dated whenever it
+  // was last edited, not when money was invested, so its "flow dates" are
+  // meaningless for money-weighted return. The per-fund display already
+  // suppresses their XIRR for exactly this reason — but the TOTAL used to
+  // ingest those flows anyway, which inflated it wildly (found on a real
+  // portfolio: a £550k pension snapshot "contributed" 11 days before its
+  // valuation pushed total XIRR from 11.1% to 23.5%). Total money-weighted
+  // return now EXCLUDES snapshot-only tickers' flows AND value; their real
+  // XIRR lives in pensionXirrByWrapper() below, from true contribution
+  // dates. total.xirrScope reports what was excluded so the UI can say so.
+  secMeta = {},
 } = {}) {
   const day = asOf || new Date().toISOString().slice(0, 10);
 
@@ -278,6 +290,10 @@ export function computeReturns({
 
   const perHolding = [];
   const wrapperFlows = new Map();   // XIRR flows per wrapper
+  // Ledger-dated flows only (snapshot-only pension tickers excluded) —
+  // the honest input set for the TOTAL money-weighted return.
+  const ledgerFlows = [];
+  let ledgerValue = 0, ledgerUnpriced = 0, snapshotOnlyCount = 0, snapshotOnlyValue = 0;
   const wrapperAgg = new Map();
   const addAgg = (w) => wrapperAgg.get(w) || wrapperAgg.set(w, {
     moneyIn: 0, moneyOut: 0, income: 0, value: 0, openPositions: 0, unpricedOpen: 0,
@@ -320,6 +336,15 @@ export function computeReturns({
     // wrapper aggregation
     if (!wrapperFlows.has(wrapper)) wrapperFlows.set(wrapper, []);
     wrapperFlows.get(wrapper).push(...flows.filter((f) => !f.terminal));
+    // total-XIRR input set: ledger-dated holdings only (see header note)
+    if (secMeta[ticker]?.provider) {
+      snapshotOnlyCount += 1;
+      if (open && priced) snapshotOnlyValue += marketValue;
+    } else {
+      ledgerFlows.push(...flows.filter((f) => !f.terminal));
+      if (open && priced) ledgerValue += marketValue;
+      if (open && !priced) ledgerUnpriced += 1;
+    }
     const agg = addAgg(wrapper);
     agg.moneyIn += moneyIn; agg.moneyOut += moneyOut; agg.income += incomeReceived;
     if (open) {
@@ -350,9 +375,14 @@ export function computeReturns({
     for (const k of ["moneyIn", "moneyOut", "income", "value", "openPositions", "unpricedOpen", "trailing12m", "forwardIncome", "pricedValue"]) total[k] += agg[k];
   }
   if (total.value > EPS) totalFlows.push({ date: day, amount: total.value, terminal: true });
-  const totalX = total.unpricedOpen > 0
-    ? { rate: null, reason: `${total.unpricedOpen} open holding(s) without a price` }
-    : xirr(totalFlows);
+  // Total money-weighted return from LEDGER-DATED flows only — snapshot-
+  // only pension tickers excluded (their value too, or the solver would
+  // see value with no matching cost and inflate the other way).
+  if (ledgerValue > EPS) ledgerFlows.push({ date: day, amount: ledgerValue, terminal: true });
+  const totalX = ledgerUnpriced > 0
+    ? { rate: null, reason: `${ledgerUnpriced} open holding(s) without a price` }
+    : xirr(ledgerFlows);
+  totalX.xirrScope = { snapshotOnlyExcluded: snapshotOnlyCount, excludedValue: snapshotOnlyValue };
   const totalProfit = total.unpricedOpen > 0 ? null : total.moneyOut + total.income + total.value - total.moneyIn;
 
   // Portfolio TWR from the snapshot series; flows into the securities
@@ -379,4 +409,42 @@ export function computeReturns({
     },
     portfolioTWR,
   };
+}
+
+/* --------------------- pension XIRR by wrapper ------------------------ */
+// Combined money-weighted return for the SIPP/LISA wrappers from REAL
+// contribution dates (pensionCashflows), not the transaction ledger — the
+// ledger only holds one consolidated snapshot per pension fund, not a
+// purchase history, so computeReturns() above rightly shows nothing for
+// them. This is the aggregation the Pension tab's per-provider XIRRs
+// can't provide on their own: ALL providers' contribution flows for a
+// wrapper are combined into ONE xirr() call with a single terminal value
+// (the wrapper's current market value), which is the correct way to blend
+// money-weighted returns — averaging per-provider rates would weight them
+// wrongly. Zero providers → key absent; rows without a resolved GBP
+// amount are excluded (an unresolved FX row isn't a £0 contribution),
+// their count reported as `excludedFx`.
+// Extracted from ReturnsTab (Fable pass, item 4) so Home's wrapper strip
+// and the Returns tab share one tested implementation.
+export function pensionXirrByWrapper({ txns = [], secMeta = {}, pensionCashflows = [], valueByWrapper = {}, today } = {}) {
+  if (!today) throw new Error("pensionXirrByWrapper requires `today` — pure functions don't read the clock.");
+  const out = {};
+  for (const w of ["SIPP", "LISA"]) {
+    // A provider belongs to this wrapper if any of its funds (secMeta
+    // provider tag) has ledger rows in the wrapper.
+    const providers = new Set(
+      Object.entries(secMeta)
+        .filter(([tk, m]) => m && m.provider && txns.some((t) => t.ticker === tk && normWrapper(t.wrapper) === w))
+        .map(([, m]) => m.provider)
+    );
+    if (!providers.size) continue;
+    const all = pensionCashflows.filter((c) => providers.has(c.provider));
+    const usable = all.filter((c) => c.gbpAmount != null);
+    if (!usable.length) continue;
+    const flows = usable.map((c) => ({ date: c.date, amount: -Math.abs(c.gbpAmount) }));
+    const currentValue = +valueByWrapper[w] || 0;
+    if (currentValue > 0) flows.push({ date: today, amount: currentValue });
+    out[w] = { ...xirr(flows), providers: providers.size, nCashflows: usable.length, excludedFx: all.length - usable.length };
+  }
+  return out;
 }

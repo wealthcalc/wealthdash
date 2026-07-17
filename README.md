@@ -1977,9 +1977,146 @@ that.
   unmodified. Below the threshold — the overwhelming majority of users —
   tables render exactly as before; nothing changes for them.
 
+## Home £ formatting: whole pounds everywhere a glance lands
+Audit of 2dp `gbp()` in Home-visible contexts (most figures were already
+`gbp0()`): the wrapper-strip "unrealised gain on book cost" hover tooltip
+and PlanHealthCard's visible "Year-1 net income" now render whole pounds —
+pence on a glance card is noise. Deliberately UNCHANGED: the shared
+AllocBar hover tooltip keeps 2dp — surfacing the exact value is what a
+tooltip is for, and that component serves every tab, not just Home.
+
+## Home SIPP/LISA boxes: combined pension XIRR
+Home's wrapper strip showed nothing for SIPP/LISA — not a formatting bug:
+the ledger-based returns engine can't see pension contribution history
+(the ledger holds one consolidated snapshot per pension fund), and the
+real XIRRs lived only per-provider on the Pension tab. Fix: the wrapper-
+level aggregation that already existed inside ReturnsTab is EXTRACTED to
+`core/returns.mjs` as `pensionXirrByWrapper()` (3 tests) — ALL of a
+wrapper's providers' contribution flows combined into ONE xirr() call
+with the wrapper's market value as the single terminal flow (the correct
+blend; averaging per-provider rates would weight them wrongly; tested
+that the combined rate sits between the providers' individual rates).
+Zero/one/many providers handled; unresolved-FX rows excluded and counted.
+Home and the Returns tab now share the one tested implementation, with
+the same ◆ "from real contribution dates" marker; the Pension tab's
+per-provider breakdown is untouched.
+
+## Expense run-off: what pays the bills before anything is sold
+New Plan sub-tab ("Run-off") answering "if I spend £X/yr, where does it
+come from, year by year — and when does the selling start?" — distinct
+from the income floor (binary guaranteed-vs-essential check, no waterfall)
+and from drawdown.mjs's STRATEGY waterfall (wrapper/tax ordering, not
+asset-class ordering).
+
+- **`core/runoff-model.mjs`** (node-tested, 6 tests) — funds each year's
+  uprated expense in strict order: gilt ladder → cash float → deferred-
+  cash tranches → RSU vests → recurring dividends → portfolio disposals.
+  The genuinely new mechanic: **a year's gilt surplus BANKS into a
+  carry-forward balance** that funds later years still ahead of cash — a
+  front-loaded maturity isn't wasted for arriving a year early (the
+  centrepiece test walks a £100k maturity across three years). Surplus
+  from deferred/RSU/dividend income beyond a year's need becomes CASH
+  (once paid out it IS cash) rather than vanishing. Two cliffs reported
+  with income-floor's honesty rule: first-disposal year AND the
+  permanent-disposal year (a late maturity or vest can rescue a year
+  after the first breach — tested).
+- **Modelling decisions stated in the module header and echoed in the
+  UI footer**: nominal £ throughout (gilt/deferred flows are contractual
+  nominal, expense uprated at effInflation); cash and the gilt bank earn
+  NOTHING (crediting interest would quietly stretch the runway); RSUs
+  mean SELL-ON-VEST at today's price, and vested-and-held shares are
+  deliberately NOT a source (they're already inside the portfolio this
+  view protects — counting them twice would double-count); dividends
+  held flat with both distortions disclosed (no growth, no shrinkage
+  from later disposals — circularity disclosed, not half-modelled);
+  unpriced RSU tickers excluded and counted.
+- UI: spend + horizon knobs (persisted per-browser like rebalance
+  targets), verdict cards (first sale / selling-every-year-from / total
+  sold / ladder end), and a per-year audit table — every source column,
+  the running gilt bank, the cash float, uncovered years tinted. In the
+  ⌘K palette as "Plan · Run-off". Dividend estimate arrives from the
+  returns engine (forward income on current units) via a new
+  `forwardDividends` prop.
+
+## UX pass: terminology, self-description, palette on touch
+Four confident, non-structural fixes from a fresh intuitiveness review
+(the ranked list of larger candidates lives in the session notes — the
+structural ones weren't built without discussion, per the review brief):
+
+- **"Save"/"Load" → "Backup"/"Restore"** — three different things were
+  competing for file-ish verbs (header Save/Load, Data ▸ Import for CSVs,
+  Data ▸ Backup & sync). Worse, "Save" actively implied the app doesn't
+  persist otherwise — it autosaves everything, and the button's real job
+  is downloading a backup file.
+- **Header subtitle** no longer recites the wrapper alphabet ("Total
+  wealth across GIA · ISA · SIPP · LISA · VCT…") — implementation detail
+  as self-description, and stale anyway (the headline number has been
+  full net worth incl. property since Phase 2). Now: "Net worth, tax &
+  retirement — all figures GBP, all data on your device."
+- **First-run panel copy** updated to match (no more "download icon
+  above"; autosave stated plainly; points at Backup and Backup & sync).
+- **Command palette reachable on touch** — it was ⌘K + a desktop-sidebar
+  button only, a dead end on phones/tablets: the mobile drawer now has
+  the same Search… button (drawer closes first so the palette isn't
+  stacked under its overlay; the ⌘K hint hides on small screens).
+
+## Fix: total XIRR ingested snapshot-dated pension rows (23.5% → 11.1%)
+The "portfolio XIRR looks too high" investigation, concluded on a real
+backup. Three findings, in order of blame:
+
+1. **`xirr()` itself is correct** (sanity: a clean 2-year doubling
+   computes √2−1 exactly).
+2. **The suspected RSU mis-dating is real but MINOR**: every WFC ledger
+   BUY is dated 8–22 days after its actual vest (sell-to-cover events
+   confirm the mapping); re-dating them moves WFC's own XIRR 49.2%→41.9%
+   and the PORTFOLIO total by 0.03pp. Two "355-days-late" lots turned out
+   to be annual Jan-16 DRIP purchases priced at market — correctly dated,
+   left alone. A corrected backup (5 rows re-dated, notes appended) was
+   produced for the user; dates matter more for CGT matching windows than
+   for XIRR.
+3. **The real culprit was CODE**: `computeReturns()`'s TOTAL money-
+   weighted return ingested the flows of SNAPSHOT-ONLY pension funds —
+   single consolidated rows dated whenever last edited, which the
+   per-fund display already suppresses as meaningless (◆ convention).
+   On the real portfolio, £1.28M of pension snapshots "contributed" days
+   before their valuation pushed the total from 11.14% to 23.53%. Fix:
+   `computeReturns` now takes `secMeta` and excludes provider-tagged
+   tickers' flows AND value from the total XIRR (value too — else the
+   solver sees value with no matching cost and inflates the other way);
+   `total.xirr.xirrScope` reports the exclusion and the Returns headline
+   says so, pointing at the ◆ per-wrapper figure (real contribution
+   dates) as the pension truth. Regression test included: a snapshot row
+   at near-current value must not move the clean total.
+
+## AI portfolio snapshot (copy/paste into any LLM)
+`core/ai-snapshot.mjs` (4 tests) renders the whole portfolio as ONE
+Markdown document written for a MODEL reader, not a human one: every
+figure unit-labelled with an as-of date; all holdings in a single wide
+table (ticker/name/wrapper/kind/qty/price/value/weight/cost/P&L/region/
+sector); cash with rates and maturities; allocation rollups with the
+look-through coverage split; concentration (HHI, single-company alerts);
+returns (the scoped ledger XIRR, ◆ pension XIRR from real contribution
+dates, TWR) and income. Data-quality caveats are stated INLINE where
+they bite — unpriced holdings, snapshot-only pension funds, tag coverage,
+"manual valuations, not appraisals" — so a model can't silently trust a
+number the app itself doesn't. No account numbers or credentials; pipe
+characters sanitised so user labels can't break the table. Buttons on
+Portfolio ▸ Holdings: "Copy AI snapshot" / "↓ .md". Assembled in the
+shell from engines it already runs. Generated files are gitignored —
+this repo is public, and a portfolio snapshot is personal data.
+
+## Plan panel: collapsible sections
+The input panel had grown to ~17 always-open sections (scenario library,
+goals, MC model options, BTL, annuity…) — a wall nobody scrolls. Sections
+now collapse with a chevron; open-state persists per section per browser
+(`plan.panel.<title>`); "Scenario library" / "You & timing" / "Money in"
+start open, everything else starts closed. Sections for disabled optional
+features (annuity, BTL) keep their visible title when collapsed, so
+discoverability survives.
+
 ## Tests
 ```
-npm test        # node --test: 590 core tests + 12 UI smoke tests (test:ui)
+npm test        # node --test: 604 core tests + 12 UI smoke tests (test:ui)
 ```
 
 ## Deploy (recommended: Git → new Vercel project)

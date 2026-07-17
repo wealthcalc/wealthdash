@@ -19,6 +19,9 @@ import { taxYearEndChecklist } from "./core/tax-year-end.mjs";
 import { isaSubscriptionsByYear, realisedForYear } from "./core/allowances.mjs";
 import { aeaForYear } from "./core/uk-tax.mjs";
 import { concentration } from "./core/exposure.mjs";
+import { portfolioExposure } from "./core/lookthrough.mjs";
+import { pensionXirrByWrapper } from "./core/returns.mjs";
+import { renderAiSnapshot } from "./core/ai-snapshot.mjs";
 import { unitsHeldAt, uid, todayISO, IconBtn, store as lsStore } from "./ui/shared.jsx";
 import { DesktopSidebar, MobileDrawer, SubTabBar, SCREENS } from "./ui/Sidebar.jsx";
 import CommandPalette from "./ui/CommandPalette.jsx";
@@ -196,9 +199,9 @@ export default function App() {
 
   // Returns & income analytics (build step 3) — all wrappers, pre-tax.
   const returns = useMemo(() => {
-    try { return computeReturns({ txns, incomeEntries, eriTxns, prices, valuations }); }
+    try { return computeReturns({ txns, incomeEntries, eriTxns, prices, valuations, secMeta }); }
     catch { return null; }
-  }, [txns, incomeEntries, eriTxns, prices, valuations]);
+  }, [txns, incomeEntries, eriTxns, prices, valuations, secMeta]);
 
   // Private investments (EIS/SEIS/LP funds) — current valuations only; the
   // called/distributed/MOIC/relief detail lives entirely in PrivateTab.
@@ -326,6 +329,31 @@ export default function App() {
       extras: Object.entries(rsuByTicker).map(([ticker, value]) => ({ ticker, value, kind: "equity", label: "RSU held shares" })),
     });
   }, [wealthModel, rsuSummary]);
+
+  // AI snapshot (core/ai-snapshot.mjs): one Markdown document of the whole
+  // portfolio, built from aggregates this shell already computes, for
+  // pasting into an LLM prompt. Assembled lazily-ish via memo; the
+  // Holdings tab exposes copy/download buttons.
+  const aiSnapshot = useMemo(() => {
+    try {
+      return renderAiSnapshot({
+        today: todayISO(),
+        netWorth, model: wealthModel, returns,
+        pensionXirr: pensionXirrByWrapper({
+          txns, secMeta, pensionCashflows,
+          valueByWrapper: {
+            SIPP: wealthModel?.byWrapper?.SIPP?.marketValue ?? 0,
+            LISA: wealthModel?.byWrapper?.LISA?.marketValue ?? 0,
+          },
+          today: todayISO(),
+        }),
+        concentration: exposureConcentration,
+        regionExposure: portfolioExposure({ positions: wealthModel?.positions || [], secMeta, field: "region" }),
+        sectorExposure: portfolioExposure({ positions: wealthModel?.positions || [], secMeta, field: "sector" }),
+        secMeta, cashAccounts, properties, mortgages,
+      });
+    } catch { return null; }
+  }, [netWorth, wealthModel, returns, txns, secMeta, pensionCashflows, exposureConcentration, cashAccounts, properties, mortgages]);
 
   // Aggregates for the Home action queue (core/action-queue.mjs) — each
   // figure from the module that owns it: ISA subscriptions from the ledger
@@ -487,7 +515,7 @@ export default function App() {
       </a>
       <div className="root min-h-screen bg-[var(--bg)] text-[var(--fg)] flex" style={{ fontFamily: "ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif" }}>
         {!mobileSummaryMode && <DesktopSidebar tab={tab} setTab={setTab} onOpenPalette={() => setPaletteOpen(true)} />}
-        {!mobileSummaryMode && <MobileDrawer tab={tab} setTab={setTab} open={mobileNavOpen} onClose={() => setMobileNavOpen(false)} />}
+        {!mobileSummaryMode && <MobileDrawer tab={tab} setTab={setTab} open={mobileNavOpen} onClose={() => setMobileNavOpen(false)} onOpenPalette={() => setPaletteOpen(true)} />}
         <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} setTab={setTab}
           tickers={wealthModel ? [...new Set(wealthModel.positions.filter((p) => p.qty > 1e-9).map((p) => p.ticker))].sort() : []} />
         <main id="main-content" tabIndex={-1} className="flex-1 min-w-0">
@@ -506,7 +534,7 @@ export default function App() {
                     <Receipt size={20} className="text-[var(--accent)] sm:hidden" aria-hidden="true" /> Wealth Dashboard
                   </h1>
                   <p className="text-sm text-[var(--muted)] mt-0.5">
-                    {mobileSummaryMode ? "Read-only summary" : "Total wealth across GIA · ISA · SIPP · LISA · VCT. All figures GBP."}
+                    {mobileSummaryMode ? "Read-only summary" : "Net worth, tax & retirement — all figures GBP, all data on your device."}
                   </p>
                 </div>
               </div>
@@ -522,11 +550,11 @@ export default function App() {
                   <>
                     <button onClick={exportJSON} title="Full backup: transactions, dividends/interest, ERI, prices and settings. API keys and the IBKR token are NOT included — re-enter those on a new machine. Also copies to clipboard as a fallback."
                       className="inline-flex items-center gap-1.5 text-sm font-medium px-3 h-9 rounded-lg border border-[var(--border)] bg-[var(--panel)] hover:bg-[var(--panel2)] text-[var(--fg)]">
-                      <Download size={16} aria-hidden="true" /> Save
+                      <Download size={16} aria-hidden="true" /> Backup
                     </button>
                     <button onClick={() => fileRef.current && fileRef.current.click()} title="Restore from a full backup file (or import a legacy transactions-only JSON)"
                       className="inline-flex items-center gap-1.5 text-sm font-medium px-3 h-9 rounded-lg border border-[var(--border)] bg-[var(--panel)] hover:bg-[var(--panel2)] text-[var(--fg)]">
-                      <Upload size={16} aria-hidden="true" /> Load
+                      <Upload size={16} aria-hidden="true" /> Restore
                     </button>
                   </>
                 )}
@@ -570,6 +598,9 @@ export default function App() {
                 // from giltAnalytics) — the Income floor sub-tab stacks them
                 // under State Pension/DB/annuity as contractual income.
                 giltCashflows: giltData ? giltData.cashflows : [],
+                // Recurring-dividend estimate for the Run-off sub-tab
+                // (forward income on current units, from the returns engine).
+                forwardDividends: returns?.total?.forwardIncome ?? 0,
                 // wrapper totals (holdings + cash) for one-click plan prefill
                 livePots: wealthModel ? Object.fromEntries(["SIPP", "ISA", "GIA", "LISA"].map((w) => [w, wealthModel.byWrapper[w]?.total ?? null])) : null,
                 liveSalary: income,
@@ -605,7 +636,7 @@ export default function App() {
               }} />}
               {tab === "allowances" && <AllowancesTab eriTxns={eriTxns} taxableDisposals={taxableDisposals} />}
               {tab === "income" && <IncomeTab {...{ eriTxns, incomeByYear, incomeAllWrappers, txns: giaTxns, incomeCalendar }} />}
-              {tab === "holdings" && <HoldingsTab positions={wealthModel ? wealthModel.positions : []} model={wealthModel} concentration={exposureConcentration} />}
+              {tab === "holdings" && <HoldingsTab positions={wealthModel ? wealthModel.positions : []} model={wealthModel} concentration={exposureConcentration} aiSnapshot={aiSnapshot} />}
               {tab === "property" && <PropertyTab />}
               {tab === "private" && <PrivateTab />}
               {tab === "rsu" && <RsuTab />}

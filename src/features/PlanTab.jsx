@@ -8,7 +8,7 @@ import { useMonteCarloWorker } from "../ui/useMonteCarloWorker.js";
 import {
   Settings2, TrendingUp, TrendingDown, ShieldAlert, Activity,
   Gauge, ChevronDown, ChevronUp, Info, RefreshCw, Building2, Coins, HeartPulse,
-  Layers, Landmark, Plus, Trash2, Umbrella,
+  Layers, Landmark, Plus, Trash2, Umbrella, Droplets,
 } from "lucide-react";
 import { taxRUK, taxScot, employeeNI } from "../core/uk-income-tax.mjs";
 import {
@@ -22,6 +22,10 @@ import { projectIHT, pensionsInEstate, PENSIONS_IN_ESTATE_FROM } from "../core/i
 import { buildIncomeFloor } from "../core/income-floor.mjs";
 import { optimiseDrawdown, TFC_LABELS } from "../core/drawdown-optimiser.mjs";
 import { sequenceHeatmap } from "../core/sequence-heatmap.mjs";
+import { buildRunoff } from "../core/runoff-model.mjs";
+import { effectiveCashByWrapper } from "../core/cash.mjs";
+import { deferredCashCalendar } from "../core/deferred-cash.mjs";
+import { vestingSchedule } from "../core/rsu.mjs";
 import { giltIncomeByYear } from "../core/gilt-ladder.mjs";
 import { store, uid, todayISO } from "../ui/shared.jsx";
 import useAppStore from "../state/appStore.js";
@@ -482,7 +486,7 @@ const DEFAULTS = {
 
 export default function PlanTab({
   dark = true, planInputs = null, setPlanInputs = null, livePots = null, liveSalary = null, liveOtherNetWorth = null,
-  liveEstate = null, giltCashflows = [],
+  liveEstate = null, giltCashflows = [], forwardDividends = 0,
 }) {
   // `planInputs` is null until the user changes something for the first
   // time (nothing to persist yet) — DEFAULTS covers that first render.
@@ -519,7 +523,7 @@ export default function PlanTab({
   // links can pre-select one by writing the key before switching here
   // (this component remounts on tab switch and reads it in this
   // initialiser — same pattern as CgtSection's cgt.cgtsubtab).
-  const VALID_SUBTABS = ["overview", "accum", "decum", "floor", "drawdown", "btl", "stress", "adequacy", "iht"];
+  const VALID_SUBTABS = ["overview", "accum", "decum", "floor", "runoff", "drawdown", "btl", "stress", "adequacy", "iht"];
   const [tab, setTab] = useState(() => {
     const saved = store.get("plan.subtab", "overview");
     return VALID_SUBTABS.includes(saved) ? saved : "overview";
@@ -913,6 +917,7 @@ export default function PlanTab({
               { k: "accum", label: "Accumulation", icon: TrendingUp },
               { k: "decum", label: "Decumulation", icon: TrendingDown },
               { k: "floor", label: "Income floor", icon: Umbrella },
+              { k: "runoff", label: "Run-off", icon: Droplets },
               { k: "drawdown", label: "Sequencing", icon: Layers },
               { k: "btl", label: "Buy-to-let", icon: Building2 },
               { k: "stress", label: "Scenarios & stress", icon: ShieldAlert },
@@ -1072,6 +1077,11 @@ export default function PlanTab({
             <FloorTab p={p} det={det} set={set} giltCashflows={giltCashflows} />
           )}
 
+          {/* ===== EXPENSE RUN-OFF ===== */}
+          {tab === "runoff" && (
+            <RunoffTab p={p} giltCashflows={giltCashflows} forwardDividends={forwardDividends} />
+          )}
+
           {/* ===== BUY-TO-LET ===== */}
           {tab === "btl" && (
             <BtlTab p={p} det={det} set={set} />
@@ -1225,24 +1235,34 @@ function GoalsEditor({ p, det, setP }) {
   );
 }
 
+// The panel grew to ~17 sections (scenarios, goals, MC options, BTL…) —
+// a wall nobody scrolls. Sections now collapse, with open-state persisted
+// per section per browser; the core trio starts open, everything else
+// starts closed. Optional sections whose feature is OFF (annuity/BTL
+// toggles) still show their title, so discoverability survives collapse.
+const PANEL_OPEN_DEFAULT = new Set(["Scenario library", "You & timing", "Money in"]);
+
 function PanelSection({ title, children }) {
+  const [open, setOpen] = useState(() => store.get(`plan.panel.${title}`, PANEL_OPEN_DEFAULT.has(title)));
+  React.useEffect(() => { store.set(`plan.panel.${title}`, open); }, [open, title]);
   return (
-    <div style={{ marginBottom: 22 }}>
-      <div
+    <div style={{ marginBottom: open ? 22 : 10 }}>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
         style={{
-          fontSize: 11,
-          letterSpacing: ".08em",
-          textTransform: "uppercase",
-          color: T.gold,
-          fontWeight: 700,
-          marginBottom: 12,
-          paddingBottom: 6,
+          display: "flex", alignItems: "center", justifyContent: "space-between",
+          width: "100%", background: "none", border: "none", cursor: "pointer",
+          padding: "0 0 6px", marginBottom: open ? 12 : 0,
+          fontSize: 11, letterSpacing: ".08em", textTransform: "uppercase",
+          color: T.gold, fontWeight: 700, textAlign: "left",
           borderBottom: `1px solid ${T.lineSoft}`,
         }}
       >
-        {title}
-      </div>
-      {children}
+        <span>{title}</span>
+        <span aria-hidden="true" style={{ color: T.muted, fontSize: 10 }}>{open ? "▾" : "▸"}</span>
+      </button>
+      {open && children}
     </div>
   );
 }
@@ -1573,6 +1593,145 @@ function FloorTab({ p, det, set, giltCashflows = [] }) {
           {!s.permanentFromAge && p.annuityEnabled === false && " An annuity (panel, optional) is the bluntest fix for a floor that never closes."}
         </Note>
       </div>
+    </div>
+  );
+}
+
+/* ===================== EXPENSE RUN-OFF ===================== */
+// "If I spend £X/yr, where does it come from, year by year, before I have
+// to sell anything?" — core/runoff-model.mjs. Sources in strict order:
+// gilt ladder (with the surplus BANK carrying forward), cash float,
+// deferred-cash tranches, RSU vests (sell-on-vest at today's price),
+// recurring dividends, and only then portfolio disposals. All modelling
+// assumptions are in the core module's header and echoed in the footer.
+function RunoffTab({ p, giltCashflows = [], forwardDividends = 0 }) {
+  const cash = useAppStore((s) => s.cash);
+  const cashAccounts = useAppStore((s) => s.cashAccounts);
+  const dcAwards = useAppStore((s) => s.deferredCashAwards);
+  const dcVests = useAppStore((s) => s.deferredCashVests);
+  const rsuGrants = useAppStore((s) => s.rsuGrants);
+  const rsuEvents = useAppStore((s) => s.rsuEvents);
+  const prices = useAppStore((s) => s.prices);
+
+  // View inputs, persisted per-browser like the rebalance targets — a
+  // planning knob, not portfolio data.
+  const [expense, setExpense] = useState(() => store.get("plan.runoff.expense", p.targetAbsolute || 40000));
+  React.useEffect(() => store.set("plan.runoff.expense", expense), [expense]);
+  const [horizon, setHorizon] = useState(() => store.get("plan.runoff.years", 25));
+  React.useEffect(() => store.set("plan.runoff.years", horizon), [horizon]);
+
+  const today = todayISO();
+  const startYear = +today.slice(0, 4) + 1; // first FULL calendar year
+
+  const inputs = useMemo(() => {
+    const byYear = (events, dateOf, amountOf) => {
+      const m = {};
+      for (const e of events) { const y = +dateOf(e).slice(0, 4); m[y] = (m[y] || 0) + amountOf(e); }
+      return m;
+    };
+    const giltNominalByYear = giltIncomeByYear(giltCashflows);
+    const cashStart = Object.values(effectiveCashByWrapper(cash, cashAccounts)).reduce((s, v) => s + v, 0);
+    const deferredByYear = byYear(
+      deferredCashCalendar(dcAwards, dcVests, today, horizon * 366),
+      (e) => e.date, (e) => e.amount
+    );
+    // RSU: FUTURE scheduled vests only, at today's price (sell-on-vest —
+    // held shares are already in the portfolio, see module header).
+    const rsuByYear = {};
+    let rsuUnpriced = 0;
+    for (const g of rsuGrants) {
+      const price = prices[g.ticker];
+      for (const v of vestingSchedule(g, rsuEvents, today)) {
+        if (v.vested) continue;
+        if (price == null) { rsuUnpriced++; continue; }
+        const y = +v.date.slice(0, 4);
+        rsuByYear[y] = (rsuByYear[y] || 0) + (+v.shares || 0) * price;
+      }
+    }
+    return { giltNominalByYear, cashStart, deferredByYear, rsuByYear, rsuUnpriced };
+  }, [giltCashflows, cash, cashAccounts, dcAwards, dcVests, rsuGrants, rsuEvents, prices, today, horizon]);
+
+  const runoff = useMemo(() => buildRunoff({
+    annualExpense: +expense || 0, inflation: effInflation(p), startYear, years: Math.max(1, +horizon || 1),
+    giltNominalByYear: inputs.giltNominalByYear, cashStart: inputs.cashStart,
+    deferredByYear: inputs.deferredByYear, rsuByYear: inputs.rsuByYear,
+    annualDividends: +forwardDividends || 0,
+  }), [expense, horizon, p, startYear, inputs, forwardDividends]);
+
+  const s = runoff.summary;
+  const SOURCES = [
+    ["fromGilts", "Gilt ladder", T.blue],
+    ["fromCash", "Cash", T.green],
+    ["fromDeferred", "Deferred cash", "#7A5C9E"],
+    ["fromRsu", "RSU vests", T.gold],
+    ["fromDividends", "Dividends", T.amber],
+    ["fromPortfolio", "Portfolio sales", T.red],
+  ];
+
+  return (
+    <div>
+      <Card style={{ marginBottom: 14 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 2 }}>
+          <Droplets size={17} color={T.blue} />
+          <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700 }}>Expense run-off — what pays the bills before anything is sold</h3>
+        </div>
+        <p style={{ margin: "0 0 12px", fontSize: 12.5, color: T.muted, maxWidth: 680 }}>
+          An annual spend, funded in strict order: gilt cashflows (surpluses bank forward), your cash float, deferred-cash tranches, RSU vests, recurring dividends — and only then portfolio sales. The question this answers: <strong>when does the selling start?</strong>
+        </p>
+        <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "center" }}>
+          <Field label="Annual spend (today's £)" value={expense} min={0} max={500000} step={1000} prefix="£" onChange={setExpense} />
+          <Field label="Horizon (years)" value={horizon} min={1} max={40} onChange={setHorizon} />
+        </div>
+      </Card>
+
+      {s && (
+        <>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px,1fr))", gap: 12, marginBottom: 14 }}>
+            <Card><Stat label="First portfolio sale" value={s.firstDisposalYear ?? "never"} sub={s.firstDisposalYear ? `${s.firstDisposalYear - startYear} clear year${s.firstDisposalYear - startYear === 1 ? "" : "s"} first` : `covered for all ${s.totalYears} years`} tone={s.firstDisposalYear ? "amber" : "green"} /></Card>
+            <Card><Stat label="Selling every year from" value={s.permanentDisposalFrom ?? "never"} sub="no later rescue after this" tone={s.permanentDisposalFrom ? "red" : "green"} /></Card>
+            <Card><Stat label="Total sold over horizon" value={gbpK(s.totalFromPortfolio)} sub={`${s.coveredYears}/${s.totalYears} years need no sales`} /></Card>
+            <Card><Stat label="Gilt ladder ends" value={s.giltLadderEndsYear ?? "no gilts"} sub={s.cashExhaustedYear ? `cash float gone ${s.cashExhaustedYear}` : "cash float never exhausted"} /></Card>
+          </div>
+
+          <Card style={{ padding: 0, overflow: "hidden" }}>
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+                <thead>
+                  <tr style={{ background: T.lineSoft }}>
+                    {["Year", "Spend", ...SOURCES.map(([, l]) => l), "Gilt bank", "Cash left"].map((h, i) => (
+                      <th key={h} style={{ textAlign: i === 0 ? "left" : "right", padding: "9px 10px", fontSize: 10.5, letterSpacing: ".04em", textTransform: "uppercase", color: T.muted, fontWeight: 700, whiteSpace: "nowrap" }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {runoff.rows.map((r) => (
+                    <tr key={r.year} style={{ borderTop: `1px solid ${T.line}`, background: r.covered ? "transparent" : `color-mix(in srgb, ${T.red} 7%, transparent)` }}>
+                      <td style={{ padding: "7px 10px", fontFamily: MONO, fontWeight: 600 }}>{r.year}</td>
+                      <td style={{ padding: "7px 10px", textAlign: "right", fontFamily: MONO }}>{gbpK(r.expense)}</td>
+                      {SOURCES.map(([k, , c]) => (
+                        <td key={k} style={{ padding: "7px 10px", textAlign: "right", fontFamily: MONO, color: r[k] > 0 ? (k === "fromPortfolio" ? T.red : c) : T.muted }}>
+                          {r[k] > 0 ? gbpK(r[k]) : "—"}
+                        </td>
+                      ))}
+                      <td style={{ padding: "7px 10px", textAlign: "right", fontFamily: MONO, color: r.giltBankEnd > 0 ? T.blue : T.muted }}>{r.giltBankEnd > 0 ? gbpK(r.giltBankEnd) : "—"}</td>
+                      <td style={{ padding: "7px 10px", textAlign: "right", fontFamily: MONO, color: T.ink2 }}>{gbpK(r.cashEnd)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+
+          <div style={{ marginTop: 12 }}>
+            <Note tone="blue">
+              Nominal £ throughout ({effInflation(p)}%/yr spend uprating); the gilt bank and cash float earn nothing here — crediting interest would quietly stretch the runway.
+              RSUs assume SELL-ON-VEST at today's price ({inputs.rsuUnpriced > 0 ? `${inputs.rsuUnpriced} unpriced vest(s) excluded — set the ticker's price` : "no price forecasting"}); vested-and-held shares are already inside the portfolio, so they're deliberately not a source here.
+              Dividends are held flat at {gbpK(+forwardDividends || 0)}/yr — no growth, and no shrinkage as later sales reduce the portfolio: that circularity is disclosed rather than half-modelled.
+              Deferred cash and gilt cashflows are contractual schedules from their own tabs.
+            </Note>
+          </div>
+        </>
+      )}
     </div>
   );
 }

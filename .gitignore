@@ -4,3 +4,7 @@ dist/
 vite.config.js.timestamp-*
 *.timestamp-*.mjs
 node_modules/.smoke/
+
+# personal data files generated locally — NEVER commit (public repo)
+cgt-backup-*.json
+portfolio-snapshot-*.md

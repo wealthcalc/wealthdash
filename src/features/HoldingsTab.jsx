@@ -83,7 +83,26 @@ function ExposureEditor({ tickers, secMeta, setSecMeta }) {
 // — the "how am I invested" views moved here from the Net worth ▸ Balance
 // sheet tab, since concentration and region/sector exposure are a portfolio
 // question, not a balance-sheet one. Part of the Phase 2.8 de-drilling pass.
-function HoldingsTab({ positions, model = null, concentration = null }) {
+function HoldingsTab({ positions, model = null, concentration = null, aiSnapshot = null }) {
+  const [snapMsg, setSnapMsg] = React.useState("");
+  const flashSnap = (m) => { setSnapMsg(m); setTimeout(() => setSnapMsg(""), 3500); };
+  // AI snapshot (core/ai-snapshot.mjs, assembled by the shell): a Markdown
+  // portfolio document written for LLM prompts — copy for pasting into a
+  // chat, or download for attaching.
+  const copySnapshot = async () => {
+    if (!aiSnapshot) return;
+    try { await navigator.clipboard.writeText(aiSnapshot); flashSnap("Snapshot copied — paste it into any AI chat."); }
+    catch { flashSnap("Couldn't copy in this frame — use Download instead."); }
+  };
+  const downloadSnapshot = () => {
+    if (!aiSnapshot) return;
+    try {
+      const url = URL.createObjectURL(new Blob([aiSnapshot], { type: "text/markdown" }));
+      const a = document.createElement("a"); a.href = url; a.download = `portfolio-snapshot-${new Date().toISOString().slice(0, 10)}.md`;
+      document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+      flashSnap("Snapshot downloaded (.md).");
+    } catch { flashSnap("Download blocked here — try the deployed app."); }
+  };
   const prices = useAppStore((s) => s.prices), setPrices = useAppStore((s) => s.setPrices);
   const secMeta = useAppStore((s) => s.secMeta), setSecMeta = useAppStore((s) => s.setSecMeta);
   const open = positions.filter((p) => p.qty > 1e-6);
@@ -160,6 +179,23 @@ function HoldingsTab({ positions, model = null, concentration = null }) {
         <Stat label="Unrealised gain" value={priced.length ? gbp0(totUnreal) : "—"} tone={totUnreal >= 0 ? "gain" : "loss"} big />
         <Stat label="Unrealised %" value={priced.length && totCost ? `${totUnreal >= 0 ? "+" : ""}${num((totUnreal / totCost) * 100)}%` : "—"} tone={totUnreal >= 0 ? "gain" : "loss"} />
       </div>
+
+      {/* AI snapshot — the whole portfolio as one Markdown document for LLM prompts */}
+      {aiSnapshot && (
+        <div className="flex items-center gap-2 flex-wrap">
+          <button onClick={copySnapshot}
+            className="inline-flex items-center gap-1.5 text-sm font-medium px-3 h-9 rounded-lg border border-[var(--accent)] text-[var(--accent)] hover:bg-[var(--panel2)]"
+            title="Copy a Markdown snapshot of the whole portfolio — every holding with values, weights, allocation, concentration, returns and data-quality caveats — written to be pasted into an AI chat for analysis or allocation discussion. Contains no account numbers or credentials.">
+            Copy AI snapshot
+          </button>
+          <button onClick={downloadSnapshot}
+            className="inline-flex items-center gap-1.5 text-sm font-medium px-3 h-9 rounded-lg border border-[var(--border)] text-[var(--fg)] hover:bg-[var(--panel2)]"
+            title="Download the same snapshot as a .md file for attaching to a prompt">
+            ↓ .md
+          </button>
+          {snapMsg && <span role="status" className="text-xs text-[var(--muted)]">{snapMsg}</span>}
+        </div>
+      )}
 
       <LivePricesPanel tickers={tickers} />
 

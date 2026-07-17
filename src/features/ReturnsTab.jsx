@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useCallback, useRef, useEffect } from "react";
 import { Percent, LineChart } from "lucide-react";
-import { WRAPPERS, normWrapper } from "../core/portfolio.mjs";
-import { xirr } from "../core/returns.mjs";
+import { WRAPPERS } from "../core/portfolio.mjs";
+import { pensionXirrByWrapper } from "../core/returns.mjs";
 import { giltAnalytics } from "../core/gilts.mjs";
 import { growthIndex, maxDrawdown, volatility, benchmarkCumulativeReturn, feeDrag } from "../core/benchmark.mjs";
 import { gbp, WrapperChip, num, todayISO, pct, pctPlain, toneOf, SHORT_SPAN, RateCell, rateIsDisplayable, Stat, Empty, useSort, sortRows, SortTh, store, SubTabs, Field } from "../ui/shared.jsx";
@@ -38,20 +38,15 @@ function ReturnsTab({ returns }) {
   // per-fund attribution isn't possible — contributions aren't tied to a
   // specific fund in these exports) rather than show a wrong number.
   const byWrapper = returns?.byWrapper;
-  const pensionXirrByWrapper = useMemo(() => {
-    const out = {};
-    if (!byWrapper) return out;
-    for (const w of ["SIPP", "LISA"]) {
-      const providers = new Set(Object.entries(secMeta).filter(([tk, m]) => m.provider && txns.some((t) => t.ticker === tk && normWrapper(t.wrapper) === w)).map(([, m]) => m.provider));
-      if (!providers.size) continue;
-      const cfs = pensionCashflows.filter((c) => providers.has(c.provider) && c.gbpAmount != null);
-      if (!cfs.length) continue;
-      const flows = cfs.map((c) => ({ date: c.date, amount: -Math.abs(c.gbpAmount) }));
-      const currentValue = byWrapper[w]?.value ?? 0;
-      if (currentValue > 0) flows.push({ date: todayISO(), amount: currentValue });
-      out[w] = xirr(flows);
-    }
-    return out;
+  // Extracted to core/returns.mjs (tested) so Home's wrapper strip shows
+  // the same combined pension XIRR — one implementation, two surfaces.
+  const pensionXirr = useMemo(() => {
+    if (!byWrapper) return {};
+    return pensionXirrByWrapper({
+      txns, secMeta, pensionCashflows,
+      valueByWrapper: { SIPP: byWrapper.SIPP?.value ?? 0, LISA: byWrapper.LISA?.value ?? 0 },
+      today: todayISO(),
+    });
   }, [secMeta, txns, pensionCashflows, byWrapper]);
 
   if (!returns) return <Empty msg="Couldn't compute returns — check the Transactions tab for ledger errors." />;
@@ -83,7 +78,7 @@ function ReturnsTab({ returns }) {
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <Stat label="Money-weighted return (XIRR)"
           value={rateIsDisplayable(total.xirr) ? pct(total.xirr.rate) : "n/a"}
-          sub={rateIsDisplayable(total.xirr) ? "annualised, since first transaction"
+          sub={rateIsDisplayable(total.xirr) ? `annualised, since first transaction${total.xirr.xirrScope?.snapshotOnlyExcluded ? ` — ${total.xirr.xirrScope.snapshotOnlyExcluded} snapshot-dated pension fund(s) excluded (their real XIRR is the ◆ per-wrapper figure)` : ""}`
             : total.xirr.rate == null ? total.xirr.reason
             : `only ${total.xirr.spanDays} days of history — annualised figures this young are noise (shows from ${SHORT_SPAN} days)`}
           tone={rateIsDisplayable(total.xirr) ? toneOf(total.xirr.rate) : undefined} big />
@@ -134,8 +129,8 @@ function ReturnsTab({ returns }) {
                   <td className={"px-3 py-2 num text-right font-medium " + (a.profit == null ? "text-[var(--muted)]" : a.profit >= 0 ? "text-[var(--gain)]" : "text-[var(--loss)]")}>{a.profit != null ? gbp(a.profit) : "—"}</td>
                   <td className="px-3 py-2 num text-right">{pct(a.simpleReturn)}</td>
                   <td className="px-3 py-2 text-right">
-                    <RateCell r={pensionXirrByWrapper[w] || a.xirr} />
-                    {pensionXirrByWrapper[w] && <span className="ml-1 text-[11px] text-[var(--muted)]" title="From real contribution dates (Pension & LISA tab), not the transaction ledger — the ledger only holds one snapshot per fund, not a purchase history">◆</span>}
+                    <RateCell r={pensionXirr[w] || a.xirr} />
+                    {pensionXirr[w] && <span className="ml-1 text-[11px] text-[var(--muted)]" title="From real contribution dates (Pension & LISA tab), not the transaction ledger — the ledger only holds one snapshot per fund, not a purchase history">◆</span>}
                   </td>
                   <td className="px-3 py-2 num text-right text-[var(--muted)]">{pctPlain(a.actualYield)}</td>
                   <td className="px-3 py-2 num text-right text-[var(--muted)]">{pctPlain(a.forwardYield)}</td>

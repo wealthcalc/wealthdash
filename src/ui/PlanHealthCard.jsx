@@ -1,7 +1,7 @@
 import React, { useMemo } from "react";
 import { HeartPulse } from "lucide-react";
 import { buildProjection } from "../core/drawdown.mjs";
-import { gbp, gbp0, pctPlain, Stat } from "./shared.jsx";
+import { gbp0, pctPlain, Stat } from "./shared.jsx";
 
 /* ======================================================================
    PLAN HEALTH CARD — a compact, read-only retirement headline for the
@@ -41,7 +41,7 @@ function PlanHealthCard({ planInputs, onOpenPlan }) {
       <div className="grid grid-cols-2 gap-2">
         <Stat label={`Pot at retirement (age ${planInputs.retireAge})`} value={gbp0(det.wealthAtRetire)} />
         <Stat label="Money lasts to" value={lasts ? `${planInputs.planAge}+` : `age ${det.depletionAge}`} tone={lasts ? "gain" : "loss"} />
-        <Stat label="Year-1 net income (today's £)" value={gbp(det.firstYearNetToday)} />
+        <Stat label="Year-1 net income (today's £)" value={gbp0(det.firstYearNetToday)} />
         <Stat label="Replaces of pre-retirement net pay" value={pctPlain(det.replacementNet, 0)} />
       </div>
     </div>
