@@ -19,6 +19,9 @@ import { taxYearEndChecklist } from "./core/tax-year-end.mjs";
 import { isaSubscriptionsByYear, realisedForYear } from "./core/allowances.mjs";
 import { aeaForYear } from "./core/uk-tax.mjs";
 import { concentration } from "./core/exposure.mjs";
+import { portfolioExposure } from "./core/lookthrough.mjs";
+import { pensionXirrByWrapper } from "./core/returns.mjs";
+import { renderAiSnapshot } from "./core/ai-snapshot.mjs";
 import { unitsHeldAt, uid, todayISO, IconBtn, store as lsStore } from "./ui/shared.jsx";
 import { DesktopSidebar, MobileDrawer, SubTabBar, SCREENS } from "./ui/Sidebar.jsx";
 import CommandPalette from "./ui/CommandPalette.jsx";
@@ -327,6 +330,31 @@ export default function App() {
     });
   }, [wealthModel, rsuSummary]);
 
+  // AI snapshot (core/ai-snapshot.mjs): one Markdown document of the whole
+  // portfolio, built from aggregates this shell already computes, for
+  // pasting into an LLM prompt. Assembled lazily-ish via memo; the
+  // Holdings tab exposes copy/download buttons.
+  const aiSnapshot = useMemo(() => {
+    try {
+      return renderAiSnapshot({
+        today: todayISO(),
+        netWorth, model: wealthModel, returns,
+        pensionXirr: pensionXirrByWrapper({
+          txns, secMeta, pensionCashflows,
+          valueByWrapper: {
+            SIPP: wealthModel?.byWrapper?.SIPP?.marketValue ?? 0,
+            LISA: wealthModel?.byWrapper?.LISA?.marketValue ?? 0,
+          },
+          today: todayISO(),
+        }),
+        concentration: exposureConcentration,
+        regionExposure: portfolioExposure({ positions: wealthModel?.positions || [], secMeta, field: "region" }),
+        sectorExposure: portfolioExposure({ positions: wealthModel?.positions || [], secMeta, field: "sector" }),
+        secMeta, cashAccounts, properties, mortgages,
+      });
+    } catch { return null; }
+  }, [netWorth, wealthModel, returns, txns, secMeta, pensionCashflows, exposureConcentration, cashAccounts, properties, mortgages]);
+
   // Aggregates for the Home action queue (core/action-queue.mjs) — each
   // figure from the module that owns it: ISA subscriptions from the ledger
   // (allowances.mjs), AEA headroom from this year's taxable disposals
@@ -608,7 +636,7 @@ export default function App() {
               }} />}
               {tab === "allowances" && <AllowancesTab eriTxns={eriTxns} taxableDisposals={taxableDisposals} />}
               {tab === "income" && <IncomeTab {...{ eriTxns, incomeByYear, incomeAllWrappers, txns: giaTxns, incomeCalendar }} />}
-              {tab === "holdings" && <HoldingsTab positions={wealthModel ? wealthModel.positions : []} model={wealthModel} concentration={exposureConcentration} />}
+              {tab === "holdings" && <HoldingsTab positions={wealthModel ? wealthModel.positions : []} model={wealthModel} concentration={exposureConcentration} aiSnapshot={aiSnapshot} />}
               {tab === "property" && <PropertyTab />}
               {tab === "private" && <PrivateTab />}
               {tab === "rsu" && <RsuTab />}

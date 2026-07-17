@@ -2088,9 +2088,26 @@ backup. Three findings, in order of blame:
    dates) as the pension truth. Regression test included: a snapshot row
    at near-current value must not move the clean total.
 
+## AI portfolio snapshot (copy/paste into any LLM)
+`core/ai-snapshot.mjs` (4 tests) renders the whole portfolio as ONE
+Markdown document written for a MODEL reader, not a human one: every
+figure unit-labelled with an as-of date; all holdings in a single wide
+table (ticker/name/wrapper/kind/qty/price/value/weight/cost/P&L/region/
+sector); cash with rates and maturities; allocation rollups with the
+look-through coverage split; concentration (HHI, single-company alerts);
+returns (the scoped ledger XIRR, ◆ pension XIRR from real contribution
+dates, TWR) and income. Data-quality caveats are stated INLINE where
+they bite — unpriced holdings, snapshot-only pension funds, tag coverage,
+"manual valuations, not appraisals" — so a model can't silently trust a
+number the app itself doesn't. No account numbers or credentials; pipe
+characters sanitised so user labels can't break the table. Buttons on
+Portfolio ▸ Holdings: "Copy AI snapshot" / "↓ .md". Assembled in the
+shell from engines it already runs. Generated files are gitignored —
+this repo is public, and a portfolio snapshot is personal data.
+
 ## Tests
 ```
-npm test        # node --test: 600 core tests + 12 UI smoke tests (test:ui)
+npm test        # node --test: 604 core tests + 12 UI smoke tests (test:ui)
 ```
 
 ## Deploy (recommended: Git → new Vercel project)
