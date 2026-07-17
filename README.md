@@ -2105,6 +2105,15 @@ Portfolio ▸ Holdings: "Copy AI snapshot" / "↓ .md". Assembled in the
 shell from engines it already runs. Generated files are gitignored —
 this repo is public, and a portfolio snapshot is personal data.
 
+## Plan panel: collapsible sections
+The input panel had grown to ~17 always-open sections (scenario library,
+goals, MC model options, BTL, annuity…) — a wall nobody scrolls. Sections
+now collapse with a chevron; open-state persists per section per browser
+(`plan.panel.<title>`); "Scenario library" / "You & timing" / "Money in"
+start open, everything else starts closed. Sections for disabled optional
+features (annuity, BTL) keep their visible title when collapsed, so
+discoverability survives.
+
 ## Tests
 ```
 npm test        # node --test: 604 core tests + 12 UI smoke tests (test:ui)

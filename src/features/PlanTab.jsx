@@ -1235,24 +1235,34 @@ function GoalsEditor({ p, det, setP }) {
   );
 }
 
+// The panel grew to ~17 sections (scenarios, goals, MC options, BTL…) —
+// a wall nobody scrolls. Sections now collapse, with open-state persisted
+// per section per browser; the core trio starts open, everything else
+// starts closed. Optional sections whose feature is OFF (annuity/BTL
+// toggles) still show their title, so discoverability survives collapse.
+const PANEL_OPEN_DEFAULT = new Set(["Scenario library", "You & timing", "Money in"]);
+
 function PanelSection({ title, children }) {
+  const [open, setOpen] = useState(() => store.get(`plan.panel.${title}`, PANEL_OPEN_DEFAULT.has(title)));
+  React.useEffect(() => { store.set(`plan.panel.${title}`, open); }, [open, title]);
   return (
-    <div style={{ marginBottom: 22 }}>
-      <div
+    <div style={{ marginBottom: open ? 22 : 10 }}>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
         style={{
-          fontSize: 11,
-          letterSpacing: ".08em",
-          textTransform: "uppercase",
-          color: T.gold,
-          fontWeight: 700,
-          marginBottom: 12,
-          paddingBottom: 6,
+          display: "flex", alignItems: "center", justifyContent: "space-between",
+          width: "100%", background: "none", border: "none", cursor: "pointer",
+          padding: "0 0 6px", marginBottom: open ? 12 : 0,
+          fontSize: 11, letterSpacing: ".08em", textTransform: "uppercase",
+          color: T.gold, fontWeight: 700, textAlign: "left",
           borderBottom: `1px solid ${T.lineSoft}`,
         }}
       >
-        {title}
-      </div>
-      {children}
+        <span>{title}</span>
+        <span aria-hidden="true" style={{ color: T.muted, fontSize: 10 }}>{open ? "▾" : "▸"}</span>
+      </button>
+      {open && children}
     </div>
   );
 }
