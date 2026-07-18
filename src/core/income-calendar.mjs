@@ -99,11 +99,25 @@ export function nextOccurrences(lastDate, stepDays, today, horizonDays = 365) {
 // doesn't recompute gilt schedules, just folds them in.
 export function buildIncomeCalendar({
   incomeEntries = [], txns = [], cashAccounts = [],
-  giltCashflows = [], deferredCash = [], today, horizonDays = 365,
+  giltCashflows = [], deferredCash = [],
+  // RSU vests: [{ date, amount, label }] — future SCHEDULED vests valued
+  // by the caller at TODAY'S price (no price forecast), so they are
+  // "estimated", unlike deferred-cash tranches whose £ amount is
+  // contractual. Sell-to-cover/withholding is NOT modelled — the gross
+  // vest value is shown, and the UI says so.
+  rsuVests = [],
+  today, horizonDays = 365,
 } = {}) {
   if (!today) throw new Error("buildIncomeCalendar requires `today` (ISO date) — pure functions don't read the clock themselves.");
   const events = [];
   const horizonISO = addDaysISO(today, horizonDays);
+
+  // 0. RSU vests — scheduled DATES, estimated VALUE (today's price).
+  for (const v of rsuVests) {
+    if (v && v.date && v.date > today && v.date <= horizonISO && +v.amount > 0) {
+      events.push({ date: v.date, source: "rsu-vest", label: v.label || "RSU vest", amount: +v.amount, certainty: "estimated", wrapper: "GIA" });
+    }
+  }
 
   // 1. Gilts — contractually scheduled, not estimated.
   for (const cf of giltCashflows) {

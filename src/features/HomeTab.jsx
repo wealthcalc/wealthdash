@@ -264,6 +264,7 @@ const ACTION_LABELS = {
   "aea-harvest": (i) => ({ head: gbp0(i.amount), rest: ` — gains harvestable within this year's CGT allowance (${gbp0(i.aeaLeft)} AEA left). Mind the 30-day rule on rebuys.` }),
   "allocation-drift": (i) => ({ head: gbp0(i.amount), rest: ` — ${i.overweight ? "overweight" : "underweight"} ${i.bucket} (${i.driftPct > 0 ? "+" : ""}${i.driftPct.toFixed(1)}pp vs target). Rebalance tax-aware, not market-timed.` }),
   "concentration": (i) => ({ head: gbp0(i.amount), rest: ` — ${i.weightPct.toFixed(0)}% of invested wealth is ${i.ticker} alone (RSU shares included). One company shouldn't be able to ruin the plan.` }),
+  "gilt-redemption": (i) => ({ head: gbp0(i.amount), rest: ` — ${i.label} matures ${i.days === 0 ? "today" : `in ${i.days} days`} (${i.date}); the principal lands as cash earning nothing until you redeploy it.` }),
 };
 // Items that land on a CGT sub-tab pre-select it.
 const ACTION_SUBTAB = { "aea-harvest": "planning", "allocation-drift": "rebalance" };
@@ -283,7 +284,7 @@ function ActionQueueCard({ queue, setTab, dataLine }) {
         const { head, rest } = (ACTION_LABELS[item.id] || (() => ({ head: gbp0(item.amount), rest: ` — ${item.id}` })))(item);
         const urgent = item.score >= 80;
         return (
-          <button key={item.id + (item.label || item.lender || item.ticker || "")}
+          <button key={item.id + (item.label || item.lender || item.ticker || "") + (item.date || "")}
             onClick={() => { if (ACTION_SUBTAB[item.id]) store.set("cgt.cgtsubtab", ACTION_SUBTAB[item.id]); setTab && setTab(item.tab); }}
             className="text-left text-xs rounded-lg border border-[var(--border)] bg-[var(--panel2)] px-3 py-2 hover:border-[var(--accent)]">
             <span className={"font-semibold num " + (urgent ? "text-[var(--loss)]" : "text-[var(--accent)]")}>{head}</span>
@@ -437,8 +438,15 @@ export default function HomeTab({
     driftRows: drift.rows, targetsSumTo100: drift.targetsSumTo100,
     mortgagesSoon, cashMaturing,
     concentrationAlerts: concentration?.alerts ?? [],
+    // Gilt redemptions inside 60 days, straight from the income calendar
+    // the shell already builds (source "gilt-redemption").
+    giltRedemptions: incomeCalendar.filter((e) => {
+      if (e.source !== "gilt-redemption") return false;
+      const days = (new Date(e.date) - new Date(todayISO())) / 86400000;
+      return days >= 0 && days <= 60;
+    }).map((e) => ({ date: e.date, label: e.label, amount: e.amount })),
     taxYearEndActive: !!(taxYearEnd && taxYearEnd.active),
-  }), [model, actionData, drift, mortgagesSoon, cashMaturing, concentration, taxYearEnd]);
+  }), [model, actionData, drift, mortgagesSoon, cashMaturing, concentration, incomeCalendar, taxYearEnd]);
 
   if (!model) return <Empty msg="Couldn't build the portfolio model — check the Transactions tab for ledger errors." />;
   const { byWrapper, total } = model;

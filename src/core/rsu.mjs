@@ -135,3 +135,44 @@ export function rsuTotals(grants = [], events = [], prices = {}, today = todayFa
     unrealisedGBP: round2(unrealisedGBP), realizedGBP: round2(realizedGBP), unpriced,
   };
 }
+
+/* --------------------- ledger-date reconciliation --------------------- */
+// Flags ledger BUY rows for RSU tickers whose date matches NO vest date
+// within `toleranceDays` — the failure mode found on a real portfolio:
+// shares entered when journaled into the broker (or imported with the
+// transfer date), not when they vested. The date gap shortens the XIRR
+// span (inflating returns on a risen stock) and, more importantly, moves
+// the acquisition date HMRC's same-day/30-day matching keys off.
+// READ-ONLY by design: re-dating changes CGT matching, so the fix is a
+// deliberate edit on the Transactions tab, not a one-click mutation here.
+// Legitimately unmatched rows exist — dividend reinvestments (DRIPs) and
+// open-market buys in an RSU ticker — so the result is a review list
+// with the nearest vest suggested, never an auto-correction.
+export function reconcileLedgerDates({ txns = [], grants = [], events = [], toleranceDays = 7 } = {}) {
+  const rsuTickers = new Set(grants.map((g) => g.ticker).filter(Boolean));
+  if (!rsuTickers.size) return [];
+  const vestDates = [...new Set(
+    events.filter((e) => e && e.type === "vest" && e.date).map((e) => e.date)
+  )].sort();
+  if (!vestDates.length) return [];
+  const MS = 86400000;
+  const flags = [];
+  for (const t of txns) {
+    if (!t || t.side !== "BUY" || !rsuTickers.has(t.ticker) || !t.date) continue;
+    let nearest = null, nearestGap = Infinity;
+    for (const v of vestDates) {
+      const gap = Math.round((new Date(t.date + "T00:00:00Z") - new Date(v + "T00:00:00Z")) / MS);
+      if (Math.abs(gap) < Math.abs(nearestGap)) { nearest = v; nearestGap = gap; }
+    }
+    if (Math.abs(nearestGap) > toleranceDays) {
+      flags.push({
+        txnId: t.id, ticker: t.ticker, date: t.date, quantity: +t.quantity || 0,
+        gbpAmount: +t.gbpAmount || 0,
+        nearestVest: nearest, daysFromVest: nearestGap,
+        // annual-cadence buys at market price are usually DRIPs, not vests
+        likelyDrip: Math.abs(nearestGap) > 60,
+      });
+    }
+  }
+  return flags.sort((a, b) => (a.date < b.date ? -1 : 1));
+}

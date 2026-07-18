@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from "react";
 import { Award, PlusCircle, Info, ChevronDown, ChevronUp, CalendarClock } from "lucide-react";
-import { vestingSchedule, grantSummary, rsuTotals } from "../core/rsu.mjs";
+import { vestingSchedule, grantSummary, rsuTotals, reconcileLedgerDates } from "../core/rsu.mjs";
 import { gbp, gbp0, num, uid, todayISO, Field, Stat, Empty, TwoStepDelete } from "../ui/shared.jsx";
 import LivePricesPanel from "../ui/LivePricesPanel.jsx";
 import useAppStore from "../state/appStore.js";
@@ -34,6 +34,12 @@ function RsuTab() {
 
   const today = todayISO();
   const totals = useMemo(() => rsuTotals(grants, events, prices, today), [grants, events, prices, today]);
+  const txnsAll = useAppStore((s) => s.txns);
+  // Ledger-date check (core/rsu.mjs) — flags BUYs in RSU tickers dated
+  // away from every vest (the journaled-not-vested failure mode found on
+  // a real ledger). Read-only: re-dating moves CGT matching windows, so
+  // fixes are deliberate edits on the Transactions tab.
+  const dateFlags = useMemo(() => reconcileLedgerDates({ txns: txnsAll, grants, events }), [txnsAll, grants, events]);
   const tickers = useMemo(() => [...new Set(grants.map((g) => g.ticker).filter(Boolean))], [grants]);
 
   // Upcoming vests across every grant, soonest first — the "vesting
@@ -87,8 +93,23 @@ function RsuTab() {
         <span>Tracks grants, their vesting schedule, and any sales, valuing held shares at the same live price used everywhere else in the app. This is informational, not a tax computation: UK income tax at vest (usually collected via payroll before the shares even land here) and any CGT on a later sale (RSU shares typically pool with other same-company holdings under ordinary Section 104 rules, cost basis = vest-date FMV) aren't computed or filed by this app — "Unrealised"/"Realised" below compare current or sale value against vest-date FMV as a reference figure only.</span>
       </div>
 
-      {tickers.length > 0 && (
-        <LivePricesPanel tickers={tickers} />
+      {tickers.length > 0 && <LivePricesPanel tickers={tickers} />}
+
+      {dateFlags.length > 0 && (
+          <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 space-y-2">
+            <div className="text-sm font-semibold flex items-center gap-1.5"><CalendarClock size={15} className="text-[var(--m-bb)]" /> Ledger date check — {dateFlags.length} BUY{dateFlags.length > 1 ? "s" : ""} dated away from any vest</div>
+            <p className="text-xs text-[var(--muted)] leading-relaxed">
+              These ledger buys in RSU tickers don't match a vest date (±7 days) — usually shares entered when they were journaled to the broker rather than when they vested. The gap inflates XIRR on a risen stock and shifts the acquisition date CGT matching keys off. Rows marked <span className="font-medium">DRIP?</span> are far from every vest at an annual-ish cadence — likely dividend reinvestments, correctly dated. Fix real mismatches by editing the date on the Transactions tab.
+            </p>
+            {dateFlags.map((f) => (
+              <div key={f.txnId || f.date + f.quantity} className="text-xs rounded-lg border border-[var(--border)] bg-[var(--panel2)] px-3 py-2 num">
+                <span className="font-semibold">{f.ticker}</span> BUY {f.date} × {f.quantity}
+                {f.likelyDrip
+                  ? <span className="text-[var(--muted)]"> — {Math.abs(f.daysFromVest)}d from any vest · <span className="font-medium">DRIP?</span> probably fine</span>
+                  : <span className="text-[var(--m-bb)]"> — {Math.abs(f.daysFromVest)}d {f.daysFromVest > 0 ? "after" : "before"} the {f.nearestVest} vest → consider re-dating to {f.nearestVest}</span>}
+              </div>
+            ))}
+          </div>
       )}
 
       {/* upcoming vesting schedule */}
