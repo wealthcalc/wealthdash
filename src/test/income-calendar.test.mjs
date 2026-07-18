@@ -152,3 +152,21 @@ test("summariseBySource: counts and totals per source", () => {
   assert.deepEqual(s.dividend, { count: 2, total: 150 });
   assert.deepEqual(s["gilt-coupon"], { count: 1, total: 62.5 });
 });
+
+test("rsu-vest events: future scheduled dates, estimated certainty, horizon-bounded", async () => {
+  const { buildIncomeCalendar } = await import("../core/income-calendar.mjs");
+  const events = buildIncomeCalendar({
+    today: "2026-07-16", horizonDays: 365,
+    rsuVests: [
+      { date: "2027-02-05", amount: 16000, label: "WFC vest" },   // in horizon
+      { date: "2026-07-01", amount: 999, label: "past" },          // past — excluded
+      { date: "2028-02-05", amount: 999, label: "beyond" },        // beyond horizon
+      { date: "2027-01-01", amount: 0, label: "zero" },            // zero — excluded
+    ],
+  });
+  const vests = events.filter((e) => e.source === "rsu-vest");
+  assert.equal(vests.length, 1);
+  assert.equal(vests[0].date, "2027-02-05");
+  assert.equal(vests[0].amount, 16000);
+  assert.equal(vests[0].certainty, "estimated");
+});

@@ -134,3 +134,21 @@ test("queue is capped", () => {
   // and sorted descending
   for (let i = 1; i < q.length; i++) assert.ok(q[i - 1].score >= q[i].score);
 });
+
+test("gilt redemptions rank near matured cash and rise as the date nears", () => {
+  const near = buildActionQueue({
+    today: TODAY,
+    giltRedemptions: [{ date: "2026-07-20", label: "TN26", amount: 25000 }],
+  });
+  const far = buildActionQueue({
+    today: TODAY,
+    giltRedemptions: [{ date: "2026-09-05", label: "TN26", amount: 25000 }],
+  });
+  assert.equal(near[0].id, "gilt-redemption");
+  assert.equal(near[0].tab, "gilts");
+  assert.equal(near[0].amount, 25000);
+  assert.ok(near[0].score > far[0].score, "nearer maturity scores higher");
+  // not suppressed by tax-year-end mode — idle cash doesn't care what month it is
+  const tye = buildActionQueue({ today: TODAY, taxYearEndActive: true, giltRedemptions: [{ date: "2026-07-20", label: "TN26", amount: 1 }] });
+  assert.equal(tye.length, 1);
+});

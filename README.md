@@ -2114,9 +2114,35 @@ start open, everything else starts closed. Sections for disabled optional
 features (annuity, BTL) keep their visible title when collapsed, so
 discoverability survives.
 
+## Quick-wins trio: vests in the calendar, RSU date check, redeployment nudges
+Three small, connected improvements to the "what's coming and what needs
+doing" surfaces:
+
+- **RSU vests join the income calendar** — new "rsu-vest" source in
+  `buildIncomeCalendar`: future SCHEDULED vests valued at TODAY'S price,
+  so certainty is "estimated" (unlike deferred-cash tranches, whose £ is
+  contractual — that source already existed). Gross vest value shown;
+  sell-to-cover/withholding not modelled, stated in the source label.
+  Home's 90-day strip and the Income tab's chart/labels pick them up.
+- **RSU ledger-date check** (`reconcileLedgerDates` in core/rsu.mjs) —
+  flags ledger BUYs in RSU tickers matching NO vest date ±7 days, the
+  journaled-not-vested failure mode confirmed on a real ledger. Read-only
+  BY DESIGN: re-dating moves CGT matching windows, so the panel (RSU tab)
+  suggests the nearest vest date and points at the Transactions tab
+  rather than offering a one-click mutation. Buys >60 days from every
+  vest are marked "DRIP?" — annual-cadence market-price purchases are
+  usually dividend reinvestments, correctly dated (also confirmed on the
+  real ledger).
+- **Gilt-redemption nudges in the Home action queue** — redemptions
+  inside 60 days (from the income calendar the shell already builds)
+  become queue items: "£25,000 — TN26 matures in 12 days; the principal
+  lands as cash earning nothing until you redeploy it." Scores just
+  below matured cash and rises as the date nears; NOT suppressed by
+  tax-year-end mode (idle cash doesn't care what month it is — tested).
+
 ## Tests
 ```
-npm test        # node --test: 604 core tests + 12 UI smoke tests (test:ui)
+npm test        # node --test: 609 core tests + 12 UI smoke tests (test:ui)
 ```
 
 ## Deploy (recommended: Git → new Vercel project)

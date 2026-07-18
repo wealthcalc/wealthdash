@@ -43,6 +43,7 @@ export function buildActionQueue({
   mortgagesSoon = [],         // mortgagesEndingSoon() output ({expired} flag)
   cashMaturing = [],          // accountsMaturingSoon() output ({matured} flag)
   concentrationAlerts = [],   // concentration().alerts — single-equity risk
+  giltRedemptions = [],       // [{date, label, amount}] within the caller's window
   taxYearEndActive = false,
   max = MAX_ITEMS,
 } = {}) {
@@ -92,6 +93,19 @@ export function buildActionQueue({
     items.push({
       id: "aea-harvest", tab: "cgt",
       amount: harvestNow, score: 15 + 50 * yearProgress, daysLeft, aeaLeft,
+    });
+  }
+
+  // -- Gilt redemptions coming up — principal lands as cash and earns
+  //    nothing until redeployed; the classic quiet drag. Scores just
+  //    below matured cash (it hasn't happened yet) and rises as the
+  //    date nears.
+  for (const g of giltRedemptions) {
+    const days = Math.max(0, Math.round((new Date(g.date) - new Date(today)) / 86400000));
+    items.push({
+      id: "gilt-redemption", tab: "gilts",
+      amount: +g.amount || 0, score: Math.max(30, 75 - days / 2),
+      label: g.label || "gilt", days, date: g.date,
     });
   }
 

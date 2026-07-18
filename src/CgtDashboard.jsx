@@ -9,7 +9,7 @@ import { liabilityForYear, liabilityAllYears } from "./core/uk-tax.mjs";
 import { householdNetWorth } from "./core/property.mjs";
 import { totalCreditCardDebt } from "./core/credit-cards.mjs";
 import { privateTotals } from "./core/private-investments.mjs";
-import { rsuTotals } from "./core/rsu.mjs";
+import { rsuTotals, vestingSchedule } from "./core/rsu.mjs";
 import { deferredCashTotals, deferredCashCalendar } from "./core/deferred-cash.mjs";
 import { effectiveCashByWrapper } from "./core/cash.mjs";
 import { buildIncomeCalendar } from "./core/income-calendar.mjs";
@@ -274,8 +274,17 @@ export default function App() {
     // — folded in as a "deferred-cash" source (core/deferred-cash.mjs shapes
     // them, bounded to future/in-horizon).
     deferredCash: deferredCashCalendar(deferredCashAwards, deferredCashVests, todayISO(), 365),
+    // Future scheduled RSU vests at TODAY'S price (estimated — the price
+    // will differ on the day; unpriced tickers are skipped, not guessed).
+    rsuVests: rsuGrants.flatMap((g) => {
+      const price = prices[g.ticker];
+      if (price == null) return [];
+      return vestingSchedule(g, rsuEvents, todayISO())
+        .filter((v) => !v.vested)
+        .map((v) => ({ date: v.date, amount: (+v.shares || 0) * price, label: `${g.ticker} vest` }));
+    }),
     today: todayISO(), horizonDays: 365,
-  }), [incomeEntries, txns, cashAccounts, giltData, deferredCashAwards, deferredCashVests]);
+  }), [incomeEntries, txns, cashAccounts, giltData, deferredCashAwards, deferredCashVests, rsuGrants, rsuEvents, prices]);
 
   // Individual gilts are CGT-exempt (TCGA 1992 s115), but `matched` (the raw
   // matching engine output) doesn't know about instrument type — it'll happily
