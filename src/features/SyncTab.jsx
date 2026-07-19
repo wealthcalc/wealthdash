@@ -120,6 +120,9 @@ export default function SyncTab() {
         <p className="text-xs text-[var(--muted)] leading-relaxed">
           Optional. Encrypts your entire dataset ON THIS DEVICE (AES-256-GCM, key derived from your passphrase) and stores only the ciphertext on the server, under a random id. The server — and whoever runs it — can never read it. Newest copy wins across devices; the server keeps 14 versions as an undo. When off, nothing leaves this browser, exactly as before.
         </p>
+        <p className="text-xs text-[var(--muted)] leading-relaxed">
+          Pushes are batched 30 seconds after your last change (and immediately when you leave the tab), skipped entirely when nothing has actually changed, and write a restore point once a day rather than every save. That keeps a normal day inside a handful of Vercel Blob operations — the free tier allows 2,000 a month, and an earlier version could spend a month's worth in an afternoon of editing.
+        </p>
         {msg && <div role="status" className="text-xs rounded-lg border border-[var(--border)] bg-[var(--panel2)] px-3 py-2">{msg}</div>}
       </div>
 

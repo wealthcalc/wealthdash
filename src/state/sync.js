@@ -22,7 +22,7 @@
    never sync itself, mirror itself, or land in a backup file.
    ====================================================================== */
 import { PERSIST_KEYS } from "./durable.js";
-import { encryptState, decryptState, shouldApplyRemote, isValidSyncId } from "../core/sync-crypto.mjs";
+import { encryptState, decryptState, shouldApplyRemote, isValidSyncId, stateFingerprint } from "../core/sync-crypto.mjs";
 
 const CONFIG_KEY = "cgt.sync";
 
@@ -69,32 +69,81 @@ let _pushTimer = null;
 let _lastResult = null; // { at, ok, message } for the UI's status line
 export const lastSyncResult = () => _lastResult;
 
-export async function pushNow({ id, passphrase, device } = {}) {
+/* BLOB OPERATION BUDGET — why this is more careful than "POST on change".
+   Vercel Blob bills put/list/del as Advanced Operations, and the naive
+   implementation spent 3–4 of them on EVERY push: put(latest) +
+   put(version) + list(prune) + occasional del. Combined with a 4-second
+   debounce on any state change, an afternoon of editing burned through a
+   month's free-tier allowance — the cost was invisible because each push
+   looked like one action. Three cuts, in order of effect:
+
+   1. UNCHANGED STATE COSTS NOTHING. A content fingerprint of the plaintext
+      is compared with the last successful push; identical state doesn't
+      leave the device. (Comparing ciphertext would never work — see
+      stateFingerprint's note on random salts/IVs.)
+   2. VERSION HISTORY IS DAILY, NOT PER-PUSH. The 14 server versions exist
+      as an undo for last-writer-wins mistakes; one restore point per day
+      serves that (and matches the app's daily-snapshot idiom) at a
+      fraction of the cost. A normal push is now a single put.
+   3. PRUNING ONLY HAPPENS WHEN A VERSION WAS WRITTEN, so the list/del pair
+      is a daily cost rather than a per-push one.
+
+   Net: a typical push went from 3–4 operations to 1, and repeat pushes of
+   unchanged data from 3–4 to 0. The debounce also went 4s → 30s, with a
+   flush on tab-hide so nothing is lost by closing the tab. */
+const PUSH_DEBOUNCE_MS = 30000;
+
+export async function pushNow({ id, passphrase, device, force = true } = {}) {
   const cfg = getSyncConfig();
   const useId = id ?? cfg.id, usePass = passphrase ?? cfg.passphrase;
   if (!isValidSyncId(useId) || !usePass) throw new Error("Sync isn't configured.");
+
+  const state = collectState();
+  const fingerprint = await stateFingerprint(state);
+  if (!force && fingerprint === cfg.lastPushHash) {
+    _lastResult = { at: new Date().toISOString(), ok: true, message: "Already up to date — nothing to push." };
+    return { skipped: true, reason: "unchanged" };
+  }
+
   const savedAt = new Date().toISOString();
-  const envelope = await encryptState(collectState(), usePass, { savedAt, device: device ?? cfg.device });
+  const today = savedAt.slice(0, 10);
+  const withVersion = cfg.lastVersionDate !== today;
+  const envelope = await encryptState(state, usePass, { savedAt, device: device ?? cfg.device });
   const r = await fetch("/api/sync", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ id: useId, envelope }),
+    body: JSON.stringify({ id: useId, envelope, withVersion }),
   });
   const j = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(j.error || `Sync push failed (${r.status}).`);
-  setSyncConfig({ lastSyncedAt: savedAt });
-  _lastResult = { at: savedAt, ok: true, message: "Pushed to encrypted backup." };
-  return { savedAt };
+  // Only record the fingerprint after a CONFIRMED write, or a failed push
+  // would make the next identical state look already-synced.
+  setSyncConfig({ lastSyncedAt: savedAt, lastPushHash: fingerprint, ...(withVersion ? { lastVersionDate: today } : {}) });
+  _lastResult = { at: savedAt, ok: true, message: withVersion ? "Pushed to encrypted backup (new restore point)." : "Pushed to encrypted backup." };
+  return { savedAt, withVersion };
 }
 
 // Debounced push, called from the store's persistence subscription on any
 // change. Failures are recorded for the UI, never thrown into the app.
-export function schedulePush(delayMs = 4000) {
+export function schedulePush(delayMs = PUSH_DEBOUNCE_MS) {
   if (!getSyncConfig().enabled) return;
   clearTimeout(_pushTimer);
   _pushTimer = setTimeout(() => {
-    pushNow().catch((e) => { _lastResult = { at: new Date().toISOString(), ok: false, message: e.message }; });
+    pushNow({ force: false }).catch((e) => { _lastResult = { at: new Date().toISOString(), ok: false, message: e.message }; });
   }, delayMs);
+}
+
+// A 30-second debounce is only safe if closing the tab doesn't discard the
+// pending push. `visibilitychange` (not `unload`) is the event that still
+// fires reliably on mobile Safari when an app is backgrounded or swiped
+// away — the case where losing the last edit would be least forgivable.
+if (typeof document !== "undefined") {
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState !== "hidden") return;
+    if (!_pushTimer || !getSyncConfig().enabled) return;
+    clearTimeout(_pushTimer); _pushTimer = null;
+    pushNow({ force: false }).catch(() => { /* recorded in _lastResult */ });
+  });
 }
 
 /* ------------------------------- pull --------------------------------- */
