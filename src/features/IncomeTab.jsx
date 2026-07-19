@@ -258,20 +258,49 @@ function IncomeTab({ eriTxns, incomeByYear, incomeAllWrappers = {}, txns, income
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[var(--border)]">
-                  {sortRows(incomeEntries, divSort, {
-                    date: (e) => e.date, ticker: (e) => e.ticker || "", kind: (e) => e.kind,
-                    wrapper: (e) => normWrapper(e.wrapper), taxYear: (e) => ukTaxYear(e.date), amount: (e) => +e.amount || 0,
-                  }).map((e) => (
-                    <tr key={e.id}>
-                      <td className="py-2 px-3 num text-[var(--muted)]">{e.date}</td>
-                      <td className="py-2 px-3">{e.ticker || "—"}</td>
-                      <td className="py-2 px-3 capitalize">{e.kind}</td>
-                      <td className="py-2 px-3">{normWrapper(e.wrapper)}</td>
-                      <td className="py-2 px-3 num">{ukTaxYear(e.date)}</td>
-                      <td className="py-2 px-3 text-right num">{gbp(+e.amount)}</td>
-                      <td className="py-2 px-3 text-right"><button onClick={() => setIncomeEntries((p) => p.filter((x) => x.id !== e.id))} aria-label={`Delete ${e.kind} entry: ${e.date}${e.ticker ? ` ${e.ticker}` : ""}`} title="Delete" className="text-[var(--muted)] hover:text-[var(--loss)]"><Trash2 size={15} aria-hidden="true" /></button></td>
-                    </tr>
-                  ))}
+                  {(() => {
+                    const sorted = sortRows(incomeEntries, divSort, {
+                      date: (e) => e.date, ticker: (e) => e.ticker || "", kind: (e) => e.kind,
+                      wrapper: (e) => normWrapper(e.wrapper), taxYear: (e) => ukTaxYear(e.date), amount: (e) => +e.amount || 0,
+                    });
+                    const row = (e) => (
+                      <tr key={e.id}>
+                        <td className="py-2 px-3 num text-[var(--muted)]">{e.date}</td>
+                        <td className="py-2 px-3">{e.ticker || "—"}</td>
+                        <td className="py-2 px-3 capitalize">{e.kind}</td>
+                        <td className="py-2 px-3">{normWrapper(e.wrapper)}</td>
+                        <td className="py-2 px-3 num">{ukTaxYear(e.date)}</td>
+                        <td className="py-2 px-3 text-right num">{gbp(+e.amount)}</td>
+                        <td className="py-2 px-3 text-right"><button onClick={() => setIncomeEntries((p) => p.filter((x) => x.id !== e.id))} aria-label={`Delete ${e.kind} entry: ${e.date}${e.ticker ? ` ${e.ticker}` : ""}`} title="Delete" className="text-[var(--muted)] hover:text-[var(--loss)]"><Trash2 size={15} aria-hidden="true" /></button></td>
+                      </tr>
+                    );
+                    // Tax-year subtotal rows — the broker-statement
+                    // reconciliation aid — only when rows are grouped
+                    // contiguously by year (date or tax-year sort); any
+                    // other sort interleaves years and a "subtotal" row
+                    // would be summing a fiction.
+                    if (divSort.key !== "date" && divSort.key !== "taxYear") return sorted.map(row);
+                    const out = [];
+                    for (let i = 0; i < sorted.length; i++) {
+                      out.push(row(sorted[i]));
+                      const ty = ukTaxYear(sorted[i].date);
+                      if (i + 1 === sorted.length || ukTaxYear(sorted[i + 1].date) !== ty) {
+                        const group = sorted.filter((e) => ukTaxYear(e.date) === ty);
+                        const div = group.reduce((s, e) => s + (e.kind === "interest" ? 0 : +e.amount || 0), 0);
+                        const int = group.reduce((s, e) => s + (e.kind === "interest" ? +e.amount || 0 : 0), 0);
+                        out.push(
+                          <tr key={`sub-${ty}`} className="bg-[var(--panel2)]">
+                            <td colSpan={5} className="py-1.5 px-3 text-xs font-medium text-[var(--muted)]">
+                              {ty} · {group.length} payment{group.length === 1 ? "" : "s"} — dividends {gbp(div)} · interest {gbp(int)}
+                            </td>
+                            <td className="py-1.5 px-3 text-right num text-xs font-semibold">{gbp(div + int)}</td>
+                            <td />
+                          </tr>
+                        );
+                      }
+                    }
+                    return out;
+                  })()}
                 </tbody>
               </table>
             </div>
@@ -397,8 +426,23 @@ function taxTag(e) {
   return { text: `${label} (${status})`, taxed };
 }
 
-function IncomeCalendarView({ events }) {
+function IncomeCalendarView({ events: allEvents }) {
   const [calSort, toggleCalSort] = useSort("date", "asc");
+  // Wrapper filter — "what's my tax-free ISA income stream?" is a one-tap
+  // question. Pills only show wrappers that actually have forward events.
+  // Deferred cash carries wrapper:null (employment income, not investment
+  // income in a wrapper) so it appears under All only.
+  const [calWrap, setCalWrap] = useState(() => store.get("cgt.income.calwrap", "ALL"));
+  React.useEffect(() => store.set("cgt.income.calwrap", calWrap), [calWrap]);
+  const calWrappers = useMemo(() => {
+    const set = new Set(allEvents.filter((e) => e.wrapper).map((e) => normWrapper(e.wrapper)));
+    return WRAPPERS.filter((w) => set.has(w));
+  }, [allEvents]);
+  React.useEffect(() => { if (calWrap !== "ALL" && !calWrappers.includes(calWrap)) setCalWrap("ALL"); }, [calWrappers, calWrap]);
+  const events = useMemo(
+    () => calWrap === "ALL" ? allEvents : allEvents.filter((e) => e.wrapper && normWrapper(e.wrapper) === calWrap),
+    [allEvents, calWrap]
+  );
   const summary = useMemo(() => summariseBySource(events), [events]);
   const total = events.reduce((s, e) => s + (+e.amount || 0), 0);
   // Same events as the table below, grouped by calendar month and stacked
@@ -426,12 +470,24 @@ function IncomeCalendarView({ events }) {
     return SOURCE_ORDER.filter((s) => set.has(s));
   }, [monthlyData]);
 
-  if (!events.length) {
+  if (!allEvents.length) {
     return <Empty msg="No forward income scheduled or forecast in the next 12 months. Dividend/interest forecasts need at least two historical payments on an open holding; gilt coupons and cash maturities show automatically once you hold them." />;
   }
 
   return (
     <div className="space-y-3">
+      {calWrappers.length > 1 && (
+        <div className="flex flex-wrap gap-1.5">
+          {["ALL", ...calWrappers].map((w) => (
+            <button key={w} onClick={() => setCalWrap(w)}
+              className={"text-xs font-medium px-2.5 py-1 rounded-full border transition " +
+                (calWrap === w ? "border-[var(--accent)] bg-[var(--accent)] text-[var(--accent-fg)]" : "border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)]")}>
+              {w === "ALL" ? "All" : w}
+            </button>
+          ))}
+        </div>
+      )}
+      {!events.length ? <Empty msg={`No forward income in ${calWrap} in the next 12 months.`} /> : (<>
       <div className="flex flex-wrap gap-2">
         {Object.entries(summary).map(([source, s]) => (
           <div key={source} className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-xs">
@@ -440,7 +496,7 @@ function IncomeCalendarView({ events }) {
           </div>
         ))}
         <div className="rounded-lg border border-[var(--accent)] bg-[var(--panel)] px-3 py-2 text-xs">
-          <div className="text-[var(--muted)]">Total, next 12 months</div>
+          <div className="text-[var(--muted)]">Total{calWrap !== "ALL" ? ` (${calWrap})` : ""}, next 12 months</div>
           <div className="font-semibold num">{gbp(total)}</div>
         </div>
       </div>
@@ -506,6 +562,7 @@ function IncomeCalendarView({ events }) {
         </table>
       </div>
       <p className="text-xs text-[var(--muted)]">Amounts are gross, before any tax. Dividend/interest/pension figures use the average of the last 3 payments at the detected cadence — a cut, special dividend or change in payment schedule will move the actual date/amount away from this estimate.</p>
+      </>)}
     </div>
   );
 }
