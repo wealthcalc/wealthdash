@@ -180,3 +180,59 @@ test("import staleness: per-source, 45-day threshold, low-scored housekeeping", 
   });
   assert.equal(withMoney[0].id, "cash-maturing");
 });
+
+/* ------------------- budget signals (spend drift, overspend) ----------- */
+
+const idsOf = (q) => q.map((i) => i.id);
+
+test("spend-drift fires only on THICK data and a material gap", () => {
+  const drift = (o) => idsOf(buildActionQueue({ today: TODAY, spendDrift: o }));
+  // >10% over, data ready -> fires
+  assert.ok(drift({ actual: 60000, planned: 50000, ready: true }).includes("spend-drift"));
+  // same gap but the budget data isn't representative yet -> silent.
+  // A confident nudge from two months of half-categorised spending is
+  // worse than no nudge at all.
+  assert.ok(!drift({ actual: 60000, planned: 50000, ready: false }).includes("spend-drift"));
+  // inside 10% -> noise, a plan is not a budget
+  assert.ok(!drift({ actual: 52000, planned: 50000, ready: true }).includes("spend-drift"));
+  // no plan target -> nothing to compare
+  assert.ok(!drift({ actual: 60000, planned: 0, ready: true }).includes("spend-drift"));
+  assert.ok(!drift(null).includes("spend-drift"));
+});
+
+test("spend-drift: under-spending is reported too, but scores lower than over", () => {
+  const [over] = buildActionQueue({ today: TODAY, spendDrift: { actual: 60000, planned: 50000, ready: true } });
+  const [under] = buildActionQueue({ today: TODAY, spendDrift: { actual: 40000, planned: 50000, ready: true } });
+  assert.equal(over.id, "spend-drift");
+  assert.equal(under.id, "spend-drift");
+  assert.equal(over.over, true);
+  assert.equal(under.over, false);
+  assert.equal(over.amount, 10000);
+  assert.equal(under.amount, 10000);
+  assert.ok(over.score > under.score, "over-spending should outrank under-spending");
+  assert.equal(over.tab, "plan");
+});
+
+test("budget-overspend needs to be material in BOTH senses", () => {
+  const q = (o) => idsOf(buildActionQueue({ today: TODAY, overspend: o }));
+  assert.ok(q({ name: "Groceries", over: 200, limit: 600 }).includes("budget-overspend"));
+  // £12 over is not a money decision, however large the percentage
+  assert.ok(!q({ name: "Coffee", over: 12, limit: 20 }).includes("budget-overspend"));
+  // 5% over a big budget isn't either
+  assert.ok(!q({ name: "Housing", over: 90, limit: 2000 }).includes("budget-overspend"));
+  assert.ok(!q(null).includes("budget-overspend"));
+});
+
+test("budget items never outrank real money deadlines", () => {
+  // A cash pot that has already matured is a genuine decision; an
+  // overspent category is context. The five-slot queue must not invert.
+  const q = buildActionQueue({
+    today: TODAY,
+    cashMaturing: [{ label: "Fixed saver", balance: 50000, days: 0, matured: true }],
+    overspend: { name: "Groceries", over: 300, limit: 600 },
+    spendDrift: { actual: 60000, planned: 50000, ready: true },
+  });
+  const pos = (id) => q.findIndex((i) => i.id === id);
+  assert.ok(pos("cash-matured") < pos("budget-overspend"), "overspend outranked a matured fixed term");
+  assert.ok(pos("cash-matured") < pos("spend-drift"), "spend drift outranked a matured fixed term");
+});

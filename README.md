@@ -2212,6 +2212,30 @@ skipping it. 10 tests.
 Transactions also takes **manual one-off entries** for cash spending that
 appears in no statement.
 
+**Home action queue** gets two spending signals, both deliberately
+conservative because the queue is capped at five and exists for money
+decisions, not a spending diary. `spend-drift` compares trailing-12m
+actual spend against the plan's target and fires only when the budget
+data is thick enough to trust and the gap exceeds 10% — a plan built on a
+spend figure reality has left behind mis-states every projection
+downstream, silently. (Under-spending is reported too, scored lower: it
+means the plan may be more pessimistic than your life.) It stays silent
+under the replacement-ratio target mode, where `targetAbsolute` is a
+dormant field and any discrepancy would be unactionable. `budget-overspend`
+surfaces ONE item for the worst category this month, and only when it's
+material in both senses (>10% AND >£50). A test asserts neither can
+outrank a matured fixed-term deposit.
+
+Clicking a category in the Overview opens Transactions filtered to it —
+"Groceries is £200 over" is one click from "…because of these".
+
+**AI categorisation was removed.** The endpoint worked, but Vercel would
+not deliver `ANTHROPIC_API_KEY` to the function on this project (the
+variable injected with an empty value regardless of name, scope, or the
+sensitive flag — see the diagnostics that proved it, since reverted with
+the feature). Rules plus merchant memory do the actual work; the AI pass
+only ever saved the first sweep through an import.
+
 **Plan link** — `planSpendFromBudget()` offers trailing-12-month actual
 spend and the essential share as prefills for the Plan tab's target income
 and the income floor's essential percentage: two numbers previously typed
