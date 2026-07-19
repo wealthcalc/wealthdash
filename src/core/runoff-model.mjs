@@ -111,6 +111,14 @@ export function buildRunoff({
       fromGilts: r2(fromGilts), fromCash: r2(fromCash), fromDeferred: r2(fromDeferred),
       fromRsu: r2(fromRsu), fromDividends: r2(fromDividends), fromPortfolio: r2(fromPortfolio),
       surplusToCash: r2(surplusToCash), giltBankEnd: r2(giltBank), cashEnd: r2(cashBal),
+      // GROSS inflows received this calendar year, regardless of whether
+      // the waterfall needed them — the cash-flow view's positive bars.
+      // (`from*` above is money USED; a covered year uses £0 of dividends
+      // but still receives all of them.) balanceEnd = cash + gilt bank:
+      // the total liquid float the year closes with.
+      giltIn: r2(giltThisYear), deferredIn: r2(+deferredByYear[year] || 0),
+      rsuIn: r2(+rsuByYear[year] || 0), divIn: r2(+annualDividends || 0),
+      balanceEnd: r2(cashBal + giltBank),
       covered: fromPortfolio <= 0.005,
     });
   }
