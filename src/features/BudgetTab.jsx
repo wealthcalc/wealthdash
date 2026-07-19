@@ -42,10 +42,6 @@ const STARTER = [
 ];
 
 const thisMonth = () => todayISO().slice(0, 7);
-const prevMonth = (m) => {
-  const [y, mo] = m.split("-").map(Number);
-  return mo === 1 ? `${y - 1}-12` : `${y}-${String(mo - 1).padStart(2, "0")}`;
-};
 
 export default function BudgetTab({ setTab }) {
   const categories = useAppStore((s) => s.budgetCategories), setCategories = useAppStore((s) => s.setBudgetCategories);
@@ -130,8 +126,10 @@ function Overview({ categories, txns, month, setMonth, setSub }) {
   );
   const cur = view === "month" ? m : a;
   const s = cur.summary;
-  const tm = thisMonth(), lm = prevMonth(tm);
-  const activePeriod = view === "year" ? "year" : month === tm ? "this" : month === lm ? "last" : "month";
+  const tm = thisMonth();
+  // Any month other than the current one is reached through the picker
+  // rather than a button, so it gets no highlighted pill.
+  const activePeriod = view === "year" ? "year" : month === tm ? "this" : "month";
 
   if (!txns.length) {
     return <Empty msg="No spending imported yet. Use the Import statements sub-tab to load an Amex or HSBC CSV export, then categorise the rows." />;
@@ -144,7 +142,6 @@ function Overview({ categories, txns, month, setMonth, setSub }) {
           {[
             ["year", "Trailing 12 months", () => setView("year")],
             ["this", "This month", () => { setView("month"); setMonth(tm); }],
-            ["last", "Last month", () => { setView("month"); setMonth(lm); }],
           ].map(([k, label, onClick]) => (
             <button key={k} onClick={onClick}
               className={"text-xs font-medium px-2.5 py-1.5 rounded-full border transition " +
