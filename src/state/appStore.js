@@ -121,6 +121,16 @@ const useAppStore = create((set) => {
     // Phase 3.6: named plan scenarios — [{id, name, savedAt, inputs}].
     // Full planInputs snapshots, so loading one restores the exact plan.
     scenarios: ls.get("cgt.scenarios", []), setScenarios: upd("scenarios"),
+    // Budget tab — see core/budget.mjs, core/categorise.mjs.
+    // budgetCategories: [{id, name, monthly, annual, essential, transfer}]
+    // budgetRules:      [{id, field, op, value, categoryId, enabled}] (ordered)
+    // spendTxns:        [{id, date, description, amount, account, manualCategoryId}]
+    //   amount is SPEND-POSITIVE; categoryId is derived at render time by
+    //   categoriseAll(), never stored, so editing a rule re-categorises
+    //   history without a re-import.
+    budgetCategories: ls.get("cgt.budgetcategories", []), setBudgetCategories: upd("budgetCategories"),
+    budgetRules: ls.get("cgt.budgetrules", []), setBudgetRules: upd("budgetRules"),
+    spendTxns: ls.get("cgt.spendtxns", []), setSpendTxns: upd("spendTxns"),
     // NOT persisted anywhere — a session-only diagnostic. Names of LARGE_KEYS
     // that have hit localStorage's quota this session, so SyncTab can tell
     // the user their data is still safe (IndexedDB has it) instead of

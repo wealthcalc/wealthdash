@@ -9,6 +9,12 @@
    the same medicine to backups). backup.test.mjs fails if a new
    PERSIST_KEYS entry is missing from the TYPES table below.
 
+   v17 adds the Budget tab's `budgetCategories`/`budgetRules`/`spendTxns`
+   (core/budget.mjs, core/categorise.mjs); older files omit them and
+   restore unchanged. Note `spendTxns` holds bank/card statement rows —
+   the most personally identifying data in the file — which is exactly why
+   backups stay local and sync is end-to-end encrypted.
+
    v16 adds `deferredCashAwards`/`deferredCashVests` (deferred-cash comp —
    core/deferred-cash.mjs); older files simply omit them and restore
    unchanged. v15 added `fees` (s38 dealing costs) and `account` (broker
@@ -27,7 +33,7 @@
    ====================================================================== */
 import { PERSIST_KEYS } from "../state/durable.js";
 
-export const BACKUP_VERSION = 16;
+export const BACKUP_VERSION = 17;
 
 export const EXPORT_EXCLUDED = ["dark", "tab", "dmoReportDate", "avKey", "ibkrToken"];
 export const RESTORE_ONLY = ["avKey", "ibkrToken"];
@@ -36,6 +42,7 @@ export const ID_ARRAYS = [
   "txns", "incomeEntries", "eriEntries", "pensionCashflows", "properties", "mortgages",
   "otherLiabilities", "cashAccounts", "privateHoldings", "privateEvents", "rsuGrants",
   "rsuEvents", "deferredCashAwards", "deferredCashVests", "creditCards", "scenarios",
+  "budgetCategories", "budgetRules", "spendTxns",
 ];
 // Keys merged into current state rather than replacing it.
 export const MERGE_KEYS = ["secMeta"];
@@ -49,6 +56,7 @@ const TYPES = {
   privateHoldings: "array", privateEvents: "array", rsuGrants: "array",
   rsuEvents: "array", deferredCashAwards: "array", deferredCashVests: "array",
   creditCards: "array", scenarios: "array",
+  budgetCategories: "array", budgetRules: "array", spendTxns: "array",
   cash: "object", prices: "object", priceMeta: "object", avMeta: "object",
   secMeta: "object", allowanceOverrides: "object", planInputs: "object",
   income: "number", carried: "number",

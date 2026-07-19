@@ -39,12 +39,12 @@ const TXNS = [
 const PRICES = { VWRL: 105, WFC: 55 };
 const model = buildWealthModel({ txns: TXNS, prices: PRICES, secMeta: {}, cash: { GIA: 500 } });
 
-test("sidebar renders all nine screens and every leaf has a label + screen", () => {
+test("sidebar renders every screen and every leaf has a label + screen", () => {
   // renderToString HTML-escapes text ("Pension & LISA" -> "&amp;"), so
   // decode the common entities before matching labels.
   const html = renderToString(React.createElement(DesktopSidebar, { tab: "home", setTab: () => {}, onOpenPalette: () => {} }))
     .replaceAll("&amp;", "&").replaceAll("&#x27;", "'");
-  assert.equal(SCREENS.length, 9);
+  assert.equal(SCREENS.length, 10);
   for (const s of SCREENS) {
     assert.ok(html.includes(s.label), s.label);
     for (const leaf of s.leaves) {
@@ -180,6 +180,22 @@ test("de-drilled data tabs render from store defaults without props", () => {
   ]) {
     const html = renderToString(el);
     assert.ok(html.length > 50, `${name} rendered almost nothing`);
+  }
+});
+
+test("BudgetTab renders its first-run state and every sub-tab is reachable", async () => {
+  const { default: BudgetTab } = await import("../../features/BudgetTab.jsx");
+  // NOTE ON SCOPE: zustand v5 serves getInitialState() to
+  // useSyncExternalStore during SSR, so store mutations are invisible to
+  // renderToString — a populated-store render can't be exercised here.
+  // That's why this asserts the empty/first-run wiring only; the
+  // populated behaviour (totals, limits, uncategorised handling) is
+  // covered directly and more precisely by budget.test.mjs /
+  // categorise.test.mjs against the pure engines.
+  const html = renderToString(React.createElement(BudgetTab, { setTab: () => {} })).replaceAll("&amp;", "&");
+  assert.ok(html.includes("Start with a category set"), "no starter prompt");
+  for (const label of ["Overview", "Transactions", "Categories & rules", "Import statements"]) {
+    assert.ok(html.includes(label), `sub-tab missing: ${label}`);
   }
 });
 

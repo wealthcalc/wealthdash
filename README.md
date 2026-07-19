@@ -2140,6 +2140,69 @@ doing" surfaces:
   below matured cash and rises as the date nears; NOT suppressed by
   tax-year-end mode (idle cash doesn't care what month it is — tested).
 
+## Budget tab — spending, statement import, categorisation
+The first part of the app that tracks money going OUT. Three pure engines
+plus a tab, all node-tested (`budget.test.mjs`, `categorise.test.mjs`,
+`statement-import.test.mjs` — 29 tests).
+
+**`core/budget.mjs`** — categories carry EITHER a monthly limit or an
+annual one. Annual-only categories (car insurance, holidays) are excluded
+from monthly limit comparisons entirely, because dividing them by 12
+invents an overspend in the month they land and phantom headroom in the
+other eleven; their actual spend still shows in its real month. Categories
+flagged `transfer` (paying the Amex from HSBC) are excluded from every
+total — otherwise importing both statements double-counts one pound of
+spending as two. Spend is stored POSITIVE, so refunds (negative) net off
+their category rather than appearing as income.
+
+**`core/categorise.mjs`** — three layers in strict precedence: manual
+decisions beat rules, rules beat learned merchant memory. Categorisation is
+DERIVED at render, never written to the stored row, so editing a rule
+re-categorises all history instantly instead of only affecting future
+imports. `normaliseMerchant()` strips the noise banks staple to merchant
+names (store numbers, transaction ids, dates, "LONDON GB") so
+"TESCO STORES 3155" and "TESCO STORES 6241 LONDON GB" share one key —
+categorise once, and every past and future Tesco row follows.
+
+**`core/statement-import.mjs`** — CSV in, spending rows out, built around
+the two things UK banks disagree about. Dates are parsed DD/MM only (never
+MM/DD — assuming otherwise silently mangles every date before the 13th).
+Sign convention is explicit and previewed: current accounts make spending
+negative, credit cards make it positive, and importing both under one rule
+inverts half your data. The parser scans for the header row (statements
+open with preamble), falls back to positional detection for headerless
+exports (HSBC), auto-detects the sign from the debit/credit balance, and
+shows what it decided with a one-click flip before anything is saved.
+Re-importing overlapping periods is safe (dedupe by date+description+
+amount+account). The Amex/HSBC profiles are built from the common shapes
+of their exports, not verified against real files — detection is the
+primary mechanism and the profile only a hint.
+
+**AI suggestions** (`api/categorise.mjs`, Haiku) send ONLY merchant
+descriptions and the user's own category names — no amounts, dates,
+account numbers or balances — on an explicit button press, storing
+nothing. The model must choose from existing categories and omit anything
+it can't place; the endpoint drops any suggestion naming a category that
+doesn't exist. Requires `ANTHROPIC_API_KEY`; returns 501 with instructions
+without it, and rules/manual categorisation work regardless.
+
+**Plan link** — `planSpendFromBudget()` offers trailing-12-month actual
+spend and the essential share as prefills for the Plan tab's target income
+and the income floor's essential percentage: two numbers previously typed
+in from memory. Deliberately only OFFERED, and only when the data means
+something — under 6 months of history or over 10% uncategorised returns
+`ready: false` with the reason shown instead of a confident number.
+
+Backup version bumped to 17 (`budgetCategories`, `budgetRules`,
+`spendTxns`). Note `spendTxns` is the most personally identifying data the
+app holds, which is why backups stay local and sync is end-to-end
+encrypted; it's also in `LARGE_KEYS`, so IndexedDB is authoritative for it.
+
+Also fixed here: `ImportTab` referenced `store` without importing it (a
+`ReferenceError` on every broker import, introduced with the
+import-freshness nudge and caught by running eslint across the whole tree
+rather than just the files being edited).
+
 ## Ledger disclosure, data-safety nudges, run-off chart
 Four small pieces:
 

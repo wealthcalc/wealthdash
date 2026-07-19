@@ -51,6 +51,11 @@ export const PERSIST_KEYS = {
   ibkrToken: "cgt.ibkrtoken",
   creditCards: "cgt.creditcards",
   scenarios: "cgt.scenarios",
+  // Budget tab: spending categories (monthly/annual limits, essential
+  // flag), categorisation rules, and imported statement rows.
+  budgetCategories: "cgt.budgetcategories",
+  budgetRules: "cgt.budgetrules",
+  spendTxns: "cgt.spendtxns",
 };
 // Present in any real dataset — used to detect "localStorage was emptied".
 const SENTINEL_LS_KEYS = ["cgt.txns", "cgt.valuations", "cgt.pensioncf"];
@@ -65,7 +70,7 @@ const SENTINEL_LS_KEYS = ["cgt.txns", "cgt.valuations", "cgt.pensioncf"];
 // than on every keystroke, and if a write ever throws (quota exceeded) it
 // stops retrying for that key rather than paying a repeated failed
 // JSON.stringify on every subsequent change — IndexedDB already has it.
-export const LARGE_KEYS = ["txns", "valuations", "netWorthSnapshots", "incomeEntries", "eriEntries"];
+export const LARGE_KEYS = ["txns", "valuations", "netWorthSnapshots", "incomeEntries", "eriEntries", "spendTxns"];
 
 // Rough "how much data does this hold" comparator. Array length is the
 // natural proxy for these append-only collections; falls back to a JSON

@@ -47,6 +47,7 @@ const PrivateTab = lazy(() => import("./features/PrivateTab.jsx"));
 const RsuTab = lazy(() => import("./features/RsuTab.jsx"));
 const SyncTab = lazy(() => import("./features/SyncTab.jsx"));
 const DeferredCashTab = lazy(() => import("./features/DeferredCashTab.jsx"));
+const BudgetTab = lazy(() => import("./features/BudgetTab.jsx"));
 
 /* ============================== app =================================== */
 export default function App() {
@@ -652,6 +653,7 @@ export default function App() {
               }} />}
               {tab === "allowances" && <AllowancesTab eriTxns={eriTxns} taxableDisposals={taxableDisposals} />}
               {tab === "income" && <IncomeTab {...{ eriTxns, incomeByYear, incomeAllWrappers, txns: giaTxns, incomeCalendar }} />}
+              {tab === "budget" && <BudgetTab setTab={setTab} />}
               {tab === "holdings" && <HoldingsTab positions={wealthModel ? wealthModel.positions : []} model={wealthModel} concentration={exposureConcentration} aiSnapshot={aiSnapshot} />}
               {tab === "property" && <PropertyTab />}
               {tab === "private" && <PrivateTab />}
