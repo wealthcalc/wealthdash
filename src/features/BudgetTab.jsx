@@ -1,8 +1,8 @@
 import React, { useState, useMemo, useRef } from "react";
 import { Plus, Trash2, Upload, Check, AlertTriangle, Wand2 } from "lucide-react";
 import { ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip } from "recharts";
-import { monthlyBudget, annualBudget, spendByMonth, trailing12 } from "../core/budget.mjs";
-import { categoriseAll, learnMerchants, uncategorisedGroups, suggestRule } from "../core/categorise.mjs";
+import { monthlyBudget, annualBudget, spendByMonth, trailing12, mergedSpend } from "../core/budget.mjs";
+import { uncategorisedGroups, suggestRule } from "../core/categorise.mjs";
 import { parseStatement, dedupeStatement, PROFILES } from "../core/statement-import.mjs";
 import { expandRecurring, statementCoverage, annualCommitment, FREQUENCIES } from "../core/recurring.mjs";
 import { store, gbp, gbp0, SubTabs, uid, todayISO, Field, Empty, Stat, useSort, sortRows, SortTh } from "../ui/shared.jsx";
@@ -61,25 +61,26 @@ export default function BudgetTab({ setTab }) {
   // Derived categorisation — see header. Merchant memory is learned from
   // the user's own manual decisions on every render, so one correction
   // teaches every future row without a save step.
-  const merchantMap = useMemo(() => learnMerchants(spendTxns), [spendTxns]);
-  // Recurring commitments become dated rows on read (never persisted, see
-  // core/recurring.mjs) and are suppressed for any month the matching
-  // account already has imported statement rows for — so a direct debit
-  // can't be counted twice. Window: two years back, one forward.
+  // The one spend list every view uses — imported/manual rows with
+  // categories resolved, plus recurring commitments expanded into the
+  // months no statement covers (core/budget.mjs's mergedSpend). Home and
+  // Plan call the same function, so the three can't disagree.
+  const txns = useMemo(
+    () => mergedSpend({ spendTxns, rules, recurring, month: todayISO().slice(0, 7) }),
+    [spendTxns, rules, recurring]
+  );
+  // The suppression detail is only needed by the Recurring sub-tab's
+  // status column, so it's computed separately rather than widening
+  // mergedSpend's return for one consumer.
   const recurringOut = useMemo(() => {
     if (!recurring?.length) return { rows: [], suppressed: [] };
-    const today = todayISO();
+    const y = +todayISO().slice(0, 4);
     return expandRecurring({
       definitions: recurring,
-      fromDate: `${+today.slice(0, 4) - 2}-01-01`,
-      toDate: `${+today.slice(0, 4) + 1}-12-31`,
+      fromDate: `${y - 2}-01-01`, toDate: `${y + 1}-12-31`,
       coverage: statementCoverage(spendTxns),
     });
   }, [recurring, spendTxns]);
-  const txns = useMemo(
-    () => [...categoriseAll(spendTxns, { rules, merchantMap }), ...recurringOut.rows],
-    [spendTxns, rules, merchantMap, recurringOut]
-  );
 
   const catById = useMemo(() => Object.fromEntries(categories.map((c) => [c.id, c])), [categories]);
   const seedStarter = () => setCategories(STARTER.map((c) => ({ id: uid(), name: c.name, monthly: c.monthly || 0, annual: c.annual || 0, essential: !!c.essential, transfer: !!c.transfer })));

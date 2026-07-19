@@ -27,8 +27,7 @@ import { effectiveCashByWrapper } from "../core/cash.mjs";
 import { deferredCashCalendar } from "../core/deferred-cash.mjs";
 import { vestingSchedule } from "../core/rsu.mjs";
 import { giltIncomeByYear } from "../core/gilt-ladder.mjs";
-import { planSpendFromBudget } from "../core/budget.mjs";
-import { categoriseAll, learnMerchants } from "../core/categorise.mjs";
+import { planSpendFromBudget, mergedSpend } from "../core/budget.mjs";
 import { store, uid, todayISO } from "../ui/shared.jsx";
 import useAppStore from "../state/appStore.js";
 
@@ -506,11 +505,13 @@ export default function PlanTab({
   const budgetCategories = useAppStore((s) => s.budgetCategories);
   const budgetRules = useAppStore((s) => s.budgetRules);
   const rawSpendTxns = useAppStore((s) => s.spendTxns);
+  const recurringExpenses = useAppStore((s) => s.recurringExpenses);
   const budgetSpend = useMemo(() => {
     if (!budgetCategories?.length || !rawSpendTxns?.length) return null;
-    const txns = categoriseAll(rawSpendTxns, { rules: budgetRules || [], merchantMap: learnMerchants(rawSpendTxns) });
-    return planSpendFromBudget({ categories: budgetCategories, txns, month: todayISO().slice(0, 7) });
-  }, [budgetCategories, budgetRules, rawSpendTxns]);
+    const month = todayISO().slice(0, 7);
+    const txns = mergedSpend({ spendTxns: rawSpendTxns, rules: budgetRules || [], recurring: recurringExpenses || [], month });
+    return planSpendFromBudget({ categories: budgetCategories, txns, month });
+  }, [budgetCategories, budgetRules, rawSpendTxns, recurringExpenses]);
   const setP = useCallback((updater) => setPlanInputs && setPlanInputs((x) => (typeof updater === "function" ? updater(x || DEFAULTS) : updater)), [setPlanInputs]);
 
   // Pull live wrapper totals (holdings + cash) from the wealth dashboard into
@@ -549,7 +550,11 @@ export default function PlanTab({
   const scenarios = useAppStore((s) => s.scenarios);
   const setScenarios = useAppStore((s) => s.setScenarios);
   React.useEffect(() => { store.set("plan.subtab", tab); }, [tab]);
-  const [panelOpen, setPanelOpen] = useState(true);
+  // Persisted, like every PanelSection inside it — collapsing the whole
+  // assumptions strip is a deliberate "I'm done tuning, show me results"
+  // gesture, and re-opening it on every visit undoes that each time.
+  const [panelOpen, setPanelOpen] = useState(() => store.get("plan.assumptionsOpen", true));
+  React.useEffect(() => { store.set("plan.assumptionsOpen", panelOpen); }, [panelOpen]);
   const [mc, setMc] = useState(null);
   const [mcB, setMcB] = useState(null);
   const [mcRunning, setMcRunning] = useState(false);

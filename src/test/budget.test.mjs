@@ -184,3 +184,34 @@ test("degenerate inputs", () => {
   assert.equal(empty.summary.totalActual, 0);
   assert.equal(annualBudget({ categories: CATS, txns: [], month: "2026-07" }).summary.essentialPct, null);
 });
+
+test("mergedSpend is the ONE spend list — statements, manual rows AND recurring", async () => {
+  const { mergedSpend } = await import("../core/budget.mjs");
+  const month = "2026-07";
+  const spendTxns = [
+    { id: "s1", date: "2026-07-04", description: "TESCO STORES 3155", amount: 82, account: "Amex" },
+    { id: "s2", date: "2026-07-06", description: "Plumber", amount: 140, manualCategoryId: "gro" },
+  ];
+  const rules = [{ id: "r", op: "contains", value: "TESCO", categoryId: "gro", enabled: true }];
+  const recurring = [
+    // HSBC is never imported, so this must appear every month.
+    { id: "m", label: "Mobile", amount: 35, frequency: "monthly", startDate: "2026-07-15", categoryId: "gro", account: "HSBC" },
+  ];
+  const merged = mergedSpend({ spendTxns, rules, recurring, month });
+
+  // rule-categorised statement row
+  assert.equal(merged.find((t) => t.id === "s1").categoryId, "gro");
+  // manual row survives
+  assert.ok(merged.some((t) => t.id === "s2"));
+  // recurring commitment is present — the omission that made the Plan
+  // tab's prefill disagree with the Budget tab's own total.
+  const rec = merged.filter((t) => t.recurringId === "m");
+  assert.ok(rec.length >= 12, `expected ~monthly rows, got ${rec.length}`);
+  assert.equal(rec[0].estimated, true);
+
+  // and the July total reflects all three
+  const m = monthlyBudget({ categories: CATS, txns: merged, month });
+  assert.equal(m.summary.totalActual, 82 + 140 + 35);
+
+  assert.throws(() => mergedSpend({ spendTxns: [] }), /month/);
+});
