@@ -152,3 +152,31 @@ test("gilt redemptions rank near matured cash and rise as the date nears", () =>
   const tye = buildActionQueue({ today: TODAY, taxYearEndActive: true, giltRedemptions: [{ date: "2026-07-20", label: "TN26", amount: 1 }] });
   assert.equal(tye.length, 1);
 });
+
+test("backup nudge: only with data, only when sync is off; never-backed-up outranks old", () => {
+  assert.deepEqual(buildActionQueue({ today: TODAY, hasData: false, backupAgeDays: null }), []);
+  assert.deepEqual(buildActionQueue({ today: TODAY, hasData: true, syncEnabled: true, backupAgeDays: null }), []);
+  assert.deepEqual(buildActionQueue({ today: TODAY, hasData: true, backupAgeDays: 10 }), []); // fresh enough
+  const never = buildActionQueue({ today: TODAY, hasData: true, backupAgeDays: null });
+  const old = buildActionQueue({ today: TODAY, hasData: true, backupAgeDays: 60 });
+  assert.equal(never[0].id, "backup-stale");
+  assert.equal(never[0].tab, "sync");
+  assert.ok(never[0].score > old[0].score, "never > merely old");
+});
+
+test("import staleness: per-source, 45-day threshold, low-scored housekeeping", () => {
+  const q = buildActionQueue({
+    today: TODAY, hasData: true, backupAgeDays: 5,
+    importAges: [{ source: "Fidelity UK", days: 90 }, { source: "IBKR", days: 10 }],
+  });
+  assert.equal(q.length, 1);
+  assert.equal(q[0].id, "import-stale");
+  assert.equal(q[0].source, "Fidelity UK");
+  // housekeeping stays below a real money item
+  const withMoney = buildActionQueue({
+    today: TODAY, hasData: true, backupAgeDays: 5,
+    importAges: [{ source: "Fidelity UK", days: 90 }],
+    cashMaturing: [{ label: "NS&I", balance: 20000, maturityDate: "2026-07-20", matured: false }],
+  });
+  assert.equal(withMoney[0].id, "cash-maturing");
+});

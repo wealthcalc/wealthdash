@@ -12,6 +12,7 @@ import {
   store, gbp0, num, pct, WrapperChip, AllocBar, KIND_LABEL, RateCell, Empty, todayISO,
 } from "../ui/shared.jsx";
 import { refreshAllPrices } from "../ui/priceRefresh.js";
+import { getSyncConfig } from "../state/sync.js";
 import useAppStore from "../state/appStore.js";
 
 // Labels for core/tax-year-end.mjs's checklist item ids — kept in the UI
@@ -265,6 +266,8 @@ const ACTION_LABELS = {
   "allocation-drift": (i) => ({ head: gbp0(i.amount), rest: ` — ${i.overweight ? "overweight" : "underweight"} ${i.bucket} (${i.driftPct > 0 ? "+" : ""}${i.driftPct.toFixed(1)}pp vs target). Rebalance tax-aware, not market-timed.` }),
   "concentration": (i) => ({ head: gbp0(i.amount), rest: ` — ${i.weightPct.toFixed(0)}% of invested wealth is ${i.ticker} alone (RSU shares included). One company shouldn't be able to ruin the plan.` }),
   "gilt-redemption": (i) => ({ head: gbp0(i.amount), rest: ` — ${i.label} matures ${i.days === 0 ? "today" : `in ${i.days} days`} (${i.date}); the principal lands as cash earning nothing until you redeploy it.` }),
+  "backup-stale": (i) => ({ head: "Backup", rest: i.backupAgeDays == null ? " — never downloaded, and sync is off. One browser cleanup could erase everything; download a backup or enable encrypted sync." : ` — last downloaded ${i.backupAgeDays} days ago and sync is off. Grab a fresh one, or enable sync and never think about this again.` }),
+  "import-stale": (i) => ({ head: i.source, rest: ` — last imported ${i.days} days ago; the ledger is drifting from your broker. Re-import to catch up.` }),
 };
 // Items that land on a CGT sub-tab pre-select it.
 const ACTION_SUBTAB = { "aea-harvest": "planning", "allocation-drift": "rebalance" };
@@ -438,6 +441,17 @@ export default function HomeTab({
     driftRows: drift.rows, targetsSumTo100: drift.targetsSumTo100,
     mortgagesSoon, cashMaturing,
     concentrationAlerts: concentration?.alerts ?? [],
+    // Data-safety nudges: backup age (null = never), sync state, and
+    // per-broker import freshness — all device-local planning aids.
+    backupAgeDays: (() => {
+      const at = store.get("cgt.lastBackupAt", null);
+      return at ? Math.floor((new Date(todayISO()) - new Date(at)) / 86400000) : null;
+    })(),
+    syncEnabled: !!getSyncConfig().enabled,
+    hasData: txns.length > 0,
+    importAges: Object.entries(store.get("cgt.lastImportAt", {})).map(([source, at]) => ({
+      source, days: Math.floor((new Date(todayISO()) - new Date(at)) / 86400000),
+    })),
     // Gilt redemptions inside 60 days, straight from the income calendar
     // the shell already builds (source "gilt-redemption").
     giltRedemptions: incomeCalendar.filter((e) => {

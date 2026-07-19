@@ -148,6 +148,10 @@ function ImportTab({ setTab, recomputeProviderCost }) {
     const dupSkipped = dedTxns.skipped + dedIncome.skipped;
     setTxns((p) => [...p, ...dedTxns.rows]);
     if (dedIncome.rows.length) setIncomeEntries((p) => [...p, ...dedIncome.rows]);
+    // Feed Home's import-freshness nudge: remember when each broker feed
+    // last delivered rows (per-device planning aid, not portfolio data).
+    const importSource = trades[0]?.source || income[0]?.source || "IBKR";
+    store.set("cgt.lastImportAt", { ...store.get("cgt.lastImportAt", {}), [importSource]: new Date().toISOString().slice(0, 10) });
     setImporting(false);
     const parts = [`Imported ${dedTxns.rows.length} trades and ${dedIncome.rows.length} income rows.`];
     if (dupSkipped) parts.push(`${dupSkipped} duplicate row(s) already in your ledger — skipped.`);

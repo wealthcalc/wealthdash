@@ -433,6 +433,7 @@ export default function App() {
     // silently fall out of backups). See the module header for policy.
     const backup = buildBackup(useAppStore.getState());
     const text = JSON.stringify(backup, null, 2);
+    lsStore.set("cgt.lastBackupAt", todayISO()); // feeds Home's backup-age nudge
     let downloaded = false;
     try {
       const blob = new Blob([text], { type: "application/json" });
