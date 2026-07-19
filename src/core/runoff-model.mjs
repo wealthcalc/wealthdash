@@ -93,9 +93,15 @@ export function buildRunoff({
       cashBal += received - used;
       return used;
     };
+    const cashBefore = cashBal;
     const fromDeferred = takeIncome(+deferredByYear[year] || 0);
     const fromRsu = takeIncome(+rsuByYear[year] || 0);
     const fromDividends = takeIncome(+annualDividends || 0);
+    // Surplus income banked into the float this year — surfaced per-row so
+    // a RISING "cash left" column is explainable at a glance rather than
+    // looking like a bug (income received beyond the year's need doesn't
+    // vanish; once paid out it IS cash).
+    const surplusToCash = cashBal - cashBefore;
 
     // 6. whatever's left comes out of the portfolio
     const fromPortfolio = need;
@@ -104,7 +110,7 @@ export function buildRunoff({
       year, expense: r2(expense),
       fromGilts: r2(fromGilts), fromCash: r2(fromCash), fromDeferred: r2(fromDeferred),
       fromRsu: r2(fromRsu), fromDividends: r2(fromDividends), fromPortfolio: r2(fromPortfolio),
-      giltBankEnd: r2(giltBank), cashEnd: r2(cashBal),
+      surplusToCash: r2(surplusToCash), giltBankEnd: r2(giltBank), cashEnd: r2(cashBal),
       covered: fromPortfolio <= 0.005,
     });
   }

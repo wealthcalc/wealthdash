@@ -1669,7 +1669,7 @@ function RunoffTab({ p, giltCashflows = [], forwardDividends = 0 }) {
   const deflate = (row, v) => realTerms ? v / Math.pow(1 + effInflation(p) / 100, row.year - startYear) : v;
   const displayRows = runoff.rows.map((r) => {
     const d = { ...r };
-    for (const k of ["expense", "fromGilts", "fromCash", "fromDeferred", "fromRsu", "fromDividends", "fromPortfolio", "giltBankEnd", "cashEnd"]) d[k] = deflate(r, r[k]);
+    for (const k of ["expense", "fromGilts", "fromCash", "fromDeferred", "fromRsu", "fromDividends", "fromPortfolio", "surplusToCash", "giltBankEnd", "cashEnd"]) d[k] = deflate(r, r[k]);
     return d;
   });
   const SOURCES = [
@@ -1735,7 +1735,7 @@ function RunoffTab({ p, giltCashflows = [], forwardDividends = 0 }) {
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
                 <thead>
                   <tr style={{ background: T.lineSoft }}>
-                    {["Year", "Spend", ...SOURCES.map(([, l]) => l), "Gilt bank", "Cash left"].map((h, i) => (
+                    {["Year", "Spend", ...SOURCES.map(([, l]) => l), "Surplus → cash", "Gilt bank", "Cash left"].map((h, i) => (
                       <th key={h} style={{ textAlign: i === 0 ? "left" : "right", padding: "9px 10px", fontSize: 10.5, letterSpacing: ".04em", textTransform: "uppercase", color: T.muted, fontWeight: 700, whiteSpace: "nowrap" }}>{h}</th>
                     ))}
                   </tr>
@@ -1750,6 +1750,7 @@ function RunoffTab({ p, giltCashflows = [], forwardDividends = 0 }) {
                           {r[k] > 0 ? gbpK(r[k]) : "—"}
                         </td>
                       ))}
+                      <td style={{ padding: "7px 10px", textAlign: "right", fontFamily: MONO, color: r.surplusToCash > 0 ? T.green : T.muted }}>{r.surplusToCash > 0 ? `+${gbpK(r.surplusToCash)}` : "—"}</td>
                       <td style={{ padding: "7px 10px", textAlign: "right", fontFamily: MONO, color: r.giltBankEnd > 0 ? T.blue : T.muted }}>{r.giltBankEnd > 0 ? gbpK(r.giltBankEnd) : "—"}</td>
                       <td style={{ padding: "7px 10px", textAlign: "right", fontFamily: MONO, color: T.ink2 }}>{gbpK(r.cashEnd)}</td>
                     </tr>
@@ -1762,6 +1763,7 @@ function RunoffTab({ p, giltCashflows = [], forwardDividends = 0 }) {
           <div style={{ marginTop: 12 }}>
             <Note tone="blue">
               Nominal £ throughout ({effInflation(p)}%/yr spend uprating); the gilt bank and cash float earn nothing here — crediting interest would quietly stretch the runway.
+              "Cash left" can RISE: income received beyond a year's need (dividends, deferred-cash tranches, RSU vests once gilts have covered the spend) is banked into the float — the "Surplus → cash" column shows each year's top-up. Gilt surpluses stay in their own bank so the ladder's contribution stays auditable.
               RSUs assume SELL-ON-VEST at today's price ({inputs.rsuUnpriced > 0 ? `${inputs.rsuUnpriced} unpriced vest(s) excluded — set the ticker's price` : "no price forecasting"}); vested-and-held shares are already inside the portfolio, so they're deliberately not a source here.
               Dividends are held flat at {gbpK(+forwardDividends || 0)}/yr — no growth, and no shrinkage as later sales reduce the portfolio: that circularity is disclosed rather than half-modelled.
               Deferred cash and gilt cashflows are contractual schedules from their own tabs.

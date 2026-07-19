@@ -46,8 +46,26 @@ test("surplus deferred/RSU income beyond the year's need becomes cash, not lost"
   });
   assert.equal(rows[0].fromDeferred, 40000);
   assert.equal(rows[0].cashEnd, 60000);   // surplus banked as cash
+  assert.equal(rows[0].surplusToCash, 60000); // and the top-up is surfaced per-row
   assert.equal(rows[1].fromCash, 40000);  // and funds year 2
   assert.equal(rows[1].fromPortfolio, 0);
+  assert.equal(rows[1].surplusToCash, 0);
+});
+
+test("the rising-cash case the UI must explain: gilts cover the spend, dividends pile into cash", () => {
+  // This is the real-portfolio shape behind the question "why is cash
+  // going UP?" — the ladder alone covers early years, so the whole
+  // dividend stream is surplus and banks into the float untouched.
+  const { rows } = buildRunoff({
+    ...BASE, years: 2,
+    giltNominalByYear: { 2027: 40000, 2028: 40000 },
+    cashStart: 120000, annualDividends: 15000,
+  });
+  assert.equal(rows[0].fromCash, 0);
+  assert.equal(rows[0].fromDividends, 0);      // nothing needed from them
+  assert.equal(rows[0].surplusToCash, 15000);  // so they all bank
+  assert.equal(rows[0].cashEnd, 135000);
+  assert.equal(rows[1].cashEnd, 150000);
 });
 
 test("expense uprates with inflation; dividends stay flat (the disclosed assumption)", () => {
