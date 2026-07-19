@@ -27,6 +27,8 @@ import { effectiveCashByWrapper } from "../core/cash.mjs";
 import { deferredCashCalendar } from "../core/deferred-cash.mjs";
 import { vestingSchedule } from "../core/rsu.mjs";
 import { giltIncomeByYear } from "../core/gilt-ladder.mjs";
+import { planSpendFromBudget } from "../core/budget.mjs";
+import { categoriseAll, learnMerchants } from "../core/categorise.mjs";
 import { store, uid, todayISO } from "../ui/shared.jsx";
 import useAppStore from "../state/appStore.js";
 
@@ -495,6 +497,20 @@ export default function PlanTab({
   // throwing, same defensive pattern as AllowancesTab's setOverrides.
   const p = planInputs || DEFAULTS;
   const set = useCallback((k, v) => setPlanInputs && setPlanInputs((x) => ({ ...(x || DEFAULTS), [k]: v })), [setPlanInputs]);
+  // Budget tab actuals — trailing-12m spend and the essential share, which
+  // are the two spending numbers this whole plan rests on and which are
+  // otherwise typed in from memory. Deliberately only OFFERED (never
+  // auto-applied), and only when the underlying data is thick enough to
+  // mean something: planSpendFromBudget() returns ready:false with reasons
+  // for thin or half-categorised data. See core/budget.mjs.
+  const budgetCategories = useAppStore((s) => s.budgetCategories);
+  const budgetRules = useAppStore((s) => s.budgetRules);
+  const rawSpendTxns = useAppStore((s) => s.spendTxns);
+  const budgetSpend = useMemo(() => {
+    if (!budgetCategories?.length || !rawSpendTxns?.length) return null;
+    const txns = categoriseAll(rawSpendTxns, { rules: budgetRules || [], merchantMap: learnMerchants(rawSpendTxns) });
+    return planSpendFromBudget({ categories: budgetCategories, txns, month: todayISO().slice(0, 7) });
+  }, [budgetCategories, budgetRules, rawSpendTxns]);
   const setP = useCallback((updater) => setPlanInputs && setPlanInputs((x) => (typeof updater === "function" ? updater(x || DEFAULTS) : updater)), [setPlanInputs]);
 
   // Pull live wrapper totals (holdings + cash) from the wealth dashboard into
@@ -849,6 +865,21 @@ export default function PlanTab({
               </div>
               <Field label="Essential share of spending" value={p.essentialPct ?? 65} min={0} max={100} step={5} suffix="%"
                 onChange={(v) => set("essentialPct", v)} hint="The 'needs, not wants' part of the target — what the Income floor tab tests guaranteed income against" />
+              {budgetSpend && (
+                <div style={{ fontSize: 11.5, color: T.muted, marginTop: 6, lineHeight: 1.5 }}>
+                  {budgetSpend.ready ? (
+                    <>
+                      Your Budget tab says you actually spend <strong style={{ color: T.ink }}>{gbp(budgetSpend.annualSpend)}</strong>/yr, <strong style={{ color: T.ink }}>{Math.round(budgetSpend.essentialPct)}%</strong> of it on essentials.{" "}
+                      <button onClick={() => setP((x) => ({ ...x, targetMode: "absolute", targetAbsolute: Math.round(budgetSpend.annualSpend), essentialPct: Math.round(budgetSpend.essentialPct) }))}
+                        style={{ color: T.blue, textDecoration: "underline", textDecorationStyle: "dotted" }}>
+                        Use both as the target →
+                      </button>
+                    </>
+                  ) : (
+                    <>Budget tab actuals aren't representative yet ({budgetSpend.reasons.join("; ")}), so they're not offered as a prefill here.</>
+                  )}
+                </div>
+              )}
               {p.spendProfile === "custom" && (
                 <>
                   <Field label="Go-go until age" value={p.goGoUntil} min={p.retireAge + 1} max={90} onChange={(v) => set("goGoUntil", v)} />
@@ -1079,7 +1110,7 @@ export default function PlanTab({
 
           {/* ===== EXPENSE RUN-OFF ===== */}
           {tab === "runoff" && (
-            <RunoffTab p={p} giltCashflows={giltCashflows} forwardDividends={forwardDividends} />
+            <RunoffTab p={p} giltCashflows={giltCashflows} forwardDividends={forwardDividends} budgetSpend={budgetSpend} />
           )}
 
           {/* ===== BUY-TO-LET ===== */}
@@ -1604,7 +1635,7 @@ function FloorTab({ p, det, set, giltCashflows = [] }) {
 // deferred-cash tranches, RSU vests (sell-on-vest at today's price),
 // recurring dividends, and only then portfolio disposals. All modelling
 // assumptions are in the core module's header and echoed in the footer.
-function RunoffTab({ p, giltCashflows = [], forwardDividends = 0 }) {
+function RunoffTab({ p, giltCashflows = [], forwardDividends = 0, budgetSpend = null }) {
   const cash = useAppStore((s) => s.cash);
   const cashAccounts = useAppStore((s) => s.cashAccounts);
   const dcAwards = useAppStore((s) => s.deferredCashAwards);
@@ -1733,6 +1764,12 @@ function RunoffTab({ p, giltCashflows = [], forwardDividends = 0 }) {
               options={[{ value: "real", label: "Today's £" }, { value: "nominal", label: "Nominal £" }]} />
           </div>
         </div>
+        {budgetSpend?.ready && Math.round(budgetSpend.annualSpend) !== Math.round(+expense || 0) && (
+          <p style={{ margin: "10px 0 0", fontSize: 11.5, color: T.muted }}>
+            Your Budget tab's trailing-12-month actual spend is <strong style={{ color: T.ink }}>{gbp(budgetSpend.annualSpend)}</strong>.{" "}
+            <button onClick={() => setExpense(Math.round(budgetSpend.annualSpend))} style={{ color: T.blue, textDecoration: "underline", textDecorationStyle: "dotted" }}>Use it here →</button>
+          </p>
+        )}
       </Card>
 
       {s && (

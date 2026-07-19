@@ -21,6 +21,7 @@ export const SCREENS = [
   { key: "networth", label: "Net worth", icon: PieChart, leaves: ["wealth", "property"] },
   { key: "portfolio", label: "Portfolio", icon: Wallet, leaves: ["holdings", "returns", "gilts"] },
   { key: "income", label: "Income", icon: PoundSterling, leaves: ["income"] },
+  { key: "budget", label: "Budget", icon: Receipt, leaves: ["budget"] },
   { key: "pension", label: "Pensions", icon: PiggyBank, leaves: ["pension"] },
   { key: "other", label: "Other assets", icon: Building2, leaves: ["private", "rsu", "deferredcash"] },
   { key: "tax", label: "Tax", icon: TableProperties, leaves: ["cgt", "allowances"] },
@@ -32,7 +33,7 @@ export const LEAF_LABELS = {
   home: "Home", plan: "Plan",
   wealth: "Balance sheet", property: "Property & debts",
   holdings: "Holdings", returns: "Returns", gilts: "Gilts",
-  income: "Income", pension: "Pension & LISA",
+  income: "Income", budget: "Budget", pension: "Pension & LISA",
   private: "Private investments", rsu: "RSUs", deferredcash: "Deferred cash",
   cgt: "Capital gains", allowances: "Allowances",
   ledger: "Transactions", import: "Import", sync: "Backup & sync",
@@ -44,7 +45,7 @@ export const screenOf = (leaf) => SCREENS.find((s) => s.leaves.includes(leaf)) |
 // nine items need a taxonomy.
 const SECTIONS = [
   { title: "Overview", screens: ["home", "plan"] },
-  { title: "Wealth", screens: ["networth", "portfolio", "income", "pension", "other"] },
+  { title: "Wealth", screens: ["networth", "portfolio", "income", "budget", "pension", "other"] },
   { title: "Tax & data", screens: ["tax", "data"] },
 ];
 
