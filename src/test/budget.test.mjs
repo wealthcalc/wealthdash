@@ -110,6 +110,36 @@ test("spendByMonth: annual-only spend broken out so a spike is explainable", () 
   assert.equal(rows[0].limit, 800);            // monthly limits only, not 800+720
 });
 
+test("spreadAnnual smooths the lumpy year — and moves the budget line with it", () => {
+  const months = ["2026-06", "2026-07"];
+  const txns = [
+    { id: 1, date: "2026-06-02", amount: 500, categoryId: "gro" },  // monthly, essential
+    { id: 2, date: "2026-07-11", amount: 720, categoryId: "ins" },  // annual-only, essential
+    { id: 3, date: "2026-07-03", amount: 550, categoryId: "gro" },
+  ];
+  const cash = spendByMonth({ categories: CATS, txns, months });
+  const smooth = spendByMonth({ categories: CATS, txns, months, spreadAnnual: true });
+
+  // cash view: the £720 lands in July and towers
+  assert.equal(cash[0].actual, 500);
+  assert.equal(cash[1].actual, 1270);
+  assert.equal(cash[0].limit, 800);   // monthly limits only
+
+  // smoothed: 720 split across the 2-month window, run-rate legible
+  assert.equal(smooth[0].actual, 860);   // 500 + 360
+  assert.equal(smooth[1].actual, 910);   // 550 + 360
+  assert.equal(smooth[0].annualOnlyActual, 360);
+  // essential/discretionary keep their split (insurance is essential)
+  assert.equal(smooth[0].essential, 860);
+  assert.equal(smooth[0].discretionary, 0);
+  // and the LIMIT smooths too, or the comparison would be inconsistent
+  assert.equal(smooth[0].limit, 800 + 720 / 12);
+
+  // conservation: the same total money either way
+  const sum = (rows) => rows.reduce((s, r) => s + r.actual, 0);
+  assert.ok(Math.abs(sum(cash) - sum(smooth)) < 1e-9);
+});
+
 test("planSpendFromBudget refuses to be confident on thin or messy data", () => {
   const thin = planSpendFromBudget({
     categories: CATS, month: "2026-07",

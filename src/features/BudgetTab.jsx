@@ -113,7 +113,12 @@ function Overview({ categories, txns, month, setMonth, setSub }) {
   const [view, setView] = useState("month");
   const m = useMemo(() => monthlyBudget({ categories, txns, month }), [categories, txns, month]);
   const a = useMemo(() => annualBudget({ categories, txns, month }), [categories, txns, month]);
-  const trend = useMemo(() => spendByMonth({ categories, txns, months: trailing12(month) }), [categories, txns, month]);
+  const [spreadAnnual, setSpreadAnnual] = useState(() => store.get("cgt.budget.spread", true));
+  React.useEffect(() => store.set("cgt.budget.spread", spreadAnnual), [spreadAnnual]);
+  const trend = useMemo(
+    () => spendByMonth({ categories, txns, months: trailing12(month), spreadAnnual }),
+    [categories, txns, month, spreadAnnual]
+  );
   const cur = view === "month" ? m : a;
   const s = cur.summary;
 
@@ -155,7 +160,18 @@ function Overview({ categories, txns, month, setMonth, setSub }) {
       )}
 
       <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3">
-        <div className="text-xs font-medium text-[var(--muted)] mb-1.5">Spend by month vs monthly budget</div>
+        <div className="flex items-center justify-between gap-3 flex-wrap mb-1.5">
+          <div className="text-xs font-medium text-[var(--muted)]">Spend by month vs budget</div>
+          <div className="flex gap-1.5">
+            {[["spread", "Annual costs spread"], ["cash", "As actually paid"]].map(([k, label]) => (
+              <button key={k} onClick={() => setSpreadAnnual(k === "spread")}
+                className={"text-xs font-medium px-2.5 py-1 rounded-full border transition " +
+                  ((spreadAnnual ? "spread" : "cash") === k ? "border-[var(--accent)] bg-[var(--accent)] text-[var(--accent-fg)]" : "border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)]")}>
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
         <ResponsiveContainer width="100%" height={240}>
           <ComposedChart data={trend} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
             <CartesianGrid stroke="var(--border)" vertical={false} />
@@ -163,13 +179,27 @@ function Overview({ categories, txns, month, setMonth, setSub }) {
             <YAxis tickFormatter={gbp0} tick={{ fontSize: 11, fill: "var(--muted)" }} tickLine={false} axisLine={false} width={60} />
             <Tooltip contentStyle={{ background: "var(--panel)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 12 }}
               formatter={(v, n) => [gbp(v), { essential: "Essential", discretionary: "Discretionary", limit: "Monthly budget", uncategorised: "Uncategorised" }[n] || n]} />
-            <Bar dataKey="essential" stackId="s" fill="var(--accent)" name="essential" />
+            <Bar dataKey="essential" stackId="s" fill="var(--accent)" name="essential" radius={[0, 0, 0, 0]} />
             <Bar dataKey="discretionary" stackId="s" fill="var(--m-pool)" name="discretionary" />
-            <Bar dataKey="uncategorised" stackId="s" fill="var(--muted)" fillOpacity={0.5} name="uncategorised" />
+            <Bar dataKey="uncategorised" stackId="s" fill="var(--muted)" fillOpacity={0.5} name="uncategorised" radius={[3, 3, 0, 0]} />
             <Line type="stepAfter" dataKey="limit" stroke="var(--fg)" strokeWidth={1.5} strokeDasharray="5 4" dot={false} name="limit" />
           </ComposedChart>
         </ResponsiveContainer>
-        <p className="text-xs text-[var(--muted)] mt-1.5">The budget line is MONTHLY limits only — annual categories (insurance, holidays) aren't spread across months, so the month they land in will overshoot the line by design rather than by overspending.</p>
+        <div className="flex flex-wrap gap-3 mt-2">
+          {[["var(--accent)", "Essential"], ["var(--m-pool)", "Discretionary"], ["var(--muted)", "Uncategorised"]].map(([c, t]) => (
+            <span key={t} className="inline-flex items-center gap-1.5 text-xs text-[var(--muted)]">
+              <span className="w-2 h-2 rounded-full inline-block" style={{ background: c }} />{t}
+            </span>
+          ))}
+          <span className="inline-flex items-center gap-1.5 text-xs text-[var(--muted)]">
+            <span className="inline-block" style={{ width: 12, borderTop: "2px dashed var(--fg)" }} />Budget
+          </span>
+        </div>
+        <p className="text-xs text-[var(--muted)] mt-1.5">
+          {spreadAnnual
+            ? "Annual costs (insurance, holidays) are averaged across the 12 months so the underlying run-rate is readable — and the budget line includes annual budgets ÷ 12 to match. The money didn't actually leave evenly: switch to \"As actually paid\" for the cash-flow truth."
+            : "Money is shown in the month it actually left your account, so an annual bill towers over its neighbours. The budget line is monthly limits only — that spike is by design, not an overspend."}
+        </p>
       </div>
 
       <div className="rounded-xl border border-[var(--border)] overflow-x-auto">
