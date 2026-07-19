@@ -89,6 +89,20 @@ export async function decryptState(envelope, passphrase) {
 // Last-writer-wins decision, pure and tested: apply the remote copy only
 // when it's genuinely newer than the last write THIS device has seen.
 // Equal timestamps (same write echoed back) and older remotes are no-ops.
+// Stable content fingerprint of the plaintext state, used to skip pushing
+// data the server already has. It must be computed on the PLAINTEXT: every
+// encryptState() call draws a fresh random salt and IV, so two encryptions
+// of identical data produce completely different ciphertext and comparing
+// envelopes would never detect "nothing changed".
+// Key order is normalised so a re-serialisation with different insertion
+// order isn't mistaken for a real edit.
+export async function stateFingerprint(state, cryptoImpl = globalThis.crypto) {
+  const keys = Object.keys(state || {}).sort();
+  const canonical = JSON.stringify(keys.map((k) => [k, state[k]]));
+  const digest = await cryptoImpl.subtle.digest("SHA-256", enc.encode(canonical));
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 export function shouldApplyRemote(localSavedAt, remoteSavedAt) {
   if (!remoteSavedAt) return false;
   if (!localSavedAt) return true;

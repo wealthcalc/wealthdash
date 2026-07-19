@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  encryptState, decryptState, randomSyncId, isValidSyncId, shouldApplyRemote,
+  encryptState, decryptState, randomSyncId, isValidSyncId, shouldApplyRemote, stateFingerprint,
 } from "../core/sync-crypto.mjs";
 
 const STATE = { "cgt.txns": [{ id: "1", ticker: "VWRL", gbpAmount: 9000 }], "cgt.income": 100000 };
@@ -60,4 +60,30 @@ test("last-writer-wins decision", () => {
   assert.equal(shouldApplyRemote("2026-07-10T10:00:00Z", "2026-07-10T10:00:00Z"), false); // own echo
   assert.equal(shouldApplyRemote("2026-07-10T10:00:00Z", "2026-07-10T11:00:00Z"), true);  // remote newer
   assert.equal(shouldApplyRemote("2026-07-10T11:00:00Z", "2026-07-10T10:00:00Z"), false); // remote older
+});
+
+/* ---------------- content fingerprint (Blob-operation budget) ---------- */
+
+test("stateFingerprint: same content same hash, regardless of key order", async () => {
+  const a = { "cgt.txns": [{ id: 1, t: "VWRL" }], "cgt.cash": { GIA: 500 } };
+  const b = { "cgt.cash": { GIA: 500 }, "cgt.txns": [{ id: 1, t: "VWRL" }] };
+  assert.equal(await stateFingerprint(a), await stateFingerprint(b));
+});
+
+test("stateFingerprint: any real change changes the hash", async () => {
+  const base = { "cgt.txns": [{ id: 1, qty: 10 }] };
+  const h = await stateFingerprint(base);
+  assert.notEqual(h, await stateFingerprint({ "cgt.txns": [{ id: 1, qty: 11 }] }));
+  assert.notEqual(h, await stateFingerprint({ "cgt.txns": [{ id: 1, qty: 10 }], "cgt.cash": {} }));
+  assert.notEqual(h, await stateFingerprint({}));
+});
+
+test("stateFingerprint must read the PLAINTEXT — ciphertext can't detect 'unchanged'", async () => {
+  // Two encryptions of identical data differ completely (fresh salt+IV),
+  // which is why the skip-unchanged check fingerprints the plaintext.
+  const state = { "cgt.txns": [{ id: 1 }] };
+  const e1 = await encryptState(state, "correct horse battery", { savedAt: "2026-07-19T10:00:00Z" });
+  const e2 = await encryptState(state, "correct horse battery", { savedAt: "2026-07-19T10:00:00Z" });
+  assert.notEqual(e1.ct, e2.ct);
+  assert.equal(await stateFingerprint(state), await stateFingerprint(state));
 });

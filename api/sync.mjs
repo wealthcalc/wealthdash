@@ -73,16 +73,26 @@ export default async function handler(req, res) {
       const savedAt = envelope.savedAt || new Date().toISOString();
       const opts = { access: "public", addRandomSuffix: false, contentType: "application/json", allowOverwrite: true };
       await put(`${prefix}latest.json`, body, opts);
-      await put(`${prefix}v-${savedAt.replace(/[:.]/g, "-")}.json`, body, opts);
 
-      // Prune history beyond KEEP_VERSIONS (latest.json excluded by prefix).
-      const { blobs } = await list({ prefix: `${prefix}v-`, limit: 1000 });
-      const stale = blobs
-        .sort((a, b) => (a.pathname < b.pathname ? -1 : 1)) // ISO order = time order
-        .slice(0, Math.max(0, blobs.length - KEEP_VERSIONS));
-      if (stale.length) await del(stale.map((b) => b.url));
+      // Version history + pruning are the expensive part (put + list + del
+      // are all billed Advanced Operations), so they run only when the
+      // client asks for a restore point — once per day, see the budget
+      // note in state/sync.js. Older clients omit the flag; defaulting to
+      // TRUE keeps their history behaviour identical rather than silently
+      // dropping restore points for anyone on a stale tab.
+      const withVersion = req.body?.withVersion !== false;
+      let versions = null;
+      if (withVersion) {
+        await put(`${prefix}v-${savedAt.replace(/[:.]/g, "-")}.json`, body, opts);
+        const { blobs } = await list({ prefix: `${prefix}v-`, limit: 1000 });
+        const stale = blobs
+          .sort((a, b) => (a.pathname < b.pathname ? -1 : 1)) // ISO order = time order
+          .slice(0, Math.max(0, blobs.length - KEEP_VERSIONS));
+        if (stale.length) await del(stale.map((b) => b.url));
+        versions = Math.min(blobs.length, KEEP_VERSIONS);
+      }
 
-      res.status(200).json({ ok: true, savedAt, versions: Math.min(blobs.length, KEEP_VERSIONS) });
+      res.status(200).json({ ok: true, savedAt, versions, wroteVersion: withVersion });
       return;
     }
 
