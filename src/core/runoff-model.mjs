@@ -118,6 +118,12 @@ export function buildRunoff({
       // the total liquid float the year closes with.
       giltIn: r2(giltThisYear), deferredIn: r2(+deferredByYear[year] || 0),
       rsuIn: r2(+rsuByYear[year] || 0), divIn: r2(+annualDividends || 0),
+      totalIn: r2(giltThisYear + (+deferredByYear[year] || 0) + (+rsuByYear[year] || 0) + (+annualDividends || 0)),
+      // Net cash flow BEFORE any forced selling: positive years add to the
+      // float, negative years draw it down. This is the number the
+      // waterfall's `from*` columns obscure — a year can look "fully
+      // funded" while quietly consuming £40k of accumulated float.
+      net: r2(giltThisYear + (+deferredByYear[year] || 0) + (+rsuByYear[year] || 0) + (+annualDividends || 0) - expense),
       balanceEnd: r2(cashBal + giltBank),
       covered: fromPortfolio <= 0.005,
     });

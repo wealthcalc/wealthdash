@@ -1720,7 +1720,7 @@ function RunoffTab({ p, giltCashflows = [], forwardDividends = 0, budgetSpend = 
   const deflate = (row, v) => realTerms ? v / Math.pow(1 + effInflation(p) / 100, row.year - startYear) : v;
   const displayRows = runoff.rows.map((r) => {
     const d = { ...r };
-    for (const k of ["expense", "fromGilts", "fromCash", "fromDeferred", "fromRsu", "fromDividends", "fromPortfolio", "surplusToCash", "giltBankEnd", "cashEnd", "giltIn", "deferredIn", "rsuIn", "divIn", "balanceEnd"]) d[k] = deflate(r, r[k]);
+    for (const k of ["expense", "fromGilts", "fromCash", "fromDeferred", "fromRsu", "fromDividends", "fromPortfolio", "surplusToCash", "giltBankEnd", "cashEnd", "giltIn", "deferredIn", "rsuIn", "divIn", "totalIn", "net", "balanceEnd"]) d[k] = deflate(r, r[k]);
     d.expenseNeg = -d.expense; // cash-flow view: spend as a negative bar
     return d;
   });
@@ -1784,10 +1784,10 @@ function RunoffTab({ p, giltCashflows = [], forwardDividends = 0, budgetSpend = 
           <Card style={{ marginBottom: 14 }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap", marginBottom: 8 }}>
               <div style={{ fontSize: 13, fontWeight: 600, color: T.ink }}>
-                {chartView === "flow" ? "Cash flow — money in vs spend" : "What funds each year"} — {realTerms ? "today's £" : "nominal £"}
+                {chartView === "flow" ? "Cash flow — what arrives vs what you spend" : "Funding waterfall — what covers each year"} — {realTerms ? "today's £" : "nominal £"}
               </div>
               <Segmented value={chartView} onChange={setChartView} accent={T.blue}
-                options={[{ value: "flow", label: "Cash flow" }, { value: "src", label: "By source" }]} />
+                options={[{ value: "flow", label: "Cash flow" }, { value: "src", label: "Funding waterfall" }]} />
             </div>
             {chartView === "flow" ? (
               <>
@@ -1829,34 +1829,82 @@ function RunoffTab({ p, giltCashflows = [], forwardDividends = 0, budgetSpend = 
             )}
           </Card>
 
+          {/* The TABLE follows the same framing as the chart, because the
+              two answer different questions and mixing them is what made
+              this confusing. Cash flow = what ARRIVES each year (a
+              dividend shows up whether or not the waterfall needed it);
+              funding waterfall = what was CONSUMED to meet the spend, in
+              priority order, where a covered year legitimately reads £0
+              for every source below the one that covered it. */}
           <Card style={{ padding: 0, overflow: "hidden" }}>
             <div style={{ overflowX: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
-                <thead>
-                  <tr style={{ background: T.lineSoft }}>
-                    {["Year", "Spend", ...SOURCES.map(([, l]) => l), "Gilt bank", "Cash left"].map((h, i) => (
-                      <th key={h} style={{ textAlign: i === 0 ? "left" : "right", padding: "9px 10px", fontSize: 10.5, letterSpacing: ".04em", textTransform: "uppercase", color: T.muted, fontWeight: 700, whiteSpace: "nowrap" }}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {displayRows.map((r) => (
-                    <tr key={r.year} style={{ borderTop: `1px solid ${T.line}`, background: r.covered ? "transparent" : `color-mix(in srgb, ${T.red} 7%, transparent)` }}>
-                      <td style={{ padding: "7px 10px", fontFamily: MONO, fontWeight: 600 }}>{r.year}</td>
-                      <td style={{ padding: "7px 10px", textAlign: "right", fontFamily: MONO }}>{gbpK(r.expense)}</td>
-                      {SOURCES.map(([k, , c]) => (
-                        <td key={k} style={{ padding: "7px 10px", textAlign: "right", fontFamily: MONO, color: r[k] > 0 ? (k === "fromPortfolio" ? T.red : c) : T.muted }}>
-                          {r[k] > 0 ? gbpK(r[k]) : "—"}
-                        </td>
+              {chartView === "flow" ? (
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+                  <thead>
+                    <tr style={{ background: T.lineSoft }}>
+                      {["Year", "Gilts", "Deferred cash", "RSU vests", "Dividends", "Total in", "Spend", "Net", "Sold", "Balance end"].map((h, i) => (
+                        <th key={h} style={{ textAlign: i === 0 ? "left" : "right", padding: "9px 10px", fontSize: 10.5, letterSpacing: ".04em", textTransform: "uppercase", color: T.muted, fontWeight: 700, whiteSpace: "nowrap" }}>{h}</th>
                       ))}
-                      <td style={{ padding: "7px 10px", textAlign: "right", fontFamily: MONO, color: r.giltBankEnd > 0 ? T.blue : T.muted }}>{r.giltBankEnd > 0 ? gbpK(r.giltBankEnd) : "—"}</td>
-                      <td style={{ padding: "7px 10px", textAlign: "right", fontFamily: MONO, color: T.ink2, whiteSpace: "nowrap" }} title={r.surplusToCash > 0 ? `+${gbp(r.surplusToCash)} surplus income banked this year` : undefined}>
-                        {gbpK(r.cashEnd)}{r.surplusToCash > 0 && <span style={{ color: T.green, fontSize: 10.5, marginLeft: 4 }}>+{gbpK(r.surplusToCash)}</span>}
-                      </td>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {displayRows.map((r) => (
+                      <tr key={r.year} style={{ borderTop: `1px solid ${T.line}`, background: r.covered ? "transparent" : `color-mix(in srgb, ${T.red} 7%, transparent)` }}>
+                        <td style={{ padding: "7px 10px", fontFamily: MONO, fontWeight: 600 }}>{r.year}</td>
+                        {[["giltIn", T.blue], ["deferredIn", "#7A5C9E"], ["rsuIn", T.gold], ["divIn", T.amber]].map(([k, c]) => (
+                          <td key={k} style={{ padding: "7px 10px", textAlign: "right", fontFamily: MONO, color: r[k] > 0 ? c : T.muted }}>
+                            {r[k] > 0 ? gbpK(r[k]) : "—"}
+                          </td>
+                        ))}
+                        <td style={{ padding: "7px 10px", textAlign: "right", fontFamily: MONO, fontWeight: 600 }}>{gbpK(r.totalIn)}</td>
+                        <td style={{ padding: "7px 10px", textAlign: "right", fontFamily: MONO, color: T.ink2 }}>({gbpK(r.expense)})</td>
+                        <td style={{ padding: "7px 10px", textAlign: "right", fontFamily: MONO, fontWeight: 600, color: r.net >= 0 ? T.green : T.red }}>
+                          {r.net >= 0 ? "+" : "−"}{gbpK(Math.abs(r.net))}
+                        </td>
+                        <td style={{ padding: "7px 10px", textAlign: "right", fontFamily: MONO, color: r.fromPortfolio > 0 ? T.red : T.muted }}>
+                          {r.fromPortfolio > 0 ? gbpK(r.fromPortfolio) : "—"}
+                        </td>
+                        <td style={{ padding: "7px 10px", textAlign: "right", fontFamily: MONO, color: T.ink2 }}
+                          title={`Cash ${gbp(r.cashEnd)}${r.giltBankEnd > 0 ? ` + banked gilt proceeds ${gbp(r.giltBankEnd)}` : ""}`}>
+                          {gbpK(r.balanceEnd)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              ) : (
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+                  <thead>
+                    <tr style={{ background: T.lineSoft }}>
+                      {["Year", "Spend", ...SOURCES.map(([, l]) => l), "Gilt bank", "Cash left"].map((h, i) => (
+                        <th key={h} style={{ textAlign: i === 0 ? "left" : "right", padding: "9px 10px", fontSize: 10.5, letterSpacing: ".04em", textTransform: "uppercase", color: T.muted, fontWeight: 700, whiteSpace: "nowrap" }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {displayRows.map((r) => (
+                      <tr key={r.year} style={{ borderTop: `1px solid ${T.line}`, background: r.covered ? "transparent" : `color-mix(in srgb, ${T.red} 7%, transparent)` }}>
+                        <td style={{ padding: "7px 10px", fontFamily: MONO, fontWeight: 600 }}>{r.year}</td>
+                        <td style={{ padding: "7px 10px", textAlign: "right", fontFamily: MONO }}>{gbpK(r.expense)}</td>
+                        {SOURCES.map(([k, , c]) => (
+                          <td key={k} style={{ padding: "7px 10px", textAlign: "right", fontFamily: MONO, color: r[k] > 0 ? (k === "fromPortfolio" ? T.red : c) : T.muted }}>
+                            {r[k] > 0 ? gbpK(r[k]) : "—"}
+                          </td>
+                        ))}
+                        <td style={{ padding: "7px 10px", textAlign: "right", fontFamily: MONO, color: r.giltBankEnd > 0 ? T.blue : T.muted }}>{r.giltBankEnd > 0 ? gbpK(r.giltBankEnd) : "—"}</td>
+                        <td style={{ padding: "7px 10px", textAlign: "right", fontFamily: MONO, color: T.ink2, whiteSpace: "nowrap" }} title={r.surplusToCash > 0 ? `+${gbp(r.surplusToCash)} surplus income banked this year` : undefined}>
+                          {gbpK(r.cashEnd)}{r.surplusToCash > 0 && <span style={{ color: T.green, fontSize: 10.5, marginLeft: 4 }}>+{gbpK(r.surplusToCash)}</span>}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+            <div style={{ padding: "8px 12px", fontSize: 11.5, color: T.muted, borderTop: `1px solid ${T.line}` }}>
+              {chartView === "flow"
+                ? "What ARRIVES each year, against what you spend. A dividend or vest appears here whether or not that year needed it — surplus rolls into the balance. \"Sold\" is what had to come out of the portfolio; a shaded row is a year that needed it."
+                : "What was CONSUMED to meet each year's spend, in priority order: gilts, then cash, then deferred, vests, dividends, and only then portfolio sales. Sources below the one that covered the year read £0 by design — the money still arrived; see the Cash flow view."}
             </div>
           </Card>
 
