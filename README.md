@@ -2186,6 +2186,32 @@ it can't place; the endpoint drops any suggestion naming a category that
 doesn't exist. Requires `ANTHROPIC_API_KEY`; returns 501 with instructions
 without it, and rules/manual categorisation work regardless.
 
+**`core/recurring.mjs`** — the fixed outgoings you know without reading a
+statement: direct debits (mobile, broadband, council tax), quarterly
+service charges, annual building insurance. Each commitment generates
+dated rows so an account you never import still appears in the budget.
+
+The double-count problem is the reason this module exists rather than a
+simple form: a direct debit lives in two places at once — as a commitment
+you declared and as a statement row once imported — and counting both
+skews every budget in the same direction, silently, by exactly the amount
+you were most confident about. Two mechanisms prevent it. **Statement
+coverage wins**: each commitment names the account it leaves from, and for
+any month where that account has imported rows the estimate is suppressed,
+because the statement knows about the price rise you forgot. Estimates
+fill only the gaps — unimported months and the future. And **generated
+rows are never persisted**: they're derived on read like categorisation,
+so they can't drift from the statements or outlive their definition. Rows
+carry `estimated: true`, shown as an "est" badge, with categorisation
+edited on the definition rather than the row. `alwaysInclude` is the
+escape hatch for something genuinely absent from a statement, with the
+double-count risk handed back to the user explicitly. Dates clamp on short
+months, so a payment on the 31st lands on 28/29 February rather than
+skipping it. 10 tests.
+
+Transactions also takes **manual one-off entries** for cash spending that
+appears in no statement.
+
 **Plan link** — `planSpendFromBudget()` offers trailing-12-month actual
 spend and the essential share as prefills for the Plan tab's target income
 and the income floor's essential percentage: two numbers previously typed

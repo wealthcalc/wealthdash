@@ -131,6 +131,9 @@ const useAppStore = create((set) => {
     budgetCategories: ls.get("cgt.budgetcategories", []), setBudgetCategories: upd("budgetCategories"),
     budgetRules: ls.get("cgt.budgetrules", []), setBudgetRules: upd("budgetRules"),
     spendTxns: ls.get("cgt.spendtxns", []), setSpendTxns: upd("spendTxns"),
+    // [{id, label, amount, frequency, startDate, endDate, categoryId,
+    //   account, alwaysInclude}] — expanded to rows by core/recurring.mjs
+    recurringExpenses: ls.get("cgt.recurringexpenses", []), setRecurringExpenses: upd("recurringExpenses"),
     // NOT persisted anywhere — a session-only diagnostic. Names of LARGE_KEYS
     // that have hit localStorage's quota this session, so SyncTab can tell
     // the user their data is still safe (IndexedDB has it) instead of

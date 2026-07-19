@@ -194,7 +194,7 @@ test("BudgetTab renders its first-run state and every sub-tab is reachable", asy
   // categorise.test.mjs against the pure engines.
   const html = renderToString(React.createElement(BudgetTab, { setTab: () => {} })).replaceAll("&amp;", "&");
   assert.ok(html.includes("Start with a category set"), "no starter prompt");
-  for (const label of ["Overview", "Transactions", "Categories & rules", "Import statements"]) {
+  for (const label of ["Overview", "Transactions", "Recurring", "Categories & rules", "Import statements"]) {
     assert.ok(html.includes(label), `sub-tab missing: ${label}`);
   }
 });

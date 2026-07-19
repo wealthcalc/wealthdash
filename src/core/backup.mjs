@@ -9,6 +9,8 @@
    the same medicine to backups). backup.test.mjs fails if a new
    PERSIST_KEYS entry is missing from the TYPES table below.
 
+   v18 adds `recurringExpenses` (known fixed outgoings — core/recurring.mjs).
+
    v17 adds the Budget tab's `budgetCategories`/`budgetRules`/`spendTxns`
    (core/budget.mjs, core/categorise.mjs); older files omit them and
    restore unchanged. Note `spendTxns` holds bank/card statement rows —
@@ -33,7 +35,7 @@
    ====================================================================== */
 import { PERSIST_KEYS } from "../state/durable.js";
 
-export const BACKUP_VERSION = 17;
+export const BACKUP_VERSION = 18;
 
 export const EXPORT_EXCLUDED = ["dark", "tab", "dmoReportDate", "avKey", "ibkrToken"];
 export const RESTORE_ONLY = ["avKey", "ibkrToken"];
@@ -42,7 +44,7 @@ export const ID_ARRAYS = [
   "txns", "incomeEntries", "eriEntries", "pensionCashflows", "properties", "mortgages",
   "otherLiabilities", "cashAccounts", "privateHoldings", "privateEvents", "rsuGrants",
   "rsuEvents", "deferredCashAwards", "deferredCashVests", "creditCards", "scenarios",
-  "budgetCategories", "budgetRules", "spendTxns",
+  "budgetCategories", "budgetRules", "spendTxns", "recurringExpenses",
 ];
 // Keys merged into current state rather than replacing it.
 export const MERGE_KEYS = ["secMeta"];
@@ -57,6 +59,7 @@ const TYPES = {
   rsuEvents: "array", deferredCashAwards: "array", deferredCashVests: "array",
   creditCards: "array", scenarios: "array",
   budgetCategories: "array", budgetRules: "array", spendTxns: "array",
+  recurringExpenses: "array",
   cash: "object", prices: "object", priceMeta: "object", avMeta: "object",
   secMeta: "object", allowanceOverrides: "object", planInputs: "object",
   income: "number", carried: "number",

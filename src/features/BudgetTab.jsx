@@ -4,6 +4,7 @@ import { ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, CartesianG
 import { monthlyBudget, annualBudget, spendByMonth, trailing12 } from "../core/budget.mjs";
 import { categoriseAll, learnMerchants, uncategorisedGroups, suggestRule, normaliseMerchant } from "../core/categorise.mjs";
 import { parseStatement, dedupeStatement, PROFILES } from "../core/statement-import.mjs";
+import { expandRecurring, statementCoverage, annualCommitment, FREQUENCIES } from "../core/recurring.mjs";
 import { store, gbp, gbp0, SubTabs, uid, todayISO, Field, Empty, Stat, useSort, sortRows, SortTh } from "../ui/shared.jsx";
 import useAppStore from "../state/appStore.js";
 
@@ -46,6 +47,7 @@ export default function BudgetTab({ setTab }) {
   const categories = useAppStore((s) => s.budgetCategories), setCategories = useAppStore((s) => s.setBudgetCategories);
   const rules = useAppStore((s) => s.budgetRules), setRules = useAppStore((s) => s.setBudgetRules);
   const spendTxns = useAppStore((s) => s.spendTxns), setSpendTxns = useAppStore((s) => s.setSpendTxns);
+  const recurring = useAppStore((s) => s.recurringExpenses), setRecurring = useAppStore((s) => s.setRecurringExpenses);
 
   const [sub, setSub] = useState(() => store.get("cgt.budgetsubtab", "overview"));
   React.useEffect(() => store.set("cgt.budgetsubtab", sub), [sub]);
@@ -55,7 +57,24 @@ export default function BudgetTab({ setTab }) {
   // the user's own manual decisions on every render, so one correction
   // teaches every future row without a save step.
   const merchantMap = useMemo(() => learnMerchants(spendTxns), [spendTxns]);
-  const txns = useMemo(() => categoriseAll(spendTxns, { rules, merchantMap }), [spendTxns, rules, merchantMap]);
+  // Recurring commitments become dated rows on read (never persisted, see
+  // core/recurring.mjs) and are suppressed for any month the matching
+  // account already has imported statement rows for — so a direct debit
+  // can't be counted twice. Window: two years back, one forward.
+  const recurringOut = useMemo(() => {
+    if (!recurring?.length) return { rows: [], suppressed: [] };
+    const today = todayISO();
+    return expandRecurring({
+      definitions: recurring,
+      fromDate: `${+today.slice(0, 4) - 2}-01-01`,
+      toDate: `${+today.slice(0, 4) + 1}-12-31`,
+      coverage: statementCoverage(spendTxns),
+    });
+  }, [recurring, spendTxns]);
+  const txns = useMemo(
+    () => [...categoriseAll(spendTxns, { rules, merchantMap }), ...recurringOut.rows],
+    [spendTxns, rules, merchantMap, recurringOut]
+  );
 
   const catById = useMemo(() => Object.fromEntries(categories.map((c) => [c.id, c])), [categories]);
   const seedStarter = () => setCategories(STARTER.map((c) => ({ id: uid(), name: c.name, monthly: c.monthly || 0, annual: c.annual || 0, essential: !!c.essential, transfer: !!c.transfer })));
@@ -68,7 +87,7 @@ export default function BudgetTab({ setTab }) {
   return (
     <div className="space-y-5">
       <SubTabs
-        tabs={[["overview", "Overview"], ["txns", "Transactions"], ["categories", "Categories & rules"], ["import", "Import statements"]]}
+        tabs={[["overview", "Overview"], ["txns", "Transactions"], ["recurring", "Recurring"], ["categories", "Categories & rules"], ["import", "Import statements"]]}
         active={sub} onChange={setSub}
       />
 
@@ -82,6 +101,7 @@ export default function BudgetTab({ setTab }) {
 
       {sub === "overview" && <Overview {...{ categories, txns, month, setMonth, setSub }} />}
       {sub === "txns" && <Transactions {...{ categories, catById, txns, setManual, setSpendTxns, rules, setRules }} />}
+      {sub === "recurring" && <Recurring {...{ recurring, setRecurring, categories, catById, suppressed: recurringOut.suppressed, generated: recurringOut.rows, spendTxns }} />}
       {sub === "categories" && <Categories {...{ categories, setCategories, rules, setRules, catById, txns }} />}
       {sub === "import" && <ImportStatements {...{ spendTxns, setSpendTxns, setSub }} />}
     </div>
@@ -198,6 +218,17 @@ function Transactions({ categories, catById, txns, setManual, setSpendTxns, rule
     return txns.filter((t) => t.categoryId === filter);
   }, [txns, filter]);
 
+  const [nw, setNw] = useState(() => ({ date: todayISO(), description: "", amount: "", account: "", manualCategoryId: "" }));
+  const addOneOff = () => {
+    if (!nw.date || !(+nw.amount)) return;
+    setSpendTxns((p) => [...p, {
+      id: uid(), date: nw.date, description: nw.description.trim() || "Manual entry",
+      amount: +nw.amount, account: nw.account.trim(),
+      ...(nw.manualCategoryId ? { manualCategoryId: nw.manualCategoryId } : {}),
+    }]);
+    setNw({ date: nw.date, description: "", amount: "", account: nw.account, manualCategoryId: "" });
+  };
+
   const [busyAi, setBusyAi] = useState(false);
   const [aiMsg, setAiMsg] = useState("");
   const suggestWithAi = async () => {
@@ -247,6 +278,21 @@ function Transactions({ categories, catById, txns, setManual, setSpendTxns, rule
 
   return (
     <div className="space-y-3">
+      <div className="flex items-end gap-2 flex-wrap rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3">
+        <Field label="Date"><input type="date" value={nw.date} onChange={(e) => setNw({ ...nw, date: e.target.value })} className="input num" /></Field>
+        <Field label="Description"><input value={nw.description} onChange={(e) => setNw({ ...nw, description: e.target.value })} className="input w-44" placeholder="e.g. Plumber" /></Field>
+        <Field label="Amount (£)"><input type="number" value={nw.amount} onChange={(e) => setNw({ ...nw, amount: e.target.value })} className="input num w-28" placeholder="0.00" /></Field>
+        <Field label="Account"><input value={nw.account} onChange={(e) => setNw({ ...nw, account: e.target.value })} className="input w-32" placeholder="optional" /></Field>
+        <Field label="Category">
+          <select value={nw.manualCategoryId} onChange={(e) => setNw({ ...nw, manualCategoryId: e.target.value })} className="input">
+            <option value="">— none —</option>
+            {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+        </Field>
+        <button onClick={addOneOff} className="btn-accent"><Plus size={15} /> Add spend</button>
+        <p className="text-xs text-[var(--muted)] w-full">One-off cash or card spending that isn't in any statement you import. Enter the amount as a positive number; use a negative for a refund. For anything that repeats, use the Recurring sub-tab instead.</p>
+      </div>
+
       <div className="flex items-center gap-2 flex-wrap">
         <select value={filter} onChange={(e) => setFilter(e.target.value)} className="input">
           <option value="uncat">Uncategorised ({txns.filter((t) => !t.categoryId).length})</option>
@@ -322,20 +368,30 @@ function Transactions({ categories, catById, txns, setManual, setSpendTxns, rule
               }).slice(0, 400).map((t) => (
                 <tr key={t.id}>
                   <td className="py-2 px-3 num text-[var(--muted)]">{t.date}</td>
-                  <td className="py-2 px-3">{t.description}</td>
+                  <td className="py-2 px-3">
+                    {t.description}
+                    {t.estimated && <span className="ml-1.5 text-[10px] uppercase tracking-wide text-[var(--m-bb)]" title="Generated from a recurring commitment — not from a statement">est</span>}
+                  </td>
                   <td className="py-2 px-3 text-[var(--muted)]">{t.account || "—"}</td>
                   <td className={"py-2 px-3 text-right num " + (t.amount < 0 ? "text-[var(--gain)]" : "")}>{gbp(t.amount)}</td>
                   <td className="py-2 px-3">
-                    <select className="input text-xs" value={t.categoryId || ""} onChange={(e) => setManual(t.id, e.target.value)}>
+                    <select className="input text-xs" value={t.categoryId || ""} disabled={t.estimated}
+                      title={t.estimated ? "Set the category on the Recurring sub-tab" : undefined}
+                      onChange={(e) => setManual(t.id, e.target.value)}>
                       <option value="">— none —</option>
                       {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
                     </select>
                   </td>
                   <td className="py-2 px-3 text-xs text-[var(--muted)]">
-                    {t.categorisedVia === "manual" ? "you" : t.categorisedVia === "rule" ? "rule" : t.categorisedVia === "merchant" ? "learned" : "—"}
+                    {t.estimated ? "recurring" : t.categorisedVia === "manual" ? "you" : t.categorisedVia === "rule" ? "rule" : t.categorisedVia === "merchant" ? "learned" : "—"}
                   </td>
                   <td className="py-2 px-3 text-right">
-                    <button onClick={() => setSpendTxns((p) => p.filter((x) => x.id !== t.id))} aria-label={`Delete transaction ${t.date} ${t.description}`} title="Delete" className="text-[var(--muted)] hover:text-[var(--loss)]"><Trash2 size={15} aria-hidden="true" /></button>
+                    {/* Estimated rows are DERIVED from a recurring definition —
+                        deleting one here would do nothing (it regenerates on
+                        the next render), so the affordance shouldn't exist. */}
+                    {!t.estimated && (
+                      <button onClick={() => setSpendTxns((p) => p.filter((x) => x.id !== t.id))} aria-label={`Delete transaction ${t.date} ${t.description}`} title="Delete" className="text-[var(--muted)] hover:text-[var(--loss)]"><Trash2 size={15} aria-hidden="true" /></button>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -343,6 +399,113 @@ function Transactions({ categories, catById, txns, setManual, setSpendTxns, rule
           </table>
           {shown.length > 400 && <p className="text-xs text-[var(--muted)] p-2">Showing the first 400 of {shown.length} — narrow with the filter above.</p>}
         </div>
+      )}
+    </div>
+  );
+}
+
+/* ----------------------------- Recurring ------------------------------ */
+const REC_BLANK = () => ({ id: uid(), label: "", amount: "", frequency: "monthly", startDate: todayISO(), endDate: "", categoryId: "", account: "", alwaysInclude: false });
+
+function Recurring({ recurring, setRecurring, categories, catById, suppressed, generated, spendTxns }) {
+  const [r, setR] = useState(REC_BLANK());
+  const annual = useMemo(() => annualCommitment(recurring, { asOf: todayISO() }), [recurring]);
+  // Accounts already seen in imported statements — offered as suggestions
+  // so the account label MATCHES, which is what drives suppression.
+  const knownAccounts = useMemo(
+    () => [...new Set(spendTxns.map((t) => t.account).filter(Boolean))].sort(),
+    [spendTxns]
+  );
+  const suppressedBy = useMemo(() => {
+    const m = new Map();
+    for (const s of suppressed) m.set(s.recurringId, (m.get(s.recurringId) || 0) + 1);
+    return m;
+  }, [suppressed]);
+  const generatedBy = useMemo(() => {
+    const m = new Map();
+    for (const g of generated) m.set(g.recurringId, (m.get(g.recurringId) || 0) + 1);
+    return m;
+  }, [generated]);
+
+  const add = () => {
+    if (!r.label.trim() || !(+r.amount) || !r.startDate) return;
+    setRecurring((p) => [...p, { ...r, label: r.label.trim(), amount: +r.amount }]);
+    setR(REC_BLANK());
+  };
+  const patch = (id, k, v) => setRecurring((p) => p.map((x) => (x.id === id ? { ...x, [k]: v } : x)));
+
+  return (
+    <div className="space-y-3">
+      <h3 className="text-sm font-semibold">Recurring commitments</h3>
+      <p className="text-xs text-[var(--muted)] max-w-3xl">
+        Fixed outgoings you know about without reading a statement — direct debits, quarterly service charges, annual building insurance. Each one generates dated transactions automatically, so an account you never import still shows up in the budget.
+      </p>
+      <p className="text-xs text-[var(--muted)] max-w-3xl">
+        <strong className="text-[var(--fg)]">No double counting:</strong> name the account each payment leaves from, and for any month where that account HAS imported statement rows, the estimate is suppressed — the statement wins, because it knows about the price rise you forgot. Estimates fill only the gaps: months you haven't imported, and the future.
+      </p>
+
+      <div className="grid gap-2 rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(130px,1fr))" }}>
+        <Field label="What"><input value={r.label} onChange={(e) => setR({ ...r, label: e.target.value })} className="input w-full" placeholder="e.g. Mobile" /></Field>
+        <Field label="Amount (£)"><input type="number" value={r.amount} onChange={(e) => setR({ ...r, amount: e.target.value })} className="input num w-full" placeholder="0.00" /></Field>
+        <Field label="How often"><select value={r.frequency} onChange={(e) => setR({ ...r, frequency: e.target.value })} className="input w-full">{FREQUENCIES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></Field>
+        <Field label="First / next payment"><input type="date" value={r.startDate} onChange={(e) => setR({ ...r, startDate: e.target.value })} className="input num w-full" /></Field>
+        <Field label="Ends (optional)"><input type="date" value={r.endDate} onChange={(e) => setR({ ...r, endDate: e.target.value })} className="input num w-full" /></Field>
+        <Field label="Category"><select value={r.categoryId} onChange={(e) => setR({ ...r, categoryId: e.target.value })} className="input w-full"><option value="">Choose…</option>{categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></Field>
+        <Field label="Paid from">
+          <input list="rec-accounts" value={r.account} onChange={(e) => setR({ ...r, account: e.target.value })} className="input w-full" placeholder="e.g. HSBC current" />
+          <datalist id="rec-accounts">{knownAccounts.map((a) => <option key={a} value={a} />)}</datalist>
+        </Field>
+        <div className="flex items-end"><button onClick={add} className="btn-accent w-full justify-center"><Plus size={15} /> Add</button></div>
+      </div>
+
+      {recurring.length === 0 ? (
+        <Empty msg="No recurring commitments yet. Add the direct debits and standing payments that don't arrive via a statement you import — mobile, broadband, council tax, service charge, building insurance." />
+      ) : (
+        <>
+          <div className="rounded-xl border border-[var(--border)] overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-[var(--panel2)] text-[var(--muted)] text-xs uppercase tracking-wide">
+                <tr>{["What", "Amount", "How often", "£/yr", "Category", "Paid from", "Status", ""].map((h, i) => (
+                  <th key={i} className={"py-2 px-3 font-medium " + (i === 1 || i === 3 ? "text-right" : "text-left")}>{h}</th>
+                ))}</tr>
+              </thead>
+              <tbody className="divide-y divide-[var(--border)] bg-[var(--panel)]">
+                {recurring.map((x) => {
+                  const perYear = (+x.amount || 0) * (12 / (FREQUENCIES.find(([k]) => k === x.frequency) || FREQUENCIES[0])[2]);
+                  const supp = suppressedBy.get(x.id) || 0, gen = generatedBy.get(x.id) || 0;
+                  return (
+                    <tr key={x.id}>
+                      <td className="py-1.5 px-3"><input value={x.label} onChange={(e) => patch(x.id, "label", e.target.value)} className="input w-36 py-1" /></td>
+                      <td className="py-1.5 px-3 text-right"><input type="number" value={x.amount} onChange={(e) => patch(x.id, "amount", +e.target.value || 0)} className="input num w-24 py-1 text-right" /></td>
+                      <td className="py-1.5 px-3"><select value={x.frequency} onChange={(e) => patch(x.id, "frequency", e.target.value)} className="input py-1 text-xs">{FREQUENCIES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></td>
+                      <td className="py-1.5 px-3 text-right num">{gbp0(perYear)}</td>
+                      <td className="py-1.5 px-3">
+                        <select value={x.categoryId || ""} onChange={(e) => patch(x.id, "categoryId", e.target.value)} className="input py-1 text-xs">
+                          <option value="">— none —</option>
+                          {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                        </select>
+                      </td>
+                      <td className="py-1.5 px-3 text-xs text-[var(--muted)]">{x.account || "—"}</td>
+                      <td className="py-1.5 px-3 text-xs">
+                        {supp > 0
+                          ? <span className="text-[var(--muted)]" title={`${supp} month(s) already covered by an imported statement for ${x.account || "(no account)"} — using the statement instead`}>{gen} est · {supp} from statement</span>
+                          : <span className="text-[var(--gain)]">{gen} estimated</span>}
+                        {x.alwaysInclude && <span className="ml-1 text-[var(--m-bb)]" title="Suppression disabled — you're responsible for avoiding a double count">always</span>}
+                      </td>
+                      <td className="py-1.5 px-3 text-right">
+                        <button onClick={() => setRecurring((p) => p.filter((y) => y.id !== x.id))} aria-label={`Delete ${x.label}`} title="Delete" className="text-[var(--muted)] hover:text-[var(--loss)]"><Trash2 size={15} aria-hidden="true" /></button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3 text-xs flex flex-wrap gap-x-6 gap-y-1">
+            <span>Fixed commitments: <strong className="num">{gbp0(annual.total)}</strong>/yr — <span className="text-[var(--muted)]">{gbp0(annual.total / 12)}/month before any variable spending</span></span>
+            {suppressed.length > 0 && <span className="text-[var(--muted)]">{suppressed.length} estimated payment(s) hidden where a statement already covers the month.</span>}
+          </div>
+        </>
       )}
     </div>
   );
