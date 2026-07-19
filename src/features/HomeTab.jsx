@@ -7,6 +7,9 @@ import { pensionXirrByWrapper } from "../core/returns.mjs";
 import { accountsMaturingSoon } from "../core/cash.mjs";
 import { allocationDrift } from "../core/rebalancing.mjs";
 import { buildActionQueue } from "../core/action-queue.mjs";
+import { monthlyBudget, planSpendFromBudget } from "../core/budget.mjs";
+import { categoriseAll, learnMerchants } from "../core/categorise.mjs";
+import { expandRecurring, statementCoverage } from "../core/recurring.mjs";
 import PlanHealthCard from "../ui/PlanHealthCard.jsx";
 import {
   store, gbp0, num, pct, WrapperChip, AllocBar, KIND_LABEL, RateCell, Empty, todayISO,
@@ -268,6 +271,13 @@ const ACTION_LABELS = {
   "gilt-redemption": (i) => ({ head: gbp0(i.amount), rest: ` — ${i.label} matures ${i.days === 0 ? "today" : `in ${i.days} days`} (${i.date}); the principal lands as cash earning nothing until you redeploy it.` }),
   "backup-stale": (i) => ({ head: "Backup", rest: i.backupAgeDays == null ? " — never downloaded, and sync is off. One browser cleanup could erase everything; download a backup or enable encrypted sync." : ` — last downloaded ${i.backupAgeDays} days ago and sync is off. Grab a fresh one, or enable sync and never think about this again.` }),
   "import-stale": (i) => ({ head: i.source, rest: ` — last imported ${i.days} days ago; the ledger is drifting from your broker. Re-import to catch up.` }),
+  "spend-drift": (i) => ({
+    head: gbp0(i.amount),
+    rest: i.over
+      ? ` — you're actually spending ${gbp0(i.actual)}/yr, ${i.pct}% MORE than the ${gbp0(i.planned)} your retirement plan assumes. Every projection downstream is built on the smaller number.`
+      : ` — you're spending ${gbp0(i.actual)}/yr, ${i.pct}% less than the ${gbp0(i.planned)} your plan assumes. The plan may be more pessimistic than your life.`,
+  }),
+  "budget-overspend": (i) => ({ head: gbp0(i.amount), rest: ` — over budget on ${i.name} this month (${gbp0(i.limit)} limit). Worth a look before the month closes.` }),
 };
 // Items that land on a CGT sub-tab pre-select it.
 const ACTION_SUBTAB = { "aea-harvest": "planning", "allocation-drift": "rebalance" };
@@ -375,6 +385,10 @@ export default function HomeTab({
   const mortgages = useAppStore((s) => s.mortgages);
   const cashAccounts = useAppStore((s) => s.cashAccounts);
   const planInputs = useAppStore((s) => s.planInputs);
+  const budgetCategories = useAppStore((s) => s.budgetCategories);
+  const budgetRules = useAppStore((s) => s.budgetRules);
+  const spendTxns = useAppStore((s) => s.spendTxns);
+  const recurringExpenses = useAppStore((s) => s.recurringExpenses);
   const txns = useAppStore((s) => s.txns);
   const secMeta = useAppStore((s) => s.secMeta);
   const avKey = useAppStore((s) => s.avKey), avMeta = useAppStore((s) => s.avMeta);
@@ -429,6 +443,37 @@ export default function HomeTab({
     () => allocationDrift({ positions, targets: rebalanceTargets }),
     [model, rebalanceTargets] // positions derives from model
   );
+  // Budget signals for the queue. Built from the same engines the Budget
+  // tab uses (never a second implementation), so the two can't disagree.
+  const budgetSignals = useMemo(() => {
+    if (!budgetCategories?.length || !spendTxns?.length) return { overspend: null, spendDrift: null };
+    const month = todayISO().slice(0, 7);
+    const merged = [
+      ...categoriseAll(spendTxns, { rules: budgetRules || [], merchantMap: learnMerchants(spendTxns) }),
+      ...expandRecurring({
+        definitions: recurringExpenses || [],
+        fromDate: `${+month.slice(0, 4) - 2}-01-01`, toDate: `${+month.slice(0, 4) + 1}-12-31`,
+        coverage: statementCoverage(spendTxns),
+      }).rows,
+    ];
+    // Worst overspending category THIS month — one item, not one per
+    // category (see action-queue's note on crowding the queue).
+    const m = monthlyBudget({ categories: budgetCategories, txns: merged, month });
+    const worst = m.rows
+      .filter((r) => r.over && r.limit > 0)
+      .sort((a, b) => (b.actual - b.limit) - (a.actual - a.limit))[0];
+    // Trailing-12m actual vs what the plan assumes. Only meaningful when
+    // the plan is using an ABSOLUTE spend target — under the replacement-
+    // ratio mode `targetAbsolute` is a dormant field, and comparing
+    // against it would invent a discrepancy the user can't act on.
+    const plan = planSpendFromBudget({ categories: budgetCategories, txns: merged, month });
+    const planned = planInputs?.targetMode === "absolute" ? (+planInputs.targetAbsolute || 0) : 0;
+    return {
+      overspend: worst ? { name: worst.name, over: worst.actual - worst.limit, limit: worst.limit } : null,
+      spendDrift: planned > 0 ? { actual: plan.annualSpend, planned, ready: plan.ready } : null,
+    };
+  }, [budgetCategories, budgetRules, spendTxns, recurringExpenses, planInputs]);
+
   const queue = useMemo(() => buildActionQueue({
     today: todayISO(),
     hasIsaWrapper: ["ISA", "LISA"].some((w) => {
@@ -459,8 +504,10 @@ export default function HomeTab({
       const days = (new Date(e.date) - new Date(todayISO())) / 86400000;
       return days >= 0 && days <= 60;
     }).map((e) => ({ date: e.date, label: e.label, amount: e.amount })),
+    overspend: budgetSignals.overspend,
+    spendDrift: budgetSignals.spendDrift,
     taxYearEndActive: !!(taxYearEnd && taxYearEnd.active),
-  }), [model, actionData, drift, mortgagesSoon, cashMaturing, concentration, incomeCalendar, taxYearEnd]);
+  }), [model, actionData, drift, mortgagesSoon, cashMaturing, concentration, incomeCalendar, taxYearEnd, budgetSignals, txns.length]);
 
   if (!model) return <Empty msg="Couldn't build the portfolio model — check the Transactions tab for ledger errors." />;
   const { byWrapper, total } = model;

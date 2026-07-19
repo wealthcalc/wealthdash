@@ -1,8 +1,8 @@
 import React, { useState, useMemo, useRef } from "react";
-import { Plus, Trash2, Upload, Sparkles, Check, AlertTriangle, Wand2 } from "lucide-react";
+import { Plus, Trash2, Upload, Check, AlertTriangle, Wand2 } from "lucide-react";
 import { ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip } from "recharts";
 import { monthlyBudget, annualBudget, spendByMonth, trailing12 } from "../core/budget.mjs";
-import { categoriseAll, learnMerchants, uncategorisedGroups, suggestRule, normaliseMerchant } from "../core/categorise.mjs";
+import { categoriseAll, learnMerchants, uncategorisedGroups, suggestRule } from "../core/categorise.mjs";
 import { parseStatement, dedupeStatement, PROFILES } from "../core/statement-import.mjs";
 import { expandRecurring, statementCoverage, annualCommitment, FREQUENCIES } from "../core/recurring.mjs";
 import { store, gbp, gbp0, SubTabs, uid, todayISO, Field, Empty, Stat, useSort, sortRows, SortTh } from "../ui/shared.jsx";
@@ -52,6 +52,11 @@ export default function BudgetTab({ setTab }) {
   const [sub, setSub] = useState(() => store.get("cgt.budgetsubtab", "overview"));
   React.useEffect(() => store.set("cgt.budgetsubtab", sub), [sub]);
   const [month, setMonth] = useState(thisMonth);
+  // Drill-down: clicking a category in the Overview opens Transactions
+  // already filtered to it — "Groceries is £200 over" should be one click
+  // from "…because of these transactions", not a manual re-filter.
+  const [txnFilter, setTxnFilter] = useState("uncat");
+  const drillTo = (categoryId) => { setTxnFilter(categoryId); setSub("txns"); };
 
   // Derived categorisation — see header. Merchant memory is learned from
   // the user's own manual decisions on every render, so one correction
@@ -99,8 +104,8 @@ export default function BudgetTab({ setTab }) {
         </div>
       )}
 
-      {sub === "overview" && <Overview {...{ categories, txns, month, setMonth, setSub }} />}
-      {sub === "txns" && <Transactions {...{ categories, catById, txns, setManual, setSpendTxns, rules, setRules }} />}
+      {sub === "overview" && <Overview {...{ categories, txns, month, setMonth, setSub, drillTo }} />}
+      {sub === "txns" && <Transactions {...{ categories, catById, txns, setManual, setSpendTxns, rules, setRules, filter: txnFilter, setFilter: setTxnFilter }} />}
       {sub === "recurring" && <Recurring {...{ recurring, setRecurring, categories, catById, suppressed: recurringOut.suppressed, generated: recurringOut.rows, spendTxns }} />}
       {sub === "categories" && <Categories {...{ categories, setCategories, rules, setRules, catById, txns }} />}
       {sub === "import" && <ImportStatements {...{ spendTxns, setSpendTxns, setSub }} />}
@@ -109,7 +114,7 @@ export default function BudgetTab({ setTab }) {
 }
 
 /* ------------------------------- Overview ---------------------------- */
-function Overview({ categories, txns, month, setMonth, setSub }) {
+function Overview({ categories, txns, month, setMonth, setSub, drillTo }) {
   // Trailing 12 months is the DEFAULT because it's the honest picture: a
   // single month is noisy (annual bills, holidays, a quiet fortnight) and
   // the year is what the retirement plan actually consumes. This/Last
@@ -229,7 +234,10 @@ function Overview({ categories, txns, month, setMonth, setSub }) {
             {cur.rows.map((r) => (
               <tr key={r.id} className="hover:bg-[var(--panel2)]">
                 <td className="py-2 px-3">
-                  {r.name}
+                  <button onClick={() => drillTo(r.id)} className="underline decoration-dotted underline-offset-2 hover:text-[var(--accent)]"
+                    title={`Show ${r.name} transactions`}>
+                    {r.name}
+                  </button>
                   {r.essential && <span className="ml-1.5 text-[10px] uppercase tracking-wide text-[var(--muted)]">essential</span>}
                   {r.annualOnly && <span className="ml-1.5 text-[10px] uppercase tracking-wide text-[var(--m-pool)]">annual</span>}
                 </td>
@@ -256,9 +264,8 @@ function Overview({ categories, txns, month, setMonth, setSub }) {
 }
 
 /* ----------------------------- Transactions -------------------------- */
-function Transactions({ categories, catById, txns, setManual, setSpendTxns, rules, setRules }) {
+function Transactions({ categories, catById, txns, setManual, setSpendTxns, rules, setRules, filter, setFilter }) {
   const [sort, toggleSort] = useSort("date", "desc");
-  const [filter, setFilter] = useState("uncat");
   const groups = useMemo(() => uncategorisedGroups(txns), [txns]);
   const shown = useMemo(() => {
     if (filter === "uncat") return txns.filter((t) => !t.categoryId);
@@ -275,47 +282,6 @@ function Transactions({ categories, catById, txns, setManual, setSpendTxns, rule
       ...(nw.manualCategoryId ? { manualCategoryId: nw.manualCategoryId } : {}),
     }]);
     setNw({ date: nw.date, description: "", amount: "", account: nw.account, manualCategoryId: "" });
-  };
-
-  const [busyAi, setBusyAi] = useState(false);
-  const [aiMsg, setAiMsg] = useState("");
-  const suggestWithAi = async () => {
-    setBusyAi(true); setAiMsg("");
-    try {
-      const top = groups.slice(0, 40).map((g) => g.sample);
-      const res = await fetch("/api/categorise", {
-        method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ descriptions: top, categories: categories.filter((c) => !c.transfer).map((c) => c.name) }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        // Surface the endpoint's env diagnostics inline — a setup problem
-        // the user can only fix in the Vercel dashboard shouldn't require
-        // opening DevTools to read.
-        const d = data.diagnostics;
-        throw new Error(data.error + (d?.matchingNames?.length ? ` Names seen: ${d.matchingNames.join(", ")}.` : ""));
-      }
-      // Map suggested category NAMES back to ids; ignore anything that
-      // doesn't match a real category rather than inventing one.
-      const byName = new Map(categories.map((c) => [c.name.toLowerCase(), c.id]));
-      let applied = 0;
-      const assignments = [];
-      for (const [desc, name] of Object.entries(data.suggestions || {})) {
-        const id = byName.get(String(name).toLowerCase());
-        if (!id) continue;
-        const key = normaliseMerchant(desc);
-        const g = groups.find((x) => x.key === key);
-        if (!g) continue;
-        assignments.push([g.ids, id]); applied += g.count;
-      }
-      setSpendTxns((p) => {
-        const map = new Map();
-        for (const [ids, id] of assignments) for (const i of ids) map.set(i, id);
-        return p.map((t) => (map.has(t.id) ? { ...t, manualCategoryId: map.get(t.id) } : t));
-      });
-      setAiMsg(applied ? `Suggested categories for ${applied} transaction(s) — they're applied as your own choices, so review and correct any that look wrong.` : "No confident suggestions came back.");
-    } catch (e) { setAiMsg(e.message); }
-    setBusyAi(false);
   };
 
   const addRuleFromGroup = (g, categoryId) => {
@@ -347,15 +313,9 @@ function Transactions({ categories, catById, txns, setManual, setSpendTxns, rule
           <option value="all">All ({txns.length})</option>
           {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
         </select>
-        {groups.length > 0 && categories.length > 0 && (
-          <button onClick={suggestWithAi} disabled={busyAi} className="btn-accent disabled:opacity-60">
-            <Sparkles size={15} /> {busyAi ? "Asking…" : "Suggest categories with AI"}
-          </button>
-        )}
       </div>
-      {aiMsg && <div role="status" className="text-xs rounded-lg border border-[var(--border)] bg-[var(--panel2)] px-3 py-2">{aiMsg}</div>}
       {groups.length > 0 && categories.length > 0 && (
-        <p className="text-xs text-[var(--muted)] max-w-3xl">AI suggestions send only the merchant descriptions (no amounts, dates, account numbers or balances) to this app's own serverless endpoint, and only when you press the button. Suggestions are applied as manual choices you can correct — and each correction teaches the merchant memory, so the same shop categorises itself next time.</p>
+        <p className="text-xs text-[var(--muted)] max-w-3xl">Categorise a merchant group once and every past and future transaction from that merchant follows it — the "+ rule…" column also writes a rule, so the match survives a change of card or a reworded description.</p>
       )}
 
       {groups.length > 0 && filter === "uncat" && (

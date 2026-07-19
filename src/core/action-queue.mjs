@@ -49,6 +49,11 @@ export function buildActionQueue({
   syncEnabled = false,        // encrypted sync on -> backup nudge unnecessary
   hasData = false,            // don't nag an empty ledger to back itself up
   importAges = [],            // [{source, days}] since each broker feed's last import
+  // Spending (Budget tab). Both are deliberately conservative: this queue
+  // is for MONEY DECISIONS, and a chatty budget could crowd out an ISA
+  // deadline with "you spent £12 too much on coffee".
+  overspend = null,           // { name, over, limit } — the WORST category this month only
+  spendDrift = null,          // { actual, planned, ready } — trailing-12m actual vs plan target
   taxYearEndActive = false,
   max = MAX_ITEMS,
 } = {}) {
@@ -136,6 +141,42 @@ export function buildActionQueue({
         bucket: worst.bucket, driftPct: worst.driftPct, overweight: worst.driftPct > 0,
       });
     }
+  }
+
+  // -- Spend drift vs the retirement plan. This is the one budget signal
+  //    that is genuinely a MONEY DECISION rather than a diary entry: a
+  //    plan built on a spend figure that reality has left behind
+  //    mis-states every projection downstream of it, and does so
+  //    silently. Only fires when the budget data is thick enough to
+  //    trust (planSpendFromBudget's `ready`) and the gap is >10% — below
+  //    that it's noise, and a plan is not a budget.
+  if (spendDrift && spendDrift.ready && spendDrift.planned > 0 && spendDrift.actual > 0) {
+    const gap = spendDrift.actual - spendDrift.planned;
+    const pct = Math.abs(gap) / spendDrift.planned * 100;
+    if (pct > 10) {
+      items.push({
+        id: "spend-drift", tab: "plan",
+        amount: Math.abs(gap),
+        // Under-spending matters too (the plan may be too pessimistic),
+        // but over-spending is the one that breaks a retirement, so it
+        // scores higher.
+        score: Math.min(72, (gap > 0 ? 45 : 34) + pct / 2),
+        actual: spendDrift.actual, planned: spendDrift.planned,
+        pct: Math.round(pct), over: gap > 0,
+      });
+    }
+  }
+
+  // -- Overspend: ONE item for the worst category this month, and only
+  //    when it's material in both senses (>10% AND >£50 over). Per-
+  //    category items would flood a five-slot queue with small change.
+  if (overspend && overspend.over > 50 && overspend.limit > 0 && (overspend.over / overspend.limit) * 100 > 10) {
+    items.push({
+      id: "budget-overspend", tab: "budget",
+      amount: overspend.over,
+      score: Math.min(44, 22 + (overspend.over / overspend.limit) * 20),
+      name: overspend.name, limit: overspend.limit,
+    });
   }
 
   // -- Backup staleness — only when sync is OFF (sync makes manual
