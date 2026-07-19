@@ -68,6 +68,37 @@ test("the rising-cash case the UI must explain: gilts cover the spend, dividends
   assert.equal(rows[1].cashEnd, 150000);
 });
 
+test("THE reporting fix: a source shows what ARRIVED even when the waterfall didn't need it", () => {
+  // The complaint this encodes: dividends/vests/deferred read £0 in the
+  // waterfall columns whenever gilts already covered the spend, which
+  // looks like "I receive nothing that year" rather than "that money went
+  // to the float". totalIn/net must tell the true story.
+  const { rows } = buildRunoff({
+    ...BASE, years: 1,
+    giltNominalByYear: { 2027: 40000 },   // covers the whole 40k spend
+    deferredByYear: { 2027: 25000 }, rsuByYear: { 2027: 15000 }, annualDividends: 12000,
+  });
+  const r = rows[0];
+  // waterfall view: everything after gilts reads zero — money USED
+  assert.deepEqual([r.fromDeferred, r.fromRsu, r.fromDividends], [0, 0, 0]);
+  // cash-flow view: the money is all visibly there — money RECEIVED
+  assert.deepEqual([r.deferredIn, r.rsuIn, r.divIn], [25000, 15000, 12000]);
+  assert.equal(r.totalIn, 92000);
+  assert.equal(r.net, 52000);           // 92k in, 40k spent
+  assert.equal(r.surplusToCash, 52000); // and it lands in the float
+  assert.equal(r.covered, true);
+});
+
+test("net exposes a year that draws down the float while looking 'covered'", () => {
+  const { rows } = buildRunoff({
+    ...BASE, years: 1, cashStart: 100000, annualDividends: 5000,
+  });
+  const r = rows[0];
+  assert.equal(r.covered, true);   // no portfolio sale needed…
+  assert.equal(r.net, -35000);     // …but 35k of float was consumed
+  assert.equal(r.balanceEnd, 65000);
+});
+
 test("gross inflows + balance for the cash-flow view: received ≠ used", () => {
   const { rows } = buildRunoff({
     ...BASE, years: 2,
