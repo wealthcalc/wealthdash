@@ -56,6 +56,10 @@ export const PERSIST_KEYS = {
   budgetCategories: "cgt.budgetcategories",
   budgetRules: "cgt.budgetrules",
   spendTxns: "cgt.spendtxns",
+  // Known fixed outgoings (direct debits, service charge, annual
+  // insurance) — expanded into dated rows on read, never persisted as
+  // transactions. See core/recurring.mjs.
+  recurringExpenses: "cgt.recurringexpenses",
 };
 // Present in any real dataset — used to detect "localStorage was emptied".
 const SENTINEL_LS_KEYS = ["cgt.txns", "cgt.valuations", "cgt.pensioncf"];
