@@ -10,7 +10,7 @@ import {
   Gauge, ChevronDown, ChevronUp, Info, RefreshCw, Building2, Coins, HeartPulse,
   Layers, Landmark, Plus, Trash2, Umbrella, Droplets,
 } from "lucide-react";
-import { taxRUK, taxScot, employeeNI } from "../core/uk-income-tax.mjs";
+import { taxRUK, taxScot, employeeNI, netEmploymentIncome } from "../core/uk-income-tax.mjs";
 import {
   lifeExpectancy, effInflation, btlYearly, replayDecum, STRATEGY_LABELS, buildProjection, HIST,
 } from "../core/drawdown.mjs";
@@ -1654,8 +1654,28 @@ function RunoffTab({ p, giltCashflows = [], forwardDividends = 0 }) {
         rsuByYear[y] = (rsuByYear[y] || 0) + (+v.shares || 0) * price;
       }
     }
-    return { giltNominalByYear, cashStart, deferredByYear, rsuByYear, rsuUnpriced };
-  }, [giltCashflows, cash, cashAccounts, dcAwards, dcVests, rsuGrants, rsuEvents, prices, today, horizon]);
+    // TAX: RSU vests and deferred-cash tranches are employment income —
+    // net them down at marginal UK bands + employee NI, taxed JOINTLY per
+    // year (they stack on each other) on top of salary while still
+    // working, on top of nothing after retirement. Dividends are left
+    // gross (assumed ISA/VCT — disclosed in the footnote); gilt coupons
+    // and redemptions are untaxed here (low-coupon gilts in a GIA are
+    // mostly CGT-free redemption gain; coupon tax would need per-gilt
+    // detail this view doesn't have — disclosed too).
+    const retireYear = (startYear - 1) + Math.max(0, (+p.retireAge || 0) - (+p.currentAge || 0));
+    let grossComp = 0, netComp = 0;
+    for (const y of new Set([...Object.keys(deferredByYear), ...Object.keys(rsuByYear)].map(Number))) {
+      const gross = (deferredByYear[y] || 0) + (rsuByYear[y] || 0);
+      if (!(gross > 0)) continue;
+      const base = y < retireYear ? (+p.salary || 0) : 0;
+      const f = netEmploymentIncome(gross, { base, region: p.region }) / gross;
+      if (deferredByYear[y]) deferredByYear[y] *= f;
+      if (rsuByYear[y]) rsuByYear[y] *= f;
+      grossComp += gross; netComp += gross * f;
+    }
+    const compTaxRate = grossComp > 0 ? 1 - netComp / grossComp : 0;
+    return { giltNominalByYear, cashStart, deferredByYear, rsuByYear, rsuUnpriced, compTaxRate };
+  }, [giltCashflows, cash, cashAccounts, dcAwards, dcVests, rsuGrants, rsuEvents, prices, today, horizon, startYear, p]);
 
   const runoff = useMemo(() => buildRunoff({
     annualExpense: +expense || 0, inflation: effInflation(p), startYear, years: Math.max(1, +horizon || 1),
@@ -1669,7 +1689,8 @@ function RunoffTab({ p, giltCashflows = [], forwardDividends = 0 }) {
   const deflate = (row, v) => realTerms ? v / Math.pow(1 + effInflation(p) / 100, row.year - startYear) : v;
   const displayRows = runoff.rows.map((r) => {
     const d = { ...r };
-    for (const k of ["expense", "fromGilts", "fromCash", "fromDeferred", "fromRsu", "fromDividends", "fromPortfolio", "giltBankEnd", "cashEnd"]) d[k] = deflate(r, r[k]);
+    for (const k of ["expense", "fromGilts", "fromCash", "fromDeferred", "fromRsu", "fromDividends", "fromPortfolio", "surplusToCash", "giltBankEnd", "cashEnd", "giltIn", "deferredIn", "rsuIn", "divIn", "balanceEnd"]) d[k] = deflate(r, r[k]);
+    d.expenseNeg = -d.expense; // cash-flow view: spend as a negative bar
     return d;
   });
   const SOURCES = [
@@ -1680,6 +1701,18 @@ function RunoffTab({ p, giltCashflows = [], forwardDividends = 0 }) {
     ["fromDividends", "Dividends", T.amber],
     ["fromPortfolio", "Portfolio sales", T.red],
   ];
+  // Cash-flow view: GROSS money in (received, whether or not the waterfall
+  // needed it) vs the spend as a negative bar, with the total liquid
+  // balance (cash + gilt bank) as a line.
+  const INFLOWS = [
+    ["giltIn", "Gilt coupons + maturities", T.blue],
+    ["deferredIn", "Deferred cash", "#7A5C9E"],
+    ["rsuIn", "RSU vests (sold)", T.gold],
+    ["divIn", "Dividends", T.amber],
+    ["fromPortfolio", "Portfolio sales", T.red],
+  ];
+  const [chartView, setChartView] = useState(() => store.get("plan.runoff.chart", "flow"));
+  React.useEffect(() => store.set("plan.runoff.chart", chartView), [chartView]);
 
   return (
     <div>
@@ -1712,22 +1745,51 @@ function RunoffTab({ p, giltCashflows = [], forwardDividends = 0 }) {
           </div>
 
           <Card style={{ marginBottom: 14 }}>
-            <div style={{ fontSize: 13, fontWeight: 600, color: T.ink, marginBottom: 8 }}>
-              What funds each year — {realTerms ? "today's £" : "nominal £"}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap", marginBottom: 8 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: T.ink }}>
+                {chartView === "flow" ? "Cash flow — money in vs spend" : "What funds each year"} — {realTerms ? "today's £" : "nominal £"}
+              </div>
+              <Segmented value={chartView} onChange={setChartView} accent={T.blue}
+                options={[{ value: "flow", label: "Cash flow" }, { value: "src", label: "By source" }]} />
             </div>
-            <ResponsiveContainer width="100%" height={280}>
-              <ComposedChart data={displayRows} margin={{ top: 10, right: 8, left: 8, bottom: 0 }}>
-                <CartesianGrid stroke={T.lineSoft} vertical={false} />
-                <XAxis dataKey="year" tick={{ fontSize: 11, fill: T.muted }} tickLine={false} axisLine={{ stroke: T.line }} />
-                <YAxis tickFormatter={gbpK} tick={{ fontSize: 11, fill: T.muted }} tickLine={false} axisLine={false} width={52} />
-                <Tooltip contentStyle={tooltipStyle()} formatter={(v, n) => [gbp(v), Object.fromEntries(SOURCES.map(([k, l]) => [k, l]))[n] || (n === "expense" ? "Spend" : n)]} labelFormatter={(y) => `Year ${y}`} />
-                {SOURCES.map(([k, , c]) => (
-                  <Area key={k} type="stepAfter" dataKey={k} stackId="src" stroke="none" fill={c} fillOpacity={k === "fromPortfolio" ? 0.8 : 0.65} name={k} />
-                ))}
-                <Line type="stepAfter" dataKey="expense" stroke={T.ink} strokeWidth={1.6} strokeDasharray="5 4" dot={false} name="expense" />
-              </ComposedChart>
-            </ResponsiveContainer>
-            <Legendlet items={[...SOURCES.map(([, l, c]) => ({ c, t: l })), { c: T.ink, t: realTerms ? "Spend (flat — today's £)" : "Spend (inflation-uprated)", dash: true }]} />
+            {chartView === "flow" ? (
+              <>
+                <ResponsiveContainer width="100%" height={300}>
+                  <ComposedChart data={displayRows} stackOffset="sign" margin={{ top: 10, right: 8, left: 8, bottom: 0 }}>
+                    <CartesianGrid stroke={T.lineSoft} vertical={false} />
+                    <XAxis dataKey="year" tick={{ fontSize: 11, fill: T.muted }} tickLine={false} axisLine={{ stroke: T.line }} />
+                    <YAxis tickFormatter={gbpK} tick={{ fontSize: 11, fill: T.muted }} tickLine={false} axisLine={false} width={56} />
+                    <Tooltip contentStyle={tooltipStyle()} formatter={(v, n) => {
+                      const labels = { ...Object.fromEntries(INFLOWS.map(([k, l]) => [k, l])), expenseNeg: "Spend", balanceEnd: "Cash + gilt bank (end)" };
+                      return [gbp(Math.abs(v)), labels[n] || n];
+                    }} labelFormatter={(y) => `Year ${y}`} />
+                    <ReferenceLine y={0} stroke={T.line} />
+                    {INFLOWS.map(([k, , c]) => (
+                      <Bar key={k} dataKey={k} stackId="flow" fill={c} fillOpacity={k === "fromPortfolio" ? 0.85 : 0.7} name={k} />
+                    ))}
+                    <Bar dataKey="expenseNeg" stackId="flow" fill={T.ink} fillOpacity={0.35} name="expenseNeg" />
+                    <Line type="monotone" dataKey="balanceEnd" stroke={T.green} strokeWidth={2} dot={false} name="balanceEnd" />
+                  </ComposedChart>
+                </ResponsiveContainer>
+                <Legendlet items={[...INFLOWS.map(([, l, c]) => ({ c, t: l })), { c: T.ink, t: "Spend (out)" }, { c: T.green, t: "Cash + gilt bank at year end" }]} />
+              </>
+            ) : (
+              <>
+                <ResponsiveContainer width="100%" height={280}>
+                  <ComposedChart data={displayRows} margin={{ top: 10, right: 8, left: 8, bottom: 0 }}>
+                    <CartesianGrid stroke={T.lineSoft} vertical={false} />
+                    <XAxis dataKey="year" tick={{ fontSize: 11, fill: T.muted }} tickLine={false} axisLine={{ stroke: T.line }} />
+                    <YAxis tickFormatter={gbpK} tick={{ fontSize: 11, fill: T.muted }} tickLine={false} axisLine={false} width={52} />
+                    <Tooltip contentStyle={tooltipStyle()} formatter={(v, n) => [gbp(v), Object.fromEntries(SOURCES.map(([k, l]) => [k, l]))[n] || (n === "expense" ? "Spend" : n)]} labelFormatter={(y) => `Year ${y}`} />
+                    {SOURCES.map(([k, , c]) => (
+                      <Area key={k} type="stepAfter" dataKey={k} stackId="src" stroke="none" fill={c} fillOpacity={k === "fromPortfolio" ? 0.8 : 0.65} name={k} />
+                    ))}
+                    <Line type="stepAfter" dataKey="expense" stroke={T.ink} strokeWidth={1.6} strokeDasharray="5 4" dot={false} name="expense" />
+                  </ComposedChart>
+                </ResponsiveContainer>
+                <Legendlet items={[...SOURCES.map(([, l, c]) => ({ c, t: l })), { c: T.ink, t: realTerms ? "Spend (flat — today's £)" : "Spend (inflation-uprated)", dash: true }]} />
+              </>
+            )}
           </Card>
 
           <Card style={{ padding: 0, overflow: "hidden" }}>
@@ -1751,7 +1813,9 @@ function RunoffTab({ p, giltCashflows = [], forwardDividends = 0 }) {
                         </td>
                       ))}
                       <td style={{ padding: "7px 10px", textAlign: "right", fontFamily: MONO, color: r.giltBankEnd > 0 ? T.blue : T.muted }}>{r.giltBankEnd > 0 ? gbpK(r.giltBankEnd) : "—"}</td>
-                      <td style={{ padding: "7px 10px", textAlign: "right", fontFamily: MONO, color: T.ink2 }}>{gbpK(r.cashEnd)}</td>
+                      <td style={{ padding: "7px 10px", textAlign: "right", fontFamily: MONO, color: T.ink2, whiteSpace: "nowrap" }} title={r.surplusToCash > 0 ? `+${gbp(r.surplusToCash)} surplus income banked this year` : undefined}>
+                        {gbpK(r.cashEnd)}{r.surplusToCash > 0 && <span style={{ color: T.green, fontSize: 10.5, marginLeft: 4 }}>+{gbpK(r.surplusToCash)}</span>}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -1762,9 +1826,11 @@ function RunoffTab({ p, giltCashflows = [], forwardDividends = 0 }) {
           <div style={{ marginTop: 12 }}>
             <Note tone="blue">
               Nominal £ throughout ({effInflation(p)}%/yr spend uprating); the gilt bank and cash float earn nothing here — crediting interest would quietly stretch the runway.
+              "Cash left" can RISE: income received beyond a year's need (dividends, deferred-cash tranches, RSU vests once gilts have covered the spend) is banked into the float — the small green +£ next to it is that year's top-up. Gilt surpluses stay in their own bank so the ladder's contribution stays auditable. The Cash-flow chart shows the same engine as gross money IN (bars up) vs spend (bar down), with the green line tracking the total float (cash + gilt bank).
               RSUs assume SELL-ON-VEST at today's price ({inputs.rsuUnpriced > 0 ? `${inputs.rsuUnpriced} unpriced vest(s) excluded — set the ticker's price` : "no price forecasting"}); vested-and-held shares are already inside the portfolio, so they're deliberately not a source here.
-              Dividends are held flat at {gbpK(+forwardDividends || 0)}/yr — no growth, and no shrinkage as later sales reduce the portfolio: that circularity is disclosed rather than half-modelled.
-              Deferred cash and gilt cashflows are contractual schedules from their own tabs.
+              RSU vests and deferred-cash tranches are shown NET of tax — marginal UK income-tax bands + employee NI, taxed jointly per year on top of your plan salary while working ({inputs.compTaxRate > 0 ? `effective ${Math.round(inputs.compTaxRate * 100)}% over the horizon` : "none scheduled"}).
+              Dividends are held flat at {gbpK(+forwardDividends || 0)}/yr — trailing 12-month income per unit × units held TODAY (so recent buys raise it above last year's cash received), EXCLUDING gilt coupons (those are already in the ladder), and assumed tax-free (ISA/VCT holdings; GIA dividends would bear dividend tax not modelled here). No growth, and no shrinkage as later sales reduce the portfolio: that circularity is disclosed rather than half-modelled.
+              Gilts are conventional only: coupons + redemption at PAR, contractual nominal £ with no indexation — index-linked gilts are not modelled. Deferred cash and gilt cashflows are contractual schedules from their own tabs.
             </Note>
           </div>
         </>

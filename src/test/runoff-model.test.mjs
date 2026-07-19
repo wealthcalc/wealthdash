@@ -46,8 +46,48 @@ test("surplus deferred/RSU income beyond the year's need becomes cash, not lost"
   });
   assert.equal(rows[0].fromDeferred, 40000);
   assert.equal(rows[0].cashEnd, 60000);   // surplus banked as cash
+  assert.equal(rows[0].surplusToCash, 60000); // and the top-up is surfaced per-row
   assert.equal(rows[1].fromCash, 40000);  // and funds year 2
   assert.equal(rows[1].fromPortfolio, 0);
+  assert.equal(rows[1].surplusToCash, 0);
+});
+
+test("the rising-cash case the UI must explain: gilts cover the spend, dividends pile into cash", () => {
+  // This is the real-portfolio shape behind the question "why is cash
+  // going UP?" — the ladder alone covers early years, so the whole
+  // dividend stream is surplus and banks into the float untouched.
+  const { rows } = buildRunoff({
+    ...BASE, years: 2,
+    giltNominalByYear: { 2027: 40000, 2028: 40000 },
+    cashStart: 120000, annualDividends: 15000,
+  });
+  assert.equal(rows[0].fromCash, 0);
+  assert.equal(rows[0].fromDividends, 0);      // nothing needed from them
+  assert.equal(rows[0].surplusToCash, 15000);  // so they all bank
+  assert.equal(rows[0].cashEnd, 135000);
+  assert.equal(rows[1].cashEnd, 150000);
+});
+
+test("gross inflows + balance for the cash-flow view: received ≠ used", () => {
+  const { rows } = buildRunoff({
+    ...BASE, years: 2,
+    giltNominalByYear: { 2027: 100000 },  // covers year 1, banks 60k
+    cashStart: 20000, annualDividends: 15000,
+    deferredByYear: { 2027: 5000 }, rsuByYear: { 2028: 8000 },
+  });
+  const r0 = rows[0];
+  // gross inflows are what ARRIVED, regardless of the waterfall's need
+  assert.deepEqual([r0.giltIn, r0.deferredIn, r0.rsuIn, r0.divIn], [100000, 5000, 0, 15000]);
+  assert.equal(r0.fromDividends, 0); // used none of them…
+  assert.equal(r0.divIn, 15000);     // …but received all of them
+  // balance = cash + gilt bank: 20000 + (5000+15000 surplus) + 60000 bank
+  assert.equal(r0.cashEnd, 40000);
+  assert.equal(r0.giltBankEnd, 60000);
+  assert.equal(r0.balanceEnd, 100000);
+  // year 2: expense 40k from bank(40k of 60k); rsu 8k + div 15k surplus → cash
+  assert.equal(rows[1].giltIn, 0);
+  assert.equal(rows[1].rsuIn, 8000);
+  assert.equal(rows[1].balanceEnd, 40000 + 8000 + 15000 + 20000);
 });
 
 test("expense uprates with inflation; dividends stay flat (the disclosed assumption)", () => {

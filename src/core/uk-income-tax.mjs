@@ -88,6 +88,20 @@ export function employeeNI(salary) {
   return ni;
 }
 
+// Net-of-tax value of EXTRA employment income (RSU vests, deferred-cash
+// tranches) received on top of a base salary: marginal income-tax bands
+// (including the PA taper the extra income can trigger) plus marginal
+// employee NI — not a flat assumed rate. base = 0 models the same income
+// arriving after employment ends (still employment income when paid, but
+// no salary underneath it).
+export function netEmploymentIncome(gross, { base = 0, region } = {}) {
+  if (!(gross > 0)) return 0;
+  const taxFn = region === "scotland" ? taxScot : taxRUK;
+  const tax = taxFn(base + gross) - taxFn(base);
+  const ni = employeeNI(base + gross) - employeeNI(base);
+  return Math.max(0, gross - tax - ni);
+}
+
 // Annual Allowance with high-income taper (standard, non-MPAA case — see
 // core/allowances.mjs's mpaaLimitedAA() for the reduced-AA-after-flexible-
 // access case, which this function deliberately doesn't know about).
