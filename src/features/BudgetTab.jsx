@@ -42,6 +42,10 @@ const STARTER = [
 ];
 
 const thisMonth = () => todayISO().slice(0, 7);
+const prevMonth = (m) => {
+  const [y, mo] = m.split("-").map(Number);
+  return mo === 1 ? `${y - 1}-12` : `${y}-${String(mo - 1).padStart(2, "0")}`;
+};
 
 export default function BudgetTab({ setTab }) {
   const categories = useAppStore((s) => s.budgetCategories), setCategories = useAppStore((s) => s.setBudgetCategories);
@@ -110,7 +114,12 @@ export default function BudgetTab({ setTab }) {
 
 /* ------------------------------- Overview ---------------------------- */
 function Overview({ categories, txns, month, setMonth, setSub }) {
-  const [view, setView] = useState("month");
+  // Trailing 12 months is the DEFAULT because it's the honest picture: a
+  // single month is noisy (annual bills, holidays, a quiet fortnight) and
+  // the year is what the retirement plan actually consumes. This/Last
+  // month are one tap away for "did I overspend recently?".
+  const [view, setView] = useState(() => store.get("cgt.budget.view", "year"));
+  React.useEffect(() => store.set("cgt.budget.view", view), [view]);
   const m = useMemo(() => monthlyBudget({ categories, txns, month }), [categories, txns, month]);
   const a = useMemo(() => annualBudget({ categories, txns, month }), [categories, txns, month]);
   const [spreadAnnual, setSpreadAnnual] = useState(() => store.get("cgt.budget.spread", true));
@@ -121,6 +130,8 @@ function Overview({ categories, txns, month, setMonth, setSub }) {
   );
   const cur = view === "month" ? m : a;
   const s = cur.summary;
+  const tm = thisMonth(), lm = prevMonth(tm);
+  const activePeriod = view === "year" ? "year" : month === tm ? "this" : month === lm ? "last" : "month";
 
   if (!txns.length) {
     return <Empty msg="No spending imported yet. Use the Import statements sub-tab to load an Amex or HSBC CSV export, then categorise the rows." />;
@@ -129,20 +140,26 @@ function Overview({ categories, txns, month, setMonth, setSub }) {
   return (
     <div className="space-y-4">
       <div className="flex items-end gap-3 flex-wrap">
-        <Field label="Month"><input type="month" value={month} onChange={(e) => setMonth(e.target.value)} className="input num" /></Field>
-        <div className="flex gap-1.5 pb-0.5">
-          {[["month", "This month"], ["year", "Trailing 12 months"]].map(([k, label]) => (
-            <button key={k} onClick={() => setView(k)}
+        <div className="flex gap-1.5">
+          {[
+            ["year", "Trailing 12 months", () => setView("year")],
+            ["this", "This month", () => { setView("month"); setMonth(tm); }],
+            ["last", "Last month", () => { setView("month"); setMonth(lm); }],
+          ].map(([k, label, onClick]) => (
+            <button key={k} onClick={onClick}
               className={"text-xs font-medium px-2.5 py-1.5 rounded-full border transition " +
-                (view === k ? "border-[var(--accent)] bg-[var(--accent)] text-[var(--accent-fg)]" : "border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)]")}>
+                (activePeriod === k ? "border-[var(--accent)] bg-[var(--accent)] text-[var(--accent-fg)]" : "border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)]")}>
               {label}
             </button>
           ))}
         </div>
+        <Field label={view === "year" ? "12 months ending" : "Month"}>
+          <input type="month" value={month} onChange={(e) => { setMonth(e.target.value); }} className="input num" />
+        </Field>
       </div>
 
       <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))" }}>
-        <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3"><Stat label="Spent" value={gbp0(s.totalActual)} sub={view === "month" ? month : `${s.monthsCovered} months`} /></div>
+        <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3"><Stat label="Spent" value={gbp0(s.totalActual)} sub={view === "month" ? month : `12 months to ${month}`} /></div>
         <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3"><Stat label="Budget" value={gbp0(s.totalLimit)} sub={view === "month" ? "monthly limits only" : "incl. annual categories"} /></div>
         <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3">
           <Stat label={s.variance >= 0 ? "Under budget" : "Over budget"} value={gbp0(Math.abs(s.variance))} tone={s.variance >= 0 ? "green" : "red"} sub={`${s.overCount ?? cur.rows.filter((r) => r.over).length} categor${(s.overCount ?? 0) === 1 ? "y" : "ies"} over`} />
@@ -179,14 +196,18 @@ function Overview({ categories, txns, month, setMonth, setSub }) {
             <YAxis tickFormatter={gbp0} tick={{ fontSize: 11, fill: "var(--muted)" }} tickLine={false} axisLine={false} width={60} />
             <Tooltip contentStyle={{ background: "var(--panel)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 12 }}
               formatter={(v, n) => [gbp(v), { essential: "Essential", discretionary: "Discretionary", limit: "Monthly budget", uncategorised: "Uncategorised" }[n] || n]} />
-            <Bar dataKey="essential" stackId="s" fill="var(--accent)" name="essential" radius={[0, 0, 0, 0]} />
-            <Bar dataKey="discretionary" stackId="s" fill="var(--m-pool)" name="discretionary" />
+            {/* Essential vs discretionary must read apart at a glance, so
+                they're indigo vs amber. NOT --accent/--m-pool, which are
+                the SAME hex (#4338ca) in light mode and two shades of
+                indigo in dark — invisible as a distinction. */}
+            <Bar dataKey="essential" stackId="s" fill="var(--accent)" name="essential" />
+            <Bar dataKey="discretionary" stackId="s" fill="var(--m-bb)" name="discretionary" />
             <Bar dataKey="uncategorised" stackId="s" fill="var(--muted)" fillOpacity={0.5} name="uncategorised" radius={[3, 3, 0, 0]} />
             <Line type="stepAfter" dataKey="limit" stroke="var(--fg)" strokeWidth={1.5} strokeDasharray="5 4" dot={false} name="limit" />
           </ComposedChart>
         </ResponsiveContainer>
         <div className="flex flex-wrap gap-3 mt-2">
-          {[["var(--accent)", "Essential"], ["var(--m-pool)", "Discretionary"], ["var(--muted)", "Uncategorised"]].map(([c, t]) => (
+          {[["var(--accent)", "Essential"], ["var(--m-bb)", "Discretionary"], ["var(--muted)", "Uncategorised"]].map(([c, t]) => (
             <span key={t} className="inline-flex items-center gap-1.5 text-xs text-[var(--muted)]">
               <span className="w-2 h-2 rounded-full inline-block" style={{ background: c }} />{t}
             </span>
