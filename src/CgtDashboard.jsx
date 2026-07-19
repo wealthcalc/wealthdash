@@ -610,7 +610,13 @@ export default function App() {
                 giltCashflows: giltData ? giltData.cashflows : [],
                 // Recurring-dividend estimate for the Run-off sub-tab
                 // (forward income on current units, from the returns engine).
-                forwardDividends: returns?.total?.forwardIncome ?? 0,
+                // Gilt-kind tickers are EXCLUDED: their coupons already flow
+                // into the run-off via giltCashflows above, so counting
+                // logged coupon income here too would double-count the
+                // ladder and inflate the dividend line.
+                forwardDividends: returns
+                  ? returns.perHolding.reduce((s, h) => s + (secMeta[h.ticker]?.kind === "gilt" ? 0 : (h.income?.forwardIncome || 0)), 0)
+                  : 0,
                 // wrapper totals (holdings + cash) for one-click plan prefill
                 livePots: wealthModel ? Object.fromEntries(["SIPP", "ISA", "GIA", "LISA"].map((w) => [w, wealthModel.byWrapper[w]?.total ?? null])) : null,
                 liveSalary: income,

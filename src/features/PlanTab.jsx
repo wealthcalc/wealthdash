@@ -10,7 +10,7 @@ import {
   Gauge, ChevronDown, ChevronUp, Info, RefreshCw, Building2, Coins, HeartPulse,
   Layers, Landmark, Plus, Trash2, Umbrella, Droplets,
 } from "lucide-react";
-import { taxRUK, taxScot, employeeNI } from "../core/uk-income-tax.mjs";
+import { taxRUK, taxScot, employeeNI, netEmploymentIncome } from "../core/uk-income-tax.mjs";
 import {
   lifeExpectancy, effInflation, btlYearly, replayDecum, STRATEGY_LABELS, buildProjection, HIST,
 } from "../core/drawdown.mjs";
@@ -1654,8 +1654,28 @@ function RunoffTab({ p, giltCashflows = [], forwardDividends = 0 }) {
         rsuByYear[y] = (rsuByYear[y] || 0) + (+v.shares || 0) * price;
       }
     }
-    return { giltNominalByYear, cashStart, deferredByYear, rsuByYear, rsuUnpriced };
-  }, [giltCashflows, cash, cashAccounts, dcAwards, dcVests, rsuGrants, rsuEvents, prices, today, horizon]);
+    // TAX: RSU vests and deferred-cash tranches are employment income —
+    // net them down at marginal UK bands + employee NI, taxed JOINTLY per
+    // year (they stack on each other) on top of salary while still
+    // working, on top of nothing after retirement. Dividends are left
+    // gross (assumed ISA/VCT — disclosed in the footnote); gilt coupons
+    // and redemptions are untaxed here (low-coupon gilts in a GIA are
+    // mostly CGT-free redemption gain; coupon tax would need per-gilt
+    // detail this view doesn't have — disclosed too).
+    const retireYear = (startYear - 1) + Math.max(0, (+p.retireAge || 0) - (+p.currentAge || 0));
+    let grossComp = 0, netComp = 0;
+    for (const y of new Set([...Object.keys(deferredByYear), ...Object.keys(rsuByYear)].map(Number))) {
+      const gross = (deferredByYear[y] || 0) + (rsuByYear[y] || 0);
+      if (!(gross > 0)) continue;
+      const base = y < retireYear ? (+p.salary || 0) : 0;
+      const f = netEmploymentIncome(gross, { base, region: p.region }) / gross;
+      if (deferredByYear[y]) deferredByYear[y] *= f;
+      if (rsuByYear[y]) rsuByYear[y] *= f;
+      grossComp += gross; netComp += gross * f;
+    }
+    const compTaxRate = grossComp > 0 ? 1 - netComp / grossComp : 0;
+    return { giltNominalByYear, cashStart, deferredByYear, rsuByYear, rsuUnpriced, compTaxRate };
+  }, [giltCashflows, cash, cashAccounts, dcAwards, dcVests, rsuGrants, rsuEvents, prices, today, horizon, startYear, p]);
 
   const runoff = useMemo(() => buildRunoff({
     annualExpense: +expense || 0, inflation: effInflation(p), startYear, years: Math.max(1, +horizon || 1),
@@ -1808,8 +1828,9 @@ function RunoffTab({ p, giltCashflows = [], forwardDividends = 0 }) {
               Nominal £ throughout ({effInflation(p)}%/yr spend uprating); the gilt bank and cash float earn nothing here — crediting interest would quietly stretch the runway.
               "Cash left" can RISE: income received beyond a year's need (dividends, deferred-cash tranches, RSU vests once gilts have covered the spend) is banked into the float — the small green +£ next to it is that year's top-up. Gilt surpluses stay in their own bank so the ladder's contribution stays auditable. The Cash-flow chart shows the same engine as gross money IN (bars up) vs spend (bar down), with the green line tracking the total float (cash + gilt bank).
               RSUs assume SELL-ON-VEST at today's price ({inputs.rsuUnpriced > 0 ? `${inputs.rsuUnpriced} unpriced vest(s) excluded — set the ticker's price` : "no price forecasting"}); vested-and-held shares are already inside the portfolio, so they're deliberately not a source here.
-              Dividends are held flat at {gbpK(+forwardDividends || 0)}/yr — no growth, and no shrinkage as later sales reduce the portfolio: that circularity is disclosed rather than half-modelled.
-              Deferred cash and gilt cashflows are contractual schedules from their own tabs.
+              RSU vests and deferred-cash tranches are shown NET of tax — marginal UK income-tax bands + employee NI, taxed jointly per year on top of your plan salary while working ({inputs.compTaxRate > 0 ? `effective ${Math.round(inputs.compTaxRate * 100)}% over the horizon` : "none scheduled"}).
+              Dividends are held flat at {gbpK(+forwardDividends || 0)}/yr — trailing 12-month income per unit × units held TODAY (so recent buys raise it above last year's cash received), EXCLUDING gilt coupons (those are already in the ladder), and assumed tax-free (ISA/VCT holdings; GIA dividends would bear dividend tax not modelled here). No growth, and no shrinkage as later sales reduce the portfolio: that circularity is disclosed rather than half-modelled.
+              Gilts are conventional only: coupons + redemption at PAR, contractual nominal £ with no indexation — index-linked gilts are not modelled. Deferred cash and gilt cashflows are contractual schedules from their own tabs.
             </Note>
           </div>
         </>

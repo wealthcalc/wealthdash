@@ -2,8 +2,35 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   personalAllowance, taxRUK, taxScot, employeeNI, annualAllowance,
-  grossForNetPension, HR_THRESHOLD, PA_BASE,
+  grossForNetPension, netEmploymentIncome, HR_THRESHOLD, PA_BASE,
 } from "../core/uk-income-tax.mjs";
+
+/* ------------------- net-of-tax extra employment income ---------------- */
+
+test("netEmploymentIncome: marginal on top of salary, not average", () => {
+  // £10k vest on top of £150k salary: all at 45% + 2% NI → 53% kept? No —
+  // PA already fully tapered at 150k, so exactly 45% + 2%: net 5300.
+  const net = netEmploymentIncome(10000, { base: 150000 });
+  assert.ok(Math.abs(net - 5300) < 1, `${net}`);
+  // same £10k with NO salary underneath (post-retirement tranche): covered
+  // by the personal allowance → no income tax, no NI below the PT.
+  assert.equal(netEmploymentIncome(10000, { base: 0 }), 10000);
+});
+
+test("netEmploymentIncome: crossing £100k triggers the PA-taper 60% zone", () => {
+  // £20k on top of £95k: £5k at 40%+2%, £15k in the taper zone (60%+2%)
+  const net = netEmploymentIncome(20000, { base: 95000 });
+  const expected = 5000 * (1 - 0.42) + 15000 * (1 - 0.62);
+  assert.ok(Math.abs(net - expected) < 1, `${net} vs ${expected}`);
+});
+
+test("netEmploymentIncome: degenerate and regional", () => {
+  assert.equal(netEmploymentIncome(0, { base: 100000 }), 0);
+  // Scotland's top slice is taxed harder than rUK's
+  const scot = netEmploymentIncome(10000, { base: 150000, region: "scotland" });
+  const ruk = netEmploymentIncome(10000, { base: 150000 });
+  assert.ok(scot < ruk);
+});
 
 /* --------------------------- personal allowance ------------------------ */
 
