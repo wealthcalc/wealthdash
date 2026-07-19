@@ -1,8 +1,8 @@
 import React, { useState, useMemo, useRef } from "react";
 import { Plus, Trash2, Upload, Check, AlertTriangle, Wand2 } from "lucide-react";
-import { ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip } from "recharts";
-import { monthlyBudget, annualBudget, spendByMonth, trailing12 } from "../core/budget.mjs";
-import { categoriseAll, learnMerchants, uncategorisedGroups, suggestRule } from "../core/categorise.mjs";
+import { ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, PieChart, Pie, Cell, Sector } from "recharts";
+import { monthlyBudget, annualBudget, spendByMonth, trailing12, mergedSpend } from "../core/budget.mjs";
+import { uncategorisedGroups, suggestRule } from "../core/categorise.mjs";
 import { parseStatement, dedupeStatement, PROFILES } from "../core/statement-import.mjs";
 import { expandRecurring, statementCoverage, annualCommitment, FREQUENCIES } from "../core/recurring.mjs";
 import { store, gbp, gbp0, SubTabs, uid, todayISO, Field, Empty, Stat, useSort, sortRows, SortTh } from "../ui/shared.jsx";
@@ -61,25 +61,26 @@ export default function BudgetTab({ setTab }) {
   // Derived categorisation — see header. Merchant memory is learned from
   // the user's own manual decisions on every render, so one correction
   // teaches every future row without a save step.
-  const merchantMap = useMemo(() => learnMerchants(spendTxns), [spendTxns]);
-  // Recurring commitments become dated rows on read (never persisted, see
-  // core/recurring.mjs) and are suppressed for any month the matching
-  // account already has imported statement rows for — so a direct debit
-  // can't be counted twice. Window: two years back, one forward.
+  // The one spend list every view uses — imported/manual rows with
+  // categories resolved, plus recurring commitments expanded into the
+  // months no statement covers (core/budget.mjs's mergedSpend). Home and
+  // Plan call the same function, so the three can't disagree.
+  const txns = useMemo(
+    () => mergedSpend({ spendTxns, rules, recurring, month: todayISO().slice(0, 7) }),
+    [spendTxns, rules, recurring]
+  );
+  // The suppression detail is only needed by the Recurring sub-tab's
+  // status column, so it's computed separately rather than widening
+  // mergedSpend's return for one consumer.
   const recurringOut = useMemo(() => {
     if (!recurring?.length) return { rows: [], suppressed: [] };
-    const today = todayISO();
+    const y = +todayISO().slice(0, 4);
     return expandRecurring({
       definitions: recurring,
-      fromDate: `${+today.slice(0, 4) - 2}-01-01`,
-      toDate: `${+today.slice(0, 4) + 1}-12-31`,
+      fromDate: `${y - 2}-01-01`, toDate: `${y + 1}-12-31`,
       coverage: statementCoverage(spendTxns),
     });
   }, [recurring, spendTxns]);
-  const txns = useMemo(
-    () => [...categoriseAll(spendTxns, { rules, merchantMap }), ...recurringOut.rows],
-    [spendTxns, rules, merchantMap, recurringOut]
-  );
 
   const catById = useMemo(() => Object.fromEntries(categories.map((c) => [c.id, c])), [categories]);
   const seedStarter = () => setCategories(STARTER.map((c) => ({ id: uid(), name: c.name, monthly: c.monthly || 0, annual: c.annual || 0, essential: !!c.essential, transfer: !!c.transfer })));
@@ -224,6 +225,9 @@ function Overview({ categories, txns, month, setMonth, setSub, drillTo }) {
             : "Money is shown in the month it actually left your account, so an annual bill towers over its neighbours. The budget line is monthly limits only — that spike is by design, not an overspend."}
         </p>
       </div>
+
+      <CategoryPie rows={cur.rows} total={s.totalActual} onSlice={drillTo}
+        periodLabel={view === "month" ? month : `12 months to ${month}`} />
 
       <div className="rounded-xl border border-[var(--border)] overflow-x-auto">
         <table className="w-full text-sm">
@@ -408,6 +412,94 @@ function Transactions({ categories, catById, txns, setManual, setSpendTxns, rule
           {shown.length > 400 && <p className="text-xs text-[var(--muted)] p-2">Showing the first 400 of {shown.length} — narrow with the filter above.</p>}
         </div>
       )}
+    </div>
+  );
+}
+
+/* --------------------------- Category pie ----------------------------- */
+// Distinct hues rather than a gradient: a pie is read by matching colour
+// to label, which a single-hue ramp makes impossible past three slices.
+const PIE_COLORS = [
+  "var(--accent)", "var(--m-bb)", "var(--gain)", "var(--m-same)", "#7A5C9E",
+  "#C2705A", "#4E9A8F", "#B0884E", "#8E6FA8", "#5F8FBF", "#A8615F", "#6B8E4E",
+];
+
+// The active slice grows slightly and gains an outer ring — hover feedback
+// that survives colour-blindness, unlike a colour shift alone.
+const renderActiveSlice = (p) => {
+  const { cx, cy, innerRadius, outerRadius, startAngle, endAngle, fill } = p;
+  return (
+    <g>
+      <Sector cx={cx} cy={cy} innerRadius={innerRadius} outerRadius={outerRadius + 5} startAngle={startAngle} endAngle={endAngle} fill={fill} />
+      <Sector cx={cx} cy={cy} innerRadius={outerRadius + 7} outerRadius={outerRadius + 9} startAngle={startAngle} endAngle={endAngle} fill={fill} opacity={0.5} />
+    </g>
+  );
+};
+
+function CategoryPie({ rows, total, onSlice, periodLabel }) {
+  const [active, setActive] = useState(-1);
+  // Only positive spend can be a slice: a category in net refund for the
+  // period has no meaningful share of a total, and rendering a negative
+  // slice would silently distort every other percentage.
+  const data = useMemo(() => rows.filter((r) => r.actual > 0).map((r, i) => ({
+    ...r, value: r.actual, fill: PIE_COLORS[i % PIE_COLORS.length],
+  })), [rows]);
+  const refunded = rows.filter((r) => r.actual < 0);
+  if (!data.length) return null;
+  const shown = active >= 0 ? data[active] : null;
+
+  return (
+    <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3">
+      <div className="text-xs font-medium text-[var(--muted)] mb-1.5">Where the money goes — {periodLabel}</div>
+      <div className="flex flex-wrap items-center gap-4">
+        <div style={{ width: 240, height: 240, position: "relative" }}>
+          <ResponsiveContainer width="100%" height="100%">
+            <PieChart>
+              <Pie
+                data={data} dataKey="value" nameKey="name"
+                cx="50%" cy="50%" innerRadius={62} outerRadius={95}
+                paddingAngle={1.5} stroke="none"
+                activeIndex={active >= 0 ? active : undefined}
+                activeShape={renderActiveSlice}
+                onMouseEnter={(_, i) => setActive(i)}
+                onMouseLeave={() => setActive(-1)}
+                onClick={(_, i) => onSlice(data[i].id)}
+                isAnimationActive={false}
+                style={{ cursor: "pointer", outline: "none" }}
+              >
+                {data.map((d) => <Cell key={d.id} fill={d.fill} />)}
+              </Pie>
+            </PieChart>
+          </ResponsiveContainer>
+          {/* Centre label: the hovered slice, or the total when idle —
+              so the doughnut hole earns its space instead of being a hole. */}
+          <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", pointerEvents: "none", textAlign: "center", padding: "0 42px" }}>
+            <div className="text-[10px] uppercase tracking-wide text-[var(--muted)] truncate w-full">{shown ? shown.name : "Total"}</div>
+            <div className="text-sm font-semibold num">{gbp0(shown ? shown.actual : total)}</div>
+            {shown && total > 0 && <div className="text-[11px] text-[var(--muted)] num">{((shown.actual / total) * 100).toFixed(1)}%</div>}
+          </div>
+        </div>
+
+        <div className="flex-1 min-w-[200px] space-y-0.5">
+          {data.map((d, i) => (
+            <button key={d.id}
+              onMouseEnter={() => setActive(i)} onMouseLeave={() => setActive(-1)}
+              onClick={() => onSlice(d.id)}
+              className={"w-full flex items-center gap-2 text-xs px-1.5 py-1 rounded transition text-left " + (active === i ? "bg-[var(--panel2)]" : "")}
+              title={`Show ${d.name} transactions`}>
+              <span className="w-2 h-2 rounded-full shrink-0" style={{ background: d.fill }} />
+              <span className="truncate flex-1">{d.name}</span>
+              {d.essential && <span className="text-[9px] uppercase tracking-wide text-[var(--muted)] shrink-0">ess</span>}
+              <span className="num shrink-0">{gbp0(d.actual)}</span>
+              <span className="num text-[var(--muted)] shrink-0 w-11 text-right">{total > 0 ? `${((d.actual / total) * 100).toFixed(1)}%` : ""}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+      <p className="text-xs text-[var(--muted)] mt-2">
+        Click a slice or a row to see its transactions.
+        {refunded.length > 0 && ` ${refunded.map((r) => r.name).join(", ")} ${refunded.length === 1 ? "is" : "are"} net negative for this period (refunds exceeded spending), so ${refunded.length === 1 ? "it isn't" : "they aren't"} shown — a negative slice would distort every other share.`}
+      </p>
     </div>
   );
 }

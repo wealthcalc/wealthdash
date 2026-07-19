@@ -7,9 +7,7 @@ import { pensionXirrByWrapper } from "../core/returns.mjs";
 import { accountsMaturingSoon } from "../core/cash.mjs";
 import { allocationDrift } from "../core/rebalancing.mjs";
 import { buildActionQueue } from "../core/action-queue.mjs";
-import { monthlyBudget, planSpendFromBudget } from "../core/budget.mjs";
-import { categoriseAll, learnMerchants } from "../core/categorise.mjs";
-import { expandRecurring, statementCoverage } from "../core/recurring.mjs";
+import { monthlyBudget, planSpendFromBudget, mergedSpend } from "../core/budget.mjs";
 import PlanHealthCard from "../ui/PlanHealthCard.jsx";
 import {
   store, gbp0, num, pct, WrapperChip, AllocBar, KIND_LABEL, RateCell, Empty, todayISO,
@@ -448,14 +446,7 @@ export default function HomeTab({
   const budgetSignals = useMemo(() => {
     if (!budgetCategories?.length || !spendTxns?.length) return { overspend: null, spendDrift: null };
     const month = todayISO().slice(0, 7);
-    const merged = [
-      ...categoriseAll(spendTxns, { rules: budgetRules || [], merchantMap: learnMerchants(spendTxns) }),
-      ...expandRecurring({
-        definitions: recurringExpenses || [],
-        fromDate: `${+month.slice(0, 4) - 2}-01-01`, toDate: `${+month.slice(0, 4) + 1}-12-31`,
-        coverage: statementCoverage(spendTxns),
-      }).rows,
-    ];
+    const merged = mergedSpend({ spendTxns, rules: budgetRules || [], recurring: recurringExpenses || [], month });
     // Worst overspending category THIS month — one item, not one per
     // category (see action-queue's note on crowding the queue).
     const m = monthlyBudget({ categories: budgetCategories, txns: merged, month });

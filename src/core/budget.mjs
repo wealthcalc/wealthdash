@@ -35,8 +35,35 @@
    Pure and node-tested (budget.test.mjs).
    ====================================================================== */
 
+import { categoriseAll, learnMerchants } from "./categorise.mjs";
+import { expandRecurring, statementCoverage } from "./recurring.mjs";
+
 const r2 = (x) => Math.round(x * 100) / 100;
 const monthOf = (iso) => (iso || "").slice(0, 7);
+
+// THE spend list every consumer must use: imported/manual transactions
+// with categories resolved, PLUS recurring commitments expanded into the
+// months no statement covers.
+//
+// This exists because assembling it by hand was duplicated across the
+// Budget tab, the Home action queue and the Plan tab — and they diverged:
+// Plan omitted recurring commitments, so its "your actual spend is £X"
+// prefill silently under-stated every direct debit on an unimported
+// account and disagreed with the Budget tab's own total. One function, so
+// the three views cannot drift apart again.
+export function mergedSpend({ spendTxns = [], rules = [], recurring = [], month } = {}) {
+  if (!month) throw new Error("mergedSpend requires a month (YYYY-MM) — pure functions don't read the clock.");
+  const year = +month.slice(0, 4);
+  return [
+    ...categoriseAll(spendTxns, { rules, merchantMap: learnMerchants(spendTxns) }),
+    ...expandRecurring({
+      definitions: recurring,
+      fromDate: `${year - 2}-01-01`,
+      toDate: `${year + 1}-12-31`,
+      coverage: statementCoverage(spendTxns),
+    }).rows,
+  ];
+}
 
 // Months from `fromMonth` to `toMonth` inclusive, as "YYYY-MM".
 export function monthRange(fromMonth, toMonth) {
