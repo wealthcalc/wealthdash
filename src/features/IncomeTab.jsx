@@ -69,7 +69,12 @@ function IncomeTab({ eriTxns, incomeByYear, incomeAllWrappers = {}, txns, income
   const [fxBusy, setFxBusy] = useState(false);
   const [divSort, toggleDivSort] = useSort("date", "desc");
   const [eriSort, toggleEriSort] = useSort("distributionDate", "desc");
-  const [sub, setSub] = useState(() => store.get("cgt.incomesubtab", "byyear"));
+  // Sub-tab order tells the story in time: what's COMING (calendar), what
+  // you've RECEIVED and where (by wrapper), the raw LEDGER (div & int),
+  // what it COSTS (tax, GIA-only), then the ERI edge case last. Default is
+  // the calendar — the forward look is the everyday visit; tax is the
+  // January visit.
+  const [sub, setSub] = useState(() => store.get("cgt.incomesubtab", "calendar"));
   React.useEffect(() => store.set("cgt.incomesubtab", sub), [sub]);
   const years = Object.keys(incomeByYear).sort().reverse();
   const allYears = Object.keys(incomeAllWrappers).sort().reverse();
@@ -114,17 +119,12 @@ function IncomeTab({ eriTxns, incomeByYear, incomeAllWrappers = {}, txns, income
 
   return (
     <div className="space-y-5">
-      <div className="flex items-end gap-3 flex-wrap">
-        <Field label="Employment / other income (£)"><CurrencyInput value={income} onChange={setIncome} className="w-48" /></Field>
-        <p className="text-xs text-[var(--muted)] pb-2 max-w-md">Dividends and interest are stacked on top of this income for the tax calculation. The tax table counts only taxable (GIA) income; the all-wrapper overview shows your full income including tax-free ISA/SIPP/LISA/VCT.</p>
-      </div>
-
       <SubTabs
-        tabs={[["byyear", "Tax by year"], ["divint", "Dividends & interest"], ["eri", "ERI"], ["calendar", "Calendar"]]}
+        tabs={[["calendar", "Calendar"], ["bywrapper", "Income by wrapper"], ["divint", "Dividends & interest"], ["byyear", "Tax by year"], ["eri", "ERI"]]}
         active={sub} onChange={setSub}
       />
 
-      {sub === "byyear" && (
+      {sub === "bywrapper" && (
         <div className="space-y-6">
           {/* Year-on-year total income by wrapper, stacked bars coloured by wrapper */}
           {yoyChartData.length ? (
@@ -150,7 +150,7 @@ function IncomeTab({ eriTxns, incomeByYear, incomeAllWrappers = {}, txns, income
                   ))}
                 </div>
               </div>
-              <p className="text-xs text-[var(--muted)]">Dividends + interest combined, gross of tax, by tax year and wrapper. ISA/SIPP/LISA income is tax-free; VCT dividends are exempt; only GIA feeds the tax table below.</p>
+              <p className="text-xs text-[var(--muted)]">Dividends + interest combined, gross of tax, by tax year and wrapper. ISA/SIPP/LISA income is tax-free; VCT dividends are exempt; only GIA feeds the Tax by year sub-tab.</p>
             </div>
           ) : null}
 
@@ -187,9 +187,18 @@ function IncomeTab({ eriTxns, incomeByYear, incomeAllWrappers = {}, txns, income
                   </tbody>
                 </table>
               </div>
-              <p className="text-xs text-[var(--muted)]">{isWrapperTaxable(incWrapper) ? `${incWrapper} is taxable` : `${incWrapper} is tax-free`} — only GIA income feeds the tax calculation below; ISA, SIPP, LISA and VCT income is tax-free (VCT dividends are exempt under ITA 2007 Part 6).</p>
+              <p className="text-xs text-[var(--muted)]">{isWrapperTaxable(incWrapper) ? `${incWrapper} is taxable` : `${incWrapper} is tax-free`} — only GIA income feeds the Tax by year sub-tab; ISA, SIPP, LISA and VCT income is tax-free (VCT dividends are exempt under ITA 2007 Part 6).</p>
             </div>
-          ) : null}
+          ) : <Empty msg="No investment income recorded yet. Add dividends and interest on the Dividends & interest sub-tab (or import them) to see the wrapper breakdown." />}
+        </div>
+      )}
+
+      {sub === "byyear" && (
+        <div className="space-y-6">
+          <div className="flex items-end gap-3 flex-wrap">
+            <Field label="Employment / other income (£)"><CurrencyInput value={income} onChange={setIncome} className="w-48" /></Field>
+            <p className="text-xs text-[var(--muted)] pb-2 max-w-md">Taxable (GIA) dividends and interest are stacked on top of this income to work out the tax. Tax-free wrapper income (ISA/SIPP/LISA/VCT) is on the Income by wrapper sub-tab.</p>
+          </div>
 
           {/* Per-year income tax (taxable only) */}
           {years.length ? (
