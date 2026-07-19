@@ -44,6 +44,11 @@ export function buildActionQueue({
   cashMaturing = [],          // accountsMaturingSoon() output ({matured} flag)
   concentrationAlerts = [],   // concentration().alerts — single-equity risk
   giltRedemptions = [],       // [{date, label, amount}] within the caller's window
+  // Data-safety nudges — kept LOW-scored so money decisions outrank them:
+  backupAgeDays = null,       // days since last Backup download; null = never
+  syncEnabled = false,        // encrypted sync on -> backup nudge unnecessary
+  hasData = false,            // don't nag an empty ledger to back itself up
+  importAges = [],            // [{source, days}] since each broker feed's last import
   taxYearEndActive = false,
   max = MAX_ITEMS,
 } = {}) {
@@ -131,6 +136,29 @@ export function buildActionQueue({
         bucket: worst.bucket, driftPct: worst.driftPct, overweight: worst.driftPct > 0,
       });
     }
+  }
+
+  // -- Backup staleness — only when sync is OFF (sync makes manual
+  //    backups redundant) and there is data worth losing. "Never backed
+  //    up" scores highest; otherwise rises slowly with age past 30 days.
+  if (!syncEnabled && hasData && (backupAgeDays == null || backupAgeDays > 30)) {
+    items.push({
+      id: "backup-stale", tab: "sync",
+      amount: 0, score: backupAgeDays == null ? 50 : Math.min(48, 25 + backupAgeDays / 5),
+      backupAgeDays,
+    });
+  }
+
+  // -- Broker-feed staleness — a source that has EVER been imported and
+  //    hasn't been refreshed in 45+ days means the ledger is quietly
+  //    drifting from reality. Low-scored: housekeeping, not a decision.
+  for (const f of importAges) {
+    if (!(f.days > 45)) continue;
+    items.push({
+      id: "import-stale", tab: "import",
+      amount: 0, score: Math.min(40, 20 + (f.days - 45) / 5),
+      source: f.source, days: Math.round(f.days),
+    });
   }
 
   return items.sort((a, b) => b.score - a.score).slice(0, Math.max(1, max));

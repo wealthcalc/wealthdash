@@ -1619,6 +1619,12 @@ function RunoffTab({ p, giltCashflows = [], forwardDividends = 0 }) {
   React.useEffect(() => store.set("plan.runoff.expense", expense), [expense]);
   const [horizon, setHorizon] = useState(() => store.get("plan.runoff.years", 25));
   React.useEffect(() => store.set("plan.runoff.years", horizon), [horizon]);
+  // Display mode: nominal £ (the engine's native unit — gilt/deferred
+  // flows are contractual nominal) or today's £ (every year deflated by
+  // the same inflation the expense uprates at, so the expense line reads
+  // FLAT and erosion of fixed cashflows is visible).
+  const [realTerms, setRealTerms] = useState(() => store.get("plan.runoff.real", true));
+  React.useEffect(() => store.set("plan.runoff.real", realTerms), [realTerms]);
 
   const today = todayISO();
   const startYear = +today.slice(0, 4) + 1; // first FULL calendar year
@@ -1659,6 +1665,13 @@ function RunoffTab({ p, giltCashflows = [], forwardDividends = 0 }) {
   }), [expense, horizon, p, startYear, inputs, forwardDividends]);
 
   const s = runoff.summary;
+  // Deflate for display when in today's-£ mode (engine stays nominal).
+  const deflate = (row, v) => realTerms ? v / Math.pow(1 + effInflation(p) / 100, row.year - startYear) : v;
+  const displayRows = runoff.rows.map((r) => {
+    const d = { ...r };
+    for (const k of ["expense", "fromGilts", "fromCash", "fromDeferred", "fromRsu", "fromDividends", "fromPortfolio", "giltBankEnd", "cashEnd"]) d[k] = deflate(r, r[k]);
+    return d;
+  });
   const SOURCES = [
     ["fromGilts", "Gilt ladder", T.blue],
     ["fromCash", "Cash", T.green],
@@ -1681,6 +1694,11 @@ function RunoffTab({ p, giltCashflows = [], forwardDividends = 0 }) {
         <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "center" }}>
           <Field label="Annual spend (today's £)" value={expense} min={0} max={500000} step={1000} prefix="£" onChange={setExpense} />
           <Field label="Horizon (years)" value={horizon} min={1} max={40} onChange={setHorizon} />
+          <div>
+            <div style={{ fontSize: 11.5, color: T.ink2, fontWeight: 600, marginBottom: 4 }}>Display</div>
+            <Segmented value={realTerms ? "real" : "nominal"} onChange={(v) => setRealTerms(v === "real")} accent={T.blue}
+              options={[{ value: "real", label: "Today's £" }, { value: "nominal", label: "Nominal £" }]} />
+          </div>
         </div>
       </Card>
 
@@ -1693,6 +1711,25 @@ function RunoffTab({ p, giltCashflows = [], forwardDividends = 0 }) {
             <Card><Stat label="Gilt ladder ends" value={s.giltLadderEndsYear ?? "no gilts"} sub={s.cashExhaustedYear ? `cash float gone ${s.cashExhaustedYear}` : "cash float never exhausted"} /></Card>
           </div>
 
+          <Card style={{ marginBottom: 14 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: T.ink, marginBottom: 8 }}>
+              What funds each year — {realTerms ? "today's £" : "nominal £"}
+            </div>
+            <ResponsiveContainer width="100%" height={280}>
+              <ComposedChart data={displayRows} margin={{ top: 10, right: 8, left: 8, bottom: 0 }}>
+                <CartesianGrid stroke={T.lineSoft} vertical={false} />
+                <XAxis dataKey="year" tick={{ fontSize: 11, fill: T.muted }} tickLine={false} axisLine={{ stroke: T.line }} />
+                <YAxis tickFormatter={gbpK} tick={{ fontSize: 11, fill: T.muted }} tickLine={false} axisLine={false} width={52} />
+                <Tooltip contentStyle={tooltipStyle()} formatter={(v, n) => [gbp(v), Object.fromEntries(SOURCES.map(([k, l]) => [k, l]))[n] || (n === "expense" ? "Spend" : n)]} labelFormatter={(y) => `Year ${y}`} />
+                {SOURCES.map(([k, , c]) => (
+                  <Area key={k} type="stepAfter" dataKey={k} stackId="src" stroke="none" fill={c} fillOpacity={k === "fromPortfolio" ? 0.8 : 0.65} name={k} />
+                ))}
+                <Line type="stepAfter" dataKey="expense" stroke={T.ink} strokeWidth={1.6} strokeDasharray="5 4" dot={false} name="expense" />
+              </ComposedChart>
+            </ResponsiveContainer>
+            <Legendlet items={[...SOURCES.map(([, l, c]) => ({ c, t: l })), { c: T.ink, t: realTerms ? "Spend (flat — today's £)" : "Spend (inflation-uprated)", dash: true }]} />
+          </Card>
+
           <Card style={{ padding: 0, overflow: "hidden" }}>
             <div style={{ overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
@@ -1704,7 +1741,7 @@ function RunoffTab({ p, giltCashflows = [], forwardDividends = 0 }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {runoff.rows.map((r) => (
+                  {displayRows.map((r) => (
                     <tr key={r.year} style={{ borderTop: `1px solid ${T.line}`, background: r.covered ? "transparent" : `color-mix(in srgb, ${T.red} 7%, transparent)` }}>
                       <td style={{ padding: "7px 10px", fontFamily: MONO, fontWeight: 600 }}>{r.year}</td>
                       <td style={{ padding: "7px 10px", textAlign: "right", fontFamily: MONO }}>{gbpK(r.expense)}</td>

@@ -2140,9 +2140,32 @@ doing" surfaces:
   below matured cash and rises as the date nears; NOT suppressed by
   tax-year-end mode (idle cash doesn't care what month it is — tested).
 
+## Ledger disclosure, data-safety nudges, run-off chart
+Four small pieces:
+
+- **Ledger add-row progressive disclosure** — six fields (date/ticker/
+  side/wrapper/qty/GBP) with Ccy/FX/fees/account behind "More…"
+  (persisted, so foreign-currency users keep it open). Most entries are
+  simple GBP buys; eleven fields up front was a wall.
+- **Backup-age nudge** — `exportJSON` records a last-backup timestamp;
+  the Home queue nags when sync is OFF, data exists, and the last backup
+  is >30 days old (or never — which scores higher). Sync on = no nag,
+  by design. Low-scored: money decisions outrank housekeeping (tested).
+- **Import-freshness nudge** — broker imports record a per-source
+  last-import date; a source that has EVER been imported and is >45 days
+  stale gets a queue item ("Fidelity UK — last imported 90 days ago; the
+  ledger is drifting from your broker"). Both timestamps are device-local
+  planning aids (plain localStorage, not PERSIST_KEYS).
+- **Run-off sub-tab: display toggle + coverage chart** — "Today's £ /
+  Nominal £" (engine stays nominal; deflation is display-only at the
+  same effInflation the expense uprates at — in real terms the spend
+  line reads FLAT and the erosion of fixed gilt/deferred cashflows is
+  visible), plus a stacked source-by-source area chart against the spend
+  line, step-shaped because cashflows arrive on dates, not curves.
+
 ## Tests
 ```
-npm test        # node --test: 609 core tests + 12 UI smoke tests (test:ui)
+npm test        # node --test: 611 core tests + 12 UI smoke tests (test:ui)
 ```
 
 ## Deploy (recommended: Git → new Vercel project)

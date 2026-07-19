@@ -14,6 +14,11 @@ const BLANK = () => ({ id: uid(), date: todayISO(), ticker: "", side: "BUY", qua
 function LedgerTab() {
   const txns = useAppStore((s) => s.txns), setTxns = useAppStore((s) => s.setTxns);
   const [draft, setDraft] = useState(BLANK());
+  // Progressive disclosure: most entries are simple GBP buys, so the
+  // add-form shows six fields; Ccy/FX/fees/account live behind "More"
+  // (persisted — anyone entering foreign trades keeps it open).
+  const [advanced, setAdvanced] = useState(() => store.get("cgt.ledger.advanced", false));
+  React.useEffect(() => store.set("cgt.ledger.advanced", advanced), [advanced]);
   const [fxBusy, setFxBusy] = useState(false);
 
   const set = (k, v) => setDraft((d) => {
@@ -104,7 +109,7 @@ function LedgerTab() {
         {/* Date gets a wider track than its 8 siblings (1.3fr vs 1fr each) —
             "yyyy-mm-dd" plus the native date-picker icon needs more room than
             an equal 1/9 share gives it. */}
-        <div className="grid grid-cols-2 sm:grid-cols-[1.3fr_repeat(10,1fr)] gap-2 items-end">
+        <div className={"grid grid-cols-2 gap-2 items-end " + (advanced ? "sm:grid-cols-[1.3fr_repeat(10,1fr)]" : "sm:grid-cols-[1.3fr_repeat(5,1fr)_auto]")}>
           <Field label="Date"><input type="date" value={draft.date} onChange={(e) => set("date", e.target.value)} className="input num w-full" /></Field>
           <Field label="Ticker"><input value={draft.ticker} onChange={(e) => set("ticker", e.target.value)} placeholder="WFC" className="input w-full" /></Field>
           <Field label="Side">
@@ -114,23 +119,34 @@ function LedgerTab() {
             <select value={draft.wrapper} onChange={(e) => set("wrapper", e.target.value)} className="input w-full">{WRAPPERS.map((w) => <option key={w}>{w}</option>)}</select>
           </Field>
           <Field label="Quantity"><input type="number" value={draft.quantity} onChange={(e) => set("quantity", e.target.value)} className="input num w-full" /></Field>
-          <Field label="Ccy">
+          {advanced && <Field label="Ccy">
             <select value={draft.nativeCurrency} onChange={(e) => set("nativeCurrency", e.target.value)} className="input w-full">
               {["GBP", "USD", "EUR", "CHF"].map((c) => <option key={c}>{c}</option>)}
             </select>
-          </Field>
-          <Field label="Native amount"><input type="number" value={draft.nativeAmount} onChange={(e) => set("nativeAmount", e.target.value)} className="input num w-full" /></Field>
-          <Field label={<span className="flex items-center gap-1">FX→GBP {draft.nativeCurrency !== "GBP" && <button onClick={fetchFx} title="Fetch ECB rate for date" className="text-[var(--accent)]">{fxBusy ? <RefreshCw size={12} className="animate-spin" /> : <Wand2 size={12} />}</button>}</span>}>
+          </Field>}
+          {advanced && <Field label="Native amount"><input type="number" value={draft.nativeAmount} onChange={(e) => set("nativeAmount", e.target.value)} className="input num w-full" /></Field>}
+          {advanced && <Field label={<span className="flex items-center gap-1">FX→GBP {draft.nativeCurrency !== "GBP" && <button onClick={fetchFx} title="Fetch ECB rate for date" className="text-[var(--accent)]">{fxBusy ? <RefreshCw size={12} className="animate-spin" /> : <Wand2 size={12} />}</button>}</span>}>
             <input type="number" value={draft.fxRate} onChange={(e) => set("fxRate", e.target.value)} disabled={draft.nativeCurrency === "GBP"} className="input num w-full disabled:opacity-50" />
-          </Field>
+          </Field>}
           <Field label="GBP amount"><input type="number" value={draft.gbpAmount} onChange={(e) => set("gbpAmount", e.target.value)} className="input num w-full" /></Field>
-          <Field label={<span title="Dealing costs NOT already in the amount: commission, stamp duty, PTM levy (£). Buys add to CGT cost, sells reduce proceeds. Leave 0 if your amount already includes them (IBKR imports do).">Fees £</span>}>
+          {advanced && <Field label={<span title="Dealing costs NOT already in the amount: commission, stamp duty, PTM levy (£). Buys add to CGT cost, sells reduce proceeds. Leave 0 if your amount already includes them (IBKR imports do).">Fees £</span>}>
             <input type="number" value={draft.fees} onChange={(e) => set("fees", e.target.value)} placeholder="0" className="input num w-full" />
-          </Field>
-          <Field label={<span title="Broker/account label so two accounts in the same wrapper stay distinguishable">Account</span>}>
+          </Field>}
+          {advanced && <Field label={<span title="Broker/account label so two accounts in the same wrapper stay distinguishable">Account</span>}>
             <input value={draft.account} onChange={(e) => set("account", e.target.value)} placeholder="HL ISA" className="input w-full" list="ledger-accounts" />
-          </Field>
+          </Field>}
+          {!advanced && (
+            <button onClick={() => setAdvanced(true)} title="Foreign currency, FX rate, dealing fees, account label"
+              className="text-xs text-[var(--accent)] underline underline-offset-2 pb-2 whitespace-nowrap justify-self-start">
+              More…
+            </button>
+          )}
         </div>
+        {advanced && (
+          <button onClick={() => setAdvanced(false)} className="mt-1 text-xs text-[var(--muted)] underline underline-offset-2">
+            Fewer fields (hides Ccy/FX/fees/account — values entered stay on the transaction)
+          </button>
+        )}
         <div className="flex items-center justify-between mt-2">
           <span className="text-xs text-[var(--muted)]">{draft.nativeCurrency !== "GBP" ? "GBP auto-computes from native × rate; both stay editable." : "GBP transaction — rate fixed at 1."}</span>
           <button onClick={add} className="btn-accent"><Plus size={15} /> Add transaction</button>
