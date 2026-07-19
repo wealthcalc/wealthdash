@@ -209,7 +209,13 @@ function Transactions({ categories, catById, txns, setManual, setSpendTxns, rule
         body: JSON.stringify({ descriptions: top, categories: categories.filter((c) => !c.transfer).map((c) => c.name) }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Suggestion failed.");
+      if (!res.ok) {
+        // Surface the endpoint's env diagnostics inline — a setup problem
+        // the user can only fix in the Vercel dashboard shouldn't require
+        // opening DevTools to read.
+        const d = data.diagnostics;
+        throw new Error(data.error + (d?.matchingNames?.length ? ` Names seen: ${d.matchingNames.join(", ")}.` : ""));
+      }
       // Map suggested category NAMES back to ids; ignore anything that
       // doesn't match a real category rather than inventing one.
       const byName = new Map(categories.map((c) => [c.name.toLowerCase(), c.id]));

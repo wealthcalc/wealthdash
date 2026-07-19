@@ -28,13 +28,48 @@ import { guard } from "./_lib/guard.mjs";
 const MODEL = "claude-haiku-4-5-20251001";
 const MAX_DESCRIPTIONS = 60;
 
-const configured = () => !!process.env.ANTHROPIC_API_KEY;
+// Tolerate the two invisible ways a pasted env var goes wrong: whitespace
+// around the NAME (Vercel accepts "ANTHROPIC_API_KEY " and the dashboard
+// renders it identically) and whitespace/newlines around the VALUE. Falls
+// back to a trimmed-name lookup before declaring the key missing.
+function apiKey() {
+  const direct = process.env.ANTHROPIC_API_KEY;
+  if (direct && direct.trim()) return direct.trim();
+  for (const [k, v] of Object.entries(process.env)) {
+    if (k.trim() === "ANTHROPIC_API_KEY" && v && v.trim()) return v.trim();
+  }
+  return null;
+}
+
+// DIAGNOSTIC, names only — never values. Same-origin guarded like every
+// other endpoint here. Returned only in the 501 body, so it appears when
+// something is already wrong and never in normal operation. Shows the
+// name with visible delimiters so a trailing space is actually visible.
+function keyDiagnostics() {
+  const names = Object.keys(process.env).filter((k) => /anthropic|api[_-]?key/i.test(k));
+  return {
+    matchingNames: names.map((k) => `[${k}]`),
+    exactNamePresent: Object.prototype.hasOwnProperty.call(process.env, "ANTHROPIC_API_KEY"),
+    exactNameEmpty: Object.prototype.hasOwnProperty.call(process.env, "ANTHROPIC_API_KEY") && !String(process.env.ANTHROPIC_API_KEY || "").trim(),
+    totalEnvKeys: Object.keys(process.env).length,
+  };
+}
 
 export default async function handler(req, res) {
   if (!guard(req, res, { perMinute: 10, burst: 4 })) return;
   if (req.method !== "POST") { res.status(405).json({ error: "POST only." }); return; }
-  if (!configured()) {
-    res.status(501).json({ error: "AI suggestions aren't set up on this deployment: add an ANTHROPIC_API_KEY environment variable in the Vercel dashboard and redeploy. Rules and manual categorisation work without it." });
+  const key = apiKey();
+  if (!key) {
+    const d = keyDiagnostics();
+    const hint = d.exactNameEmpty
+      ? "The variable EXISTS but its value is empty — re-paste the key."
+      : d.matchingNames.length
+        ? `No usable ANTHROPIC_API_KEY, but these similar names are visible to the function: ${d.matchingNames.join(", ")} (square brackets show any stray spaces).`
+        : `No ANTHROPIC_API_KEY reached this function at all (${d.totalEnvKeys} env vars visible). Check it's on the wealthdash project, ticked for Production, and that a NEW deployment was created after adding it.`;
+    res.status(501).json({
+      error: `AI suggestions aren't set up on this deployment. ${hint} Rules and manual categorisation work without it.`,
+      diagnostics: d,
+    });
     return;
   }
 
@@ -64,7 +99,7 @@ export default async function handler(req, res) {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        "x-api-key": process.env.ANTHROPIC_API_KEY,
+        "x-api-key": key,
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify({
