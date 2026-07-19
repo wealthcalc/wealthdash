@@ -163,16 +163,38 @@ export function annualBudget({ categories = [], txns = [], month, months = null 
 }
 
 // Per-month totals across a window — the spend trend chart's data, with
-// the budget line to compare against. Annual-only limits are deliberately
-// NOT spread across months (see header): `limit` here is the monthly-
-// category total only, and `annualOnlyActual` is broken out so a spike is
-// explainable rather than looking like an overspend.
-export function spendByMonth({ categories = [], txns = [], months = [] } = {}) {
+// the budget line to compare against.
+//
+// `spreadAnnual` chooses between the two honest ways to read a lumpy year,
+// and the caller must pick one deliberately because they answer different
+// questions:
+//   false (CASH VIEW, the default) — money is shown in the month it
+//     actually left. True to your bank balance; the £900 insurance month
+//     towers over the others. `limit` is monthly categories only, since
+//     spreading a limit the spending didn't follow would invent an
+//     overspend in that month and phantom headroom in the rest.
+//   true (SMOOTHED VIEW) — annual-only categories are averaged across the
+//     window, so the underlying run-rate is legible. `limit` then ALSO
+//     includes annual budgets ÷ months, because comparing smoothed
+//     spending against unsmoothed limits is the exact inconsistency the
+//     cash view avoids.
+// Either way `annualOnlyActual` is broken out so a spike (or the absence
+// of one) is explainable rather than looking like an overspend.
+export function spendByMonth({ categories = [], txns = [], months = [], spreadAnnual = false } = {}) {
   const byId = new Map(categories.map((c) => [c.id, c]));
+  const isAnnualOnly = (c) => c.annual > 0 && !(c.monthly > 0);
+  const n = Math.max(1, months.length);
   const monthlyLimit = categories.reduce(
-    (s, c) => s + (c.transfer || (c.annual > 0 && !(c.monthly > 0)) ? 0 : (+c.monthly || 0)), 0
+    (s, c) => s + (c.transfer || isAnnualOnly(c) ? 0 : (+c.monthly || 0)), 0
   );
-  const map = new Map(months.map((m) => [m, { month: m, actual: 0, essential: 0, discretionary: 0, annualOnlyActual: 0, uncategorised: 0, limit: r2(monthlyLimit) }]));
+  const annualLimitPerMonth = spreadAnnual
+    ? categories.reduce((s, c) => s + (!c.transfer && isAnnualOnly(c) ? (+c.annual || 0) / 12 : 0), 0)
+    : 0;
+  const limit = r2(monthlyLimit + annualLimitPerMonth);
+
+  const map = new Map(months.map((m) => [m, { month: m, actual: 0, essential: 0, discretionary: 0, annualOnlyActual: 0, uncategorised: 0, limit }]));
+  // Annual-only spend is held back when smoothing, then redistributed.
+  let annualEssential = 0, annualDiscretionary = 0;
   for (const t of txns) {
     const row = map.get(monthOf(t?.date));
     if (!row) continue;
@@ -180,9 +202,22 @@ export function spendByMonth({ categories = [], txns = [], months = [] } = {}) {
     const c = t.categoryId ? byId.get(t.categoryId) : null;
     if (!c) { row.uncategorised += amt; continue; }
     if (c.transfer) continue;
+    const annualOnly = isAnnualOnly(c);
+    if (annualOnly && spreadAnnual) {
+      if (c.essential) annualEssential += amt; else annualDiscretionary += amt;
+      continue;
+    }
     row.actual += amt;
     if (c.essential) row.essential += amt; else row.discretionary += amt;
-    if (c.annual > 0 && !(c.monthly > 0)) row.annualOnlyActual += amt;
+    if (annualOnly) row.annualOnlyActual += amt;
+  }
+  if (spreadAnnual && (annualEssential || annualDiscretionary)) {
+    const e = annualEssential / n, d = annualDiscretionary / n;
+    for (const row of map.values()) {
+      row.essential += e; row.discretionary += d;
+      row.actual += e + d;
+      row.annualOnlyActual += e + d;
+    }
   }
   return [...map.values()].map((r) => ({
     ...r,
