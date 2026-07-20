@@ -7,6 +7,7 @@ import { parseStatement, dedupeStatement, PROFILES } from "../core/statement-imp
 import { expandRecurring, statementCoverage, annualCommitment, FREQUENCIES } from "../core/recurring.mjs";
 import { store, gbp, gbp0, SubTabs, uid, todayISO, Field, Empty, Stat, useSort, sortRows, SortTh } from "../ui/shared.jsx";
 import useAppStore from "../state/appStore.js";
+import { removeWithUndo } from "../ui/undo.jsx";
 
 /* ======================================================================
    BUDGET — planned vs actual spending, fed by bank/card statement
@@ -106,7 +107,7 @@ export default function BudgetTab({ setTab }) {
       )}
 
       {sub === "overview" && <Overview {...{ categories, txns, month, setMonth, setSub, drillTo }} />}
-      {sub === "txns" && <Transactions {...{ categories, catById, txns, setManual, setSpendTxns, rules, setRules, filter: txnFilter, setFilter: setTxnFilter }} />}
+      {sub === "txns" && <Transactions {...{ categories, catById, txns, spendTxns, setManual, setSpendTxns, rules, setRules, filter: txnFilter, setFilter: setTxnFilter }} />}
       {sub === "recurring" && <Recurring {...{ recurring, setRecurring, categories, catById, suppressed: recurringOut.suppressed, generated: recurringOut.rows, spendTxns }} />}
       {sub === "categories" && <Categories {...{ categories, setCategories, rules, setRules, catById, txns }} />}
       {sub === "import" && <ImportStatements {...{ spendTxns, setSpendTxns, setSub }} />}
@@ -268,7 +269,7 @@ function Overview({ categories, txns, month, setMonth, setSub, drillTo }) {
 }
 
 /* ----------------------------- Transactions -------------------------- */
-function Transactions({ categories, catById, txns, setManual, setSpendTxns, rules, setRules, filter, setFilter }) {
+function Transactions({ categories, catById, txns, spendTxns, setManual, setSpendTxns, rules, setRules, filter, setFilter }) {
   const [sort, toggleSort] = useSort("date", "desc");
   const groups = useMemo(() => uncategorisedGroups(txns), [txns]);
   const shown = useMemo(() => {
@@ -402,7 +403,7 @@ function Transactions({ categories, catById, txns, setManual, setSpendTxns, rule
                         deleting one here would do nothing (it regenerates on
                         the next render), so the affordance shouldn't exist. */}
                     {!t.estimated && (
-                      <button onClick={() => setSpendTxns((p) => p.filter((x) => x.id !== t.id))} aria-label={`Delete transaction ${t.date} ${t.description}`} title="Delete" className="text-[var(--muted)] hover:text-[var(--loss)]"><Trash2 size={15} aria-hidden="true" /></button>
+                      <button onClick={() => removeWithUndo({ list: spendTxns, setList: setSpendTxns, id: t.id, label: `${t.description || "transaction"} (${gbp(t.amount)})` })} aria-label={`Delete transaction ${t.date} ${t.description}`} title="Delete" className="text-[var(--muted)] hover:text-[var(--loss)]"><Trash2 size={15} aria-hidden="true" /></button>
                     )}
                   </td>
                 </tr>
@@ -593,7 +594,7 @@ function Recurring({ recurring, setRecurring, categories, catById, suppressed, g
                         {x.alwaysInclude && <span className="ml-1 text-[var(--m-bb)]" title="Suppression disabled — you're responsible for avoiding a double count">always</span>}
                       </td>
                       <td className="py-1.5 px-3 text-right">
-                        <button onClick={() => setRecurring((p) => p.filter((y) => y.id !== x.id))} aria-label={`Delete ${x.label}`} title="Delete" className="text-[var(--muted)] hover:text-[var(--loss)]"><Trash2 size={15} aria-hidden="true" /></button>
+                        <button onClick={() => removeWithUndo({ list: recurring, setList: setRecurring, id: x.id, label: x.label || "commitment" })} aria-label={`Delete ${x.label}`} title="Delete" className="text-[var(--muted)] hover:text-[var(--loss)]"><Trash2 size={15} aria-hidden="true" /></button>
                       </td>
                     </tr>
                   );
@@ -666,7 +667,7 @@ function Categories({ categories, setCategories, rules, setRules, catById, txns 
                     <td className="py-1.5 px-3 text-right"><input type="number" value={x.annual || ""} onChange={(e) => patchCat(x.id, "annual", +e.target.value || 0)} className="input num w-24 py-1 text-right" placeholder="—" /></td>
                     <td className="py-1.5 px-3"><input type="checkbox" checked={!!x.essential} onChange={(e) => patchCat(x.id, "essential", e.target.checked)} /></td>
                     <td className="py-1.5 px-3"><input type="checkbox" checked={!!x.transfer} onChange={(e) => patchCat(x.id, "transfer", e.target.checked)} /></td>
-                    <td className="py-1.5 px-3 text-right"><button onClick={() => setCategories((p) => p.filter((y) => y.id !== x.id))} aria-label={`Delete category ${x.name}`} title="Delete" className="text-[var(--muted)] hover:text-[var(--loss)]"><Trash2 size={15} aria-hidden="true" /></button></td>
+                    <td className="py-1.5 px-3 text-right"><button onClick={() => removeWithUndo({ list: categories, setList: setCategories, id: x.id, label: `category ${x.name}` })} aria-label={`Delete category ${x.name}`} title="Delete" className="text-[var(--muted)] hover:text-[var(--loss)]"><Trash2 size={15} aria-hidden="true" /></button></td>
                   </tr>
                 ))}
               </tbody>
@@ -704,7 +705,7 @@ function Categories({ categories, setCategories, rules, setRules, catById, txns 
                     <td className="py-1.5 px-3">{catById[x.categoryId]?.name || <span className="text-[var(--loss)]">deleted category</span>}</td>
                     <td className="py-1.5 px-3 text-right num text-[var(--muted)]">{usage.get(x.id) || 0}</td>
                     <td className="py-1.5 px-3"><input type="checkbox" checked={x.enabled !== false} onChange={(e) => setRules((p) => p.map((y) => (y.id === x.id ? { ...y, enabled: e.target.checked } : y)))} /></td>
-                    <td className="py-1.5 px-3 text-right"><button onClick={() => setRules((p) => p.filter((y) => y.id !== x.id))} aria-label="Delete rule" title="Delete" className="text-[var(--muted)] hover:text-[var(--loss)]"><Trash2 size={15} aria-hidden="true" /></button></td>
+                    <td className="py-1.5 px-3 text-right"><button onClick={() => removeWithUndo({ list: rules, setList: setRules, id: x.id, label: "rule" })} aria-label="Delete rule" title="Delete" className="text-[var(--muted)] hover:text-[var(--loss)]"><Trash2 size={15} aria-hidden="true" /></button></td>
                   </tr>
                 ))}
               </tbody>

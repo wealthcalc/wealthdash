@@ -8,6 +8,7 @@ import { addMonthsISO } from "../core/ishares-eri.mjs";
 import { summariseBySource } from "../core/income-calendar.mjs";
 import { store, unitsHeldAt, gbp, SubTabs, num, uid, todayISO, fxToGBP, Field, Empty, useSort, sortRows, SortTh, CurrencyInput } from "../ui/shared.jsx";
 import useAppStore from "../state/appStore.js";
+import { removeWithUndo } from "../ui/undo.jsx";
 
 // Fixed wrapper → colour mapping so the same wrapper reads as the same
 // colour everywhere this chart appears — unlike AllocBar's index-based
@@ -271,7 +272,7 @@ function IncomeTab({ eriTxns, incomeByYear, incomeAllWrappers = {}, txns, income
                         <td className="py-2 px-3">{normWrapper(e.wrapper)}</td>
                         <td className="py-2 px-3 num">{ukTaxYear(e.date)}</td>
                         <td className="py-2 px-3 text-right num">{gbp(+e.amount)}</td>
-                        <td className="py-2 px-3 text-right"><button onClick={() => setIncomeEntries((p) => p.filter((x) => x.id !== e.id))} aria-label={`Delete ${e.kind} entry: ${e.date}${e.ticker ? ` ${e.ticker}` : ""}`} title="Delete" className="text-[var(--muted)] hover:text-[var(--loss)]"><Trash2 size={15} aria-hidden="true" /></button></td>
+                        <td className="py-2 px-3 text-right"><button onClick={() => removeWithUndo({ list: incomeEntries, setList: setIncomeEntries, id: e.id, label: `${e.kind} ${gbp(+e.amount)}` })} aria-label={`Delete ${e.kind} entry: ${e.date}${e.ticker ? ` ${e.ticker}` : ""}`} title="Delete" className="text-[var(--muted)] hover:text-[var(--loss)]"><Trash2 size={15} aria-hidden="true" /></button></td>
                       </tr>
                     );
                     // Tax-year subtotal rows — the broker-statement
@@ -360,7 +361,7 @@ function IncomeTab({ eriTxns, incomeByYear, incomeAllWrappers = {}, txns, income
                         <td className={"py-2 px-3 num text-" + ERI_COLS[4].align}>{gbp(t ? t._gbp : 0)}</td>
                         <td className={"py-2 px-3 capitalize text-" + ERI_COLS[5].align}>{e.treatment}</td>
                         <td className={"py-2 px-3 num text-" + ERI_COLS[6].align}>{ukTaxYear(e.distributionDate)}</td>
-                        <td className={"py-2 px-3 text-" + ERI_COLS[7].align}><button onClick={() => setEriEntries((p) => p.filter((x) => x.id !== e.id))} aria-label={`Delete ERI entry: ${e.ticker} ${e.periodEnd}`} title="Delete" className="text-[var(--muted)] hover:text-[var(--loss)]"><Trash2 size={15} aria-hidden="true" /></button></td>
+                        <td className={"py-2 px-3 text-" + ERI_COLS[7].align}><button onClick={() => removeWithUndo({ list: eriEntries, setList: setEriEntries, id: e.id, label: `ERI entry ${e.ticker}` })} aria-label={`Delete ERI entry: ${e.ticker} ${e.periodEnd}`} title="Delete" className="text-[var(--muted)] hover:text-[var(--loss)]"><Trash2 size={15} aria-hidden="true" /></button></td>
                       </tr>
                     );
                   })}

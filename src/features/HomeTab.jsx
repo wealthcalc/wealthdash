@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef } from "react";
-import { TrendingUp, TrendingDown, AlertTriangle, PieChart, RefreshCw, CalendarClock, ListChecks, CalendarDays } from "lucide-react";
+import { TrendingUp, TrendingDown, AlertTriangle, PieChart, RefreshCw, CalendarClock, ListChecks, CalendarDays, PiggyBank } from "lucide-react";
 import { WRAPPERS } from "../core/portfolio.mjs";
 import { mortgagesEndingSoon } from "../core/property.mjs";
 import { snapshotAtOrBefore, overlaySeries } from "../core/net-worth-series.mjs";
@@ -8,6 +8,7 @@ import { accountsMaturingSoon } from "../core/cash.mjs";
 import { allocationDrift } from "../core/rebalancing.mjs";
 import { buildActionQueue } from "../core/action-queue.mjs";
 import { monthlyBudget, planSpendFromBudget, mergedSpend } from "../core/budget.mjs";
+import { savingsRate } from "../core/savings-rate.mjs";
 import PlanHealthCard from "../ui/PlanHealthCard.jsx";
 import {
   store, gbp0, num, pct, WrapperChip, AllocBar, KIND_LABEL, RateCell, Empty, todayISO,
@@ -280,6 +281,47 @@ const ACTION_LABELS = {
 // Items that land on a CGT sub-tab pre-select it.
 const ACTION_SUBTAB = { "aea-harvest": "planning", "allocation-drift": "rebalance" };
 
+// Savings rate. Shows BOTH headline definitions side by side, because
+// they differ by a factor of ~2 for a higher-rate taxpayer with a match
+// and quoting one while meaning the other is how people conclude they're
+// doing badly when they aren't (see core/savings-rate.mjs).
+function SavingsRateCard({ s, setTab }) {
+  if (!s) return null;
+  if (s.notReady) {
+    return (
+      <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 flex flex-col gap-1.5">
+        <div className="text-sm font-semibold flex items-center gap-1.5"><PiggyBank size={15} className="text-[var(--accent)]" /> Savings rate</div>
+        <p className="text-xs text-[var(--muted)]">
+          Not shown yet — {s.reasons.join("; ")}. With thin spending data the arithmetic would say you save nearly everything, which is true and useless.
+          <button onClick={() => setTab && setTab("budget")} className="ml-1 text-[var(--accent)] underline underline-offset-2">Budget →</button>
+        </p>
+      </div>
+    );
+  }
+  return (
+    <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 flex flex-col gap-2">
+      <div className="text-sm font-semibold flex items-center gap-1.5"><PiggyBank size={15} className="text-[var(--accent)]" /> Savings rate <span className="font-normal text-[var(--muted)]">— trailing 12 months</span></div>
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <div className="text-[11px] uppercase tracking-wide text-[var(--muted)]">Of take-home</div>
+          <div className={"text-xl font-semibold num " + (s.overspending ? "text-[var(--loss)]" : "")}>{s.takeHomeRate != null ? `${s.takeHomeRate.toFixed(0)}%` : "—"}</div>
+          <div className="text-[11px] text-[var(--muted)] num">{gbp0(s.savedFromTakeHome)} of {gbp0(s.takeHome)}</div>
+        </div>
+        <div>
+          <div className="text-[11px] uppercase tracking-wide text-[var(--muted)]">Of gross, incl. pension</div>
+          <div className="text-xl font-semibold num text-[var(--gain)]">{s.grossRate != null ? `${s.grossRate.toFixed(0)}%` : "—"}</div>
+          <div className="text-[11px] text-[var(--muted)] num">{gbp0(s.totalSaved)} of {gbp0(s.grossIncome)}</div>
+        </div>
+      </div>
+      <p className="text-xs text-[var(--muted)] leading-relaxed">
+        {s.overspending
+          ? `You spent ${gbp0(s.spend)} against ${gbp0(s.takeHome)} of take-home — the difference came from savings or credit. Pension contributions of ${gbp0(s.employeePension + s.employerPension)} still went in regardless.`
+          : `${gbp0(s.employeePension + s.employerPension)}/yr of that is pension (yours + employer), which never reaches your account — which is why the two figures differ so much.`}
+      </p>
+    </div>
+  );
+}
+
 function ActionQueueCard({ queue, setTab, dataLine }) {
   return (
     <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 flex flex-col gap-2">
@@ -383,6 +425,7 @@ export default function HomeTab({
   const mortgages = useAppStore((s) => s.mortgages);
   const cashAccounts = useAppStore((s) => s.cashAccounts);
   const planInputs = useAppStore((s) => s.planInputs);
+  const income = useAppStore((s) => s.income);
   const budgetCategories = useAppStore((s) => s.budgetCategories);
   const budgetRules = useAppStore((s) => s.budgetRules);
   const spendTxns = useAppStore((s) => s.spendTxns);
@@ -443,6 +486,29 @@ export default function HomeTab({
   );
   // Budget signals for the queue. Built from the same engines the Budget
   // tab uses (never a second implementation), so the two can't disagree.
+  // Savings rate — gated on the SAME readiness rule the Plan prefill
+  // uses. With no spending recorded the arithmetic honestly returns
+  // "you saved 100%", which is true and useless; showing it would be the
+  // app's first confidently wrong number.
+  const savings = useMemo(() => {
+    if (!budgetCategories?.length || !spendTxns?.length) return null;
+    const month = todayISO().slice(0, 7);
+    const merged = mergedSpend({ spendTxns, rules: budgetRules || [], recurring: recurringExpenses || [], month });
+    const plan = planSpendFromBudget({ categories: budgetCategories, txns: merged, month });
+    if (!plan.ready) return { notReady: true, reasons: plan.reasons };
+    return {
+      ...savingsRate({
+        salary: income || 0,
+        region: planInputs?.region,
+        empPct: planInputs?.empPct || 0,
+        erPct: planInputs?.erPct || 0,
+        annualSpend: plan.annualSpend,
+        investmentIncome: returns?.total?.trailing12m || 0,
+      }),
+      notReady: false,
+    };
+  }, [budgetCategories, budgetRules, spendTxns, recurringExpenses, income, planInputs, returns]);
+
   const budgetSignals = useMemo(() => {
     if (!budgetCategories?.length || !spendTxns?.length) return { overspend: null, spendDrift: null };
     const month = todayISO().slice(0, 7);
@@ -584,6 +650,7 @@ export default function HomeTab({
             demoted to the single status line at the bottom of this card:
             "your money needs a decision" and "the app would like a refresh
             click" are different classes of message. */}
+        <SavingsRateCard s={savings} setTab={setTab} />
         <ActionQueueCard queue={queue} setTab={setTab} dataLine={
           <div className="mt-auto pt-2 border-t border-[var(--border)]">
             <div className="flex items-start justify-between gap-2">
@@ -616,7 +683,7 @@ export default function HomeTab({
 
       {/* plan health · upcoming income · allocation */}
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-        <PlanHealthCard planInputs={planInputs} onOpenPlan={() => setTab && setTab("plan")} />
+        <PlanHealthCard planInputs={planInputs} onOpenPlan={() => setTab && setTab("plan")} netWorthSnapshots={netWorthSnapshots} />
         <IncomeStripCard incomeCalendar={incomeCalendar} setTab={setTab} />
         <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 flex flex-col gap-3">
           <div className="text-sm font-semibold flex items-center gap-1.5"><PieChart size={15} className="text-[var(--accent)]" /> Allocation</div>
