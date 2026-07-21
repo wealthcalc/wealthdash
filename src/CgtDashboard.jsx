@@ -25,6 +25,7 @@ import { renderAiSnapshot } from "./core/ai-snapshot.mjs";
 import { unitsHeldAt, uid, todayISO, IconBtn, store as lsStore } from "./ui/shared.jsx";
 import { DesktopSidebar, MobileDrawer, SubTabBar, SCREENS } from "./ui/Sidebar.jsx";
 import CommandPalette from "./ui/CommandPalette.jsx";
+import { UndoToast } from "./ui/undo.jsx";
 import { useIsMobile } from "./ui/useIsMobile.js";
 import useAppStore from "./state/appStore.js";
 
@@ -529,6 +530,8 @@ export default function App() {
         {!mobileSummaryMode && <MobileDrawer tab={tab} setTab={setTab} open={mobileNavOpen} onClose={() => setMobileNavOpen(false)} onOpenPalette={() => setPaletteOpen(true)} />}
         <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} setTab={setTab}
           tickers={wealthModel ? [...new Set(wealthModel.positions.filter((p) => p.qty > 1e-9).map((p) => p.ticker))].sort() : []} />
+        {/* One host for the whole app — deletes anywhere surface here. */}
+        <UndoToast />
         <main id="main-content" tabIndex={-1} className="flex-1 min-w-0">
           <div className="max-w-5xl mx-auto px-4 sm:px-6 py-6">
             {/* header */}

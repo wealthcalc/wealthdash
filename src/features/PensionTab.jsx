@@ -4,6 +4,7 @@ import { normWrapper } from "../core/portfolio.mjs";
 import { xirr } from "../core/returns.mjs";
 import { gbp, gbp0, WrapperChip, num, round2, CurrencyInput, NumberInput, uid, todayISO, rateIsDisplayable, Field, Stat, Empty } from "../ui/shared.jsx";
 import useAppStore from "../state/appStore.js";
+import { removeWithUndo } from "../ui/undo.jsx";
 
 // Phase 2.8 de-drilling: raw state from the store; the shell keeps
 // providing recomputeProviderCost (cross-slice derived logic).
@@ -284,7 +285,7 @@ function PensionTab({ recomputeProviderCost }) {
                             <td className="px-3 py-1 num">{c.date}</td>
                             <td className="px-3 py-1">{c.type}</td>
                             <td className="px-3 py-1 text-right num">{c.gbpAmount != null ? gbp(c.gbpAmount) : <span className="text-[var(--m-bb)]" title="Non-GBP, no FX resolved — excluded from XIRR">{c.nativeAmount} {c.ccy} (needs FX)</span>}</td>
-                            <td className="px-3 py-1 text-right"><button onClick={() => setPensionCashflows((p) => p.filter((x) => x.id !== c.id))} aria-label={`Remove ${c.date} contribution`} title="Remove" className="text-[var(--muted)] hover:text-[var(--loss)]"><Trash2 size={12} aria-hidden="true" /></button></td>
+                            <td className="px-3 py-1 text-right"><button onClick={() => removeWithUndo({ list: pensionCashflows, setList: setPensionCashflows, id: c.id, label: `${c.date} contribution` })} aria-label={`Remove ${c.date} contribution`} title="Remove" className="text-[var(--muted)] hover:text-[var(--loss)]"><Trash2 size={12} aria-hidden="true" /></button></td>
                           </tr>
                         ))}
                       </tbody>
