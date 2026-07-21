@@ -765,17 +765,6 @@ export default function HomeTab({
         </div>
       </div>
 
-      <DataHealthCard health={health} setTab={setTab} />
-
-      {/* CONTEXT — how the portfolio is split. */}
-      <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 flex flex-col gap-3">
-        <div className="text-sm font-semibold flex items-center gap-1.5"><PieChart size={15} className="text-[var(--accent)]" /> Allocation</div>
-        <div className="grid sm:grid-cols-2 gap-x-6 gap-y-3">
-          <AllocBar title="By asset class" buckets={model.allocation.assetClass} labelOf={(k) => KIND_LABEL[k] || k} />
-          <AllocBar title="By wrapper" buckets={model.allocation.wrapper} />
-        </div>
-      </div>
-
       {/* wrapper strip */}
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3">
         {wrappersPresent.map((w) => {
@@ -811,6 +800,41 @@ export default function HomeTab({
           );
         })}
       </div>
+
+      {/* Reference material — how the portfolio is split, then the
+          maintenance checklist — lives at the bottom, below the day-to-day
+          numbers a check-in actually looks at. */}
+      <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 flex flex-col gap-3">
+        <div className="text-sm font-semibold flex items-center gap-1.5"><PieChart size={15} className="text-[var(--accent)]" /> Allocation</div>
+        <div className="grid sm:grid-cols-2 gap-x-6 gap-y-3">
+          <AllocBar title="By asset class" buckets={model.allocation.assetClass} labelOf={(k) => KIND_LABEL[k] || k} />
+          <AllocBar title="By wrapper" buckets={model.allocation.wrapper} />
+        </div>
+        {/* Two always-visible watch lines — observable, not just alarming
+            (the action queue only surfaces these past a threshold): the
+            largest single position, and idle cash as a share of the whole.
+            Both are recurring, easy-to-miss money considerations. */}
+        <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-[var(--muted)] border-t border-[var(--border)] pt-3">
+          {concentration?.top1 && (
+            <span title="Largest single holding as a share of invested wealth (RSU shares included). Concentration is the risk one company can ruin the plan.">
+              Largest position: <span className="font-medium text-[var(--fg)]">{concentration.top1.ticker} {Math.round(concentration.top1.weight * 100)}%</span>
+              {concentration.top5Weight > 0 && <span className="text-[var(--muted)]"> · top 5 {Math.round(concentration.top5Weight * 100)}%</span>}
+            </span>
+          )}
+          {total.total > 0 && (() => {
+            const cashPct = total.cash / total.total * 100;
+            const draggy = total.cash > 25000 && cashPct > 15;
+            return (
+              <span title="Cash across all wrappers. A large idle balance earns little and drags on long-run returns — but some is a deliberate buffer, so this is an observation, not a verdict.">
+                Cash: <span className={"font-medium " + (draggy ? "text-[var(--m-bb)]" : "text-[var(--fg)]")}>{gbp0(total.cash)} ({Math.round(cashPct)}%)</span>
+                {draggy && <button onClick={() => setTab && setTab("wealth")} className="ml-1 underline underline-offset-2 hover:text-[var(--fg)]">review →</button>}
+              </span>
+            );
+          })()}
+        </div>
+      </div>
+
+      <DataHealthCard health={health} setTab={setTab} />
 
       <p className="text-xs text-[var(--muted)]">
         Read-only overview as of {todayISO()}. Prices update from the Wealth tab; cash balances from Pension &amp; LISA / Wealth. The chart's "Net worth" series records daily from whatever you've entered (estimated days flagged); "Invested" is the exact securities-only series used for TWR.

@@ -2783,7 +2783,7 @@ function IhtTab({ p, det, set, liveEstate, livePots }) {
         <Card style={{ background: T.paper, border: "none" }}><Stat label="NRB + RNRB available" value={gbpK(r.bandsAvailable)} sub={r.married ? "married — both bands doubled" : "single"} /></Card>
         <Card style={{ background: T.paper, border: "none" }}><Stat label="Taxable estate" value={gbpK(r.netTaxableEstate)} sub={`at ${pct(r.rate, 0)}`} /></Card>
         <Card style={{ background: r.totalIHT > 0 ? T.redSoft : T.greenSoft, border: "none" }}>
-          <Stat big label="IHT due" value={gbp(r.totalIHT)} sub={`${pct(r.effectiveRate, 1)} effective rate`} tone={r.totalIHT > 0 ? "red" : "green"} />
+          <Stat label="IHT due" value={gbpK(r.totalIHT)} sub={`${gbp(r.totalIHT)} · ${pct(r.effectiveRate, 1)} effective rate`} tone={r.totalIHT > 0 ? "red" : "green"} />
         </Card>
         <Card style={{ background: T.paper, border: "none" }}><Stat label="Net to heirs" value={gbpK(r.netEstateToHeirs)} sub={r.charityGiftAmount > 0 ? `after ${gbpK(r.charityGiftAmount)} to charity` : undefined} /></Card>
       </div>
