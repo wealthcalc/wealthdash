@@ -208,9 +208,14 @@ function Overview({ categories, txns, month, setMonth, setSub, drillTo, incomeEn
         const invIncome = incomeEntries.reduce((sum, e) => sum + (e && e.date && inWin.has(e.date.slice(0, 7)) ? (+e.amount || 0) : 0), 0);
         if (invIncome <= 0) return null;
         const covers = invIncome / (s.totalActual || 1) * 100;
+        // Essentials are the spend that must be met even in a bad year, so
+        // "does passive income cover the essentials?" is the more meaningful
+        // question than total spend — it's the flooring test the retirement
+        // plan cares about, applied to today.
+        const coversEssential = s.essentialActual > 0 ? invIncome / s.essentialActual * 100 : null;
         return (
           <div className="rounded-xl border border-[var(--border)] bg-[var(--panel2)] px-3 py-2 text-xs text-[var(--muted)]">
-            Investment income received {view === "month" ? "this month" : "over the year"}: <strong className="text-[var(--gain)]">{gbp0(invIncome)}</strong> — covers <strong className="text-[var(--fg)]">{Math.round(covers)}%</strong> of your {gbp0(s.totalActual)} spend. <span className="text-[10px]">(dividends + interest from the Income tab; salary not included)</span>
+            Investment income received {view === "month" ? "this month" : "over the year"}: <strong className="text-[var(--gain)]">{gbp0(invIncome)}</strong> — covers <strong className="text-[var(--fg)]">{Math.round(covers)}%</strong> of your {gbp0(s.totalActual)} total spend{coversEssential != null && <>, and <strong className={coversEssential >= 100 ? "text-[var(--gain)]" : "text-[var(--fg)]"}>{Math.round(coversEssential)}%</strong> of the {gbp0(s.essentialActual)} essential</>}. <span className="text-[10px]">(dividends + interest from the Income tab; salary not included)</span>
           </div>
         );
       })()}
