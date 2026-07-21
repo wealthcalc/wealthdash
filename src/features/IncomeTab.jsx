@@ -6,7 +6,8 @@ import { WRAPPERS, isWrapperTaxable, normWrapper } from "../core/portfolio.mjs";
 import { investmentIncomeTax } from "../core/uk-tax.mjs";
 import { addMonthsISO } from "../core/ishares-eri.mjs";
 import { summariseBySource } from "../core/income-calendar.mjs";
-import { store, unitsHeldAt, gbp, SubTabs, num, uid, todayISO, fxToGBP, Field, Empty, useSort, sortRows, SortTh, CurrencyInput } from "../ui/shared.jsx";
+import { store, unitsHeldAt, gbp, SubTabs, num, uid, todayISO, fxToGBP, Field, Empty, useSort, sortRows, SortTh, CurrencyInput, downloadText } from "../ui/shared.jsx";
+import { taxSummaryText } from "../core/export-csv.mjs";
 import useAppStore from "../state/appStore.js";
 import { removeWithUndo } from "../ui/undo.jsx";
 
@@ -226,6 +227,18 @@ function IncomeTab({ eriTxns, incomeByYear, incomeAllWrappers = {}, txns, income
                     })}
                   </tbody>
                 </table>
+              </div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs text-[var(--muted)]">Export a plain-text summary for a return:</span>
+                {years.map((y) => (
+                  <button key={y} onClick={() => {
+                    const d = incomeByYear[y], r = investmentIncomeTax({ salary: income, interest: d.interest, dividends: d.dividends, year: y });
+                    downloadText(
+                      taxSummaryText({ taxYear: y, generatedOn: todayISO(), income: { dividends: d.dividends, interest: d.interest, dividendTax: r.dividendTax, interestTax: r.interestTax } }),
+                      `income-tax-summary-${y.replace("/", "-")}.txt`
+                    );
+                  }} className="text-xs px-2 py-1 rounded-lg border border-[var(--border)] bg-[var(--panel)] hover:bg-[var(--panel2)]">{y}</button>
+                ))}
               </div>
               <p className="text-xs text-[var(--muted)]">Dividend allowance and Personal Savings Allowance are applied automatically by year and band. Figures marked * use assumed (latest) rates for years not in the table. "Dividends" here includes excess reportable income (ERI) from offshore reporting funds — a non-cash distribution taxed on the fund's distribution date under UK offshore-fund rules, folded in alongside cash dividends actually received, not a separate line.</p>
             </div>

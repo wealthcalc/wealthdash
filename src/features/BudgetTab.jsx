@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useRef } from "react";
 import { Plus, Trash2, Upload, Check, AlertTriangle, Wand2 } from "lucide-react";
 import { ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, PieChart, Pie, Cell, Sector } from "recharts";
-import { monthlyBudget, annualBudget, spendByMonth, trailing12, mergedSpend } from "../core/budget.mjs";
+import { monthlyBudget, annualBudget, spendByMonth, trailing12, mergedSpend, spendByCategory, withComparison, monthRange } from "../core/budget.mjs";
 import { uncategorisedGroups, suggestRule } from "../core/categorise.mjs";
 import { parseStatement, dedupeStatement, PROFILES } from "../core/statement-import.mjs";
 import { expandRecurring, statementCoverage, annualCommitment, FREQUENCIES } from "../core/recurring.mjs";
@@ -43,12 +43,17 @@ const STARTER = [
 ];
 
 const thisMonth = () => todayISO().slice(0, 7);
+const prevMonth = (m) => {
+  const [y, mo] = m.split("-").map(Number);
+  return mo === 1 ? `${y - 1}-12` : `${y}-${String(mo - 1).padStart(2, "0")}`;
+};
 
 export default function BudgetTab({ setTab }) {
   const categories = useAppStore((s) => s.budgetCategories), setCategories = useAppStore((s) => s.setBudgetCategories);
   const rules = useAppStore((s) => s.budgetRules), setRules = useAppStore((s) => s.setBudgetRules);
   const spendTxns = useAppStore((s) => s.spendTxns), setSpendTxns = useAppStore((s) => s.setSpendTxns);
   const recurring = useAppStore((s) => s.recurringExpenses), setRecurring = useAppStore((s) => s.setRecurringExpenses);
+  const incomeEntries = useAppStore((s) => s.incomeEntries);
 
   const [sub, setSub] = useState(() => store.get("cgt.budgetsubtab", "overview"));
   React.useEffect(() => store.set("cgt.budgetsubtab", sub), [sub]);
@@ -106,7 +111,7 @@ export default function BudgetTab({ setTab }) {
         </div>
       )}
 
-      {sub === "overview" && <Overview {...{ categories, txns, month, setMonth, setSub, drillTo }} />}
+      {sub === "overview" && <Overview {...{ categories, txns, month, setMonth, setSub, drillTo, incomeEntries }} />}
       {sub === "txns" && <Transactions {...{ categories, catById, txns, spendTxns, setManual, setSpendTxns, rules, setRules, filter: txnFilter, setFilter: setTxnFilter }} />}
       {sub === "recurring" && <Recurring {...{ recurring, setRecurring, categories, catById, suppressed: recurringOut.suppressed, generated: recurringOut.rows, spendTxns }} />}
       {sub === "categories" && <Categories {...{ categories, setCategories, rules, setRules, catById, txns }} />}
@@ -116,7 +121,7 @@ export default function BudgetTab({ setTab }) {
 }
 
 /* ------------------------------- Overview ---------------------------- */
-function Overview({ categories, txns, month, setMonth, setSub, drillTo }) {
+function Overview({ categories, txns, month, setMonth, setSub, drillTo, incomeEntries = [] }) {
   // Trailing 12 months is the DEFAULT because it's the honest picture: a
   // single month is noisy (annual bills, holidays, a quiet fortnight) and
   // the year is what the retirement plan actually consumes. This/Last
@@ -131,7 +136,26 @@ function Overview({ categories, txns, month, setMonth, setSub, drillTo }) {
     () => spendByMonth({ categories, txns, months: trailing12(month), spreadAnnual }),
     [categories, txns, month, spreadAnnual]
   );
-  const cur = view === "month" ? m : a;
+  // Per-category comparison against a baseline: the previous month (month
+  // view) or the prior 12 months' average (year view). Makes drift
+  // visible — a static period says nothing about whether a category is
+  // creeping up.
+  const compared = useMemo(() => {
+    const base = view === "month" ? prevMonth(month) : null;
+    const rowsIn = (view === "month" ? m : a).rows;
+    if (view === "month") {
+      const baseline = spendByCategory({ categories, txns, months: [base] });
+      return withComparison(rowsIn, { baseline, label: "vs prev month" });
+    }
+    // year view: average of the 12 months BEFORE this window
+    const [y, mo] = month.split("-").map(Number);
+    const priorEnd = mo === 1 ? `${y - 1}-12` : `${y}-${String(mo - 1).padStart(2, "0")}`;
+    const priorMonths = monthRange(monthRange(`${y - 2}-01`, priorEnd).slice(-12)[0], priorEnd);
+    const spent = spendByCategory({ categories, txns, months: priorMonths });
+    const avg = new Map([...spent].map(([k, v]) => [k, v])); // prior-year total = comparable annual baseline
+    return withComparison(rowsIn, { baseline: avg, label: "vs prior 12m" });
+  }, [view, m, a, categories, txns, month]);
+  const cur = { ...(view === "month" ? m : a), rows: compared };
   const s = cur.summary;
   const tm = thisMonth();
   // Any month other than the current one is reached through the picker
@@ -172,6 +196,24 @@ function Overview({ categories, txns, month, setMonth, setSub, drillTo }) {
           <Stat label="Essential share" value={view === "year" && s.essentialPct != null ? `${Math.round(s.essentialPct)}%` : gbp0(s.essentialActual)} sub={`discretionary ${gbp0(s.discretionaryActual)}`} />
         </div>
       </div>
+
+      {/* INCOME ↔ SPENDING — the two adjacent halves of a household finally
+          on one line. Investment income comes from the Income tab's ledger
+          (dividends + interest received in the window); spending is this
+          view's own total. It answers "does what comes in cover what goes
+          out?" without hopping between tabs. */}
+      {(() => {
+        const window = view === "month" ? [month] : trailing12(month);
+        const inWin = new Set(window);
+        const invIncome = incomeEntries.reduce((sum, e) => sum + (e && e.date && inWin.has(e.date.slice(0, 7)) ? (+e.amount || 0) : 0), 0);
+        if (invIncome <= 0) return null;
+        const covers = invIncome / (s.totalActual || 1) * 100;
+        return (
+          <div className="rounded-xl border border-[var(--border)] bg-[var(--panel2)] px-3 py-2 text-xs text-[var(--muted)]">
+            Investment income received {view === "month" ? "this month" : "over the year"}: <strong className="text-[var(--gain)]">{gbp0(invIncome)}</strong> — covers <strong className="text-[var(--fg)]">{Math.round(covers)}%</strong> of your {gbp0(s.totalActual)} spend. <span className="text-[10px]">(dividends + interest from the Income tab; salary not included)</span>
+          </div>
+        );
+      })()}
 
       {s.uncategorised > 0 && (
         <button onClick={() => setSub("txns")} className="w-full text-left rounded-xl border border-[var(--m-bb)] bg-[var(--panel)] p-3 text-xs flex items-start gap-2 hover:bg-[var(--panel2)] transition">
@@ -233,7 +275,7 @@ function Overview({ categories, txns, month, setMonth, setSub, drillTo }) {
       <div className="rounded-xl border border-[var(--border)] overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="bg-[var(--panel2)] text-[var(--muted)] text-xs uppercase tracking-wide">
-            <tr>{["Category", "Spent", "Budget", "Left", "", ""].map((h, i) => <th key={i} className={"py-2 px-3 font-medium " + (i === 0 ? "text-left" : i > 3 ? "text-left" : "text-right")}>{h}</th>)}</tr>
+            <tr>{["Category", "Spent", "Budget", "Left", cur.rows[0]?.baselineLabel || "vs prev", ""].map((h, i) => <th key={i} className={"py-2 px-3 font-medium " + (i === 0 ? "text-left" : i === 5 ? "text-left" : "text-right")}>{h}</th>)}</tr>
           </thead>
           <tbody className="divide-y divide-[var(--border)] bg-[var(--panel)]">
             {cur.rows.map((r) => (
@@ -251,14 +293,24 @@ function Overview({ categories, txns, month, setMonth, setSub, drillTo }) {
                 <td className={"py-2 px-3 text-right num " + (r.variance == null ? "text-[var(--muted)]" : r.variance < 0 ? "text-[var(--loss)]" : "text-[var(--gain)]")}>
                   {r.variance == null ? "—" : gbp(r.variance)}
                 </td>
-                <td className="py-2 px-3" style={{ width: 120 }}>
+                {/* vs baseline — higher spending than the comparison period
+                    is red (worse), lower is green. Direction, not just a
+                    number, so drift reads at a glance. */}
+                <td className="py-2 px-3 text-right num" title={r.baseline != null ? `Was ${gbp(r.baseline)}` : undefined}>
+                  {r.baseline > 0 || r.delta !== 0 ? (
+                    <span className={r.delta > 0 ? "text-[var(--loss)]" : r.delta < 0 ? "text-[var(--gain)]" : "text-[var(--muted)]"}>
+                      {r.delta > 0 ? "▲" : r.delta < 0 ? "▼" : ""}{gbp(Math.abs(r.delta))}
+                      {r.deltaPct != null && <span className="text-[var(--muted)] text-xs"> {r.deltaPct > 0 ? "+" : ""}{Math.round(r.deltaPct)}%</span>}
+                    </span>
+                  ) : <span className="text-[var(--muted)] text-xs">new</span>}
+                </td>
+                <td className="py-2 px-3" style={{ width: 90 }}>
                   {r.pctUsed != null && (
                     <div className="h-1.5 rounded-full bg-[var(--panel2)] overflow-hidden" title={`${Math.round(r.pctUsed)}% of budget`}>
                       <div className="h-full rounded-full" style={{ width: `${Math.min(100, r.pctUsed)}%`, background: r.over ? "var(--loss)" : "var(--gain)" }} />
                     </div>
                   )}
                 </td>
-                <td className="py-2 px-3 text-xs text-[var(--muted)] num">{r.pctUsed != null ? `${Math.round(r.pctUsed)}%` : ""}</td>
               </tr>
             ))}
           </tbody>

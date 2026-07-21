@@ -4,7 +4,8 @@ import { randomSyncId } from "../core/sync-crypto.mjs";
 import {
   getSyncConfig, setSyncConfig, disableSync, pushNow, pullAndApply, lastSyncResult,
 } from "../state/sync.js";
-import { todayISO } from "../ui/shared.jsx";
+import { todayISO, downloadText } from "../ui/shared.jsx";
+import { ledgerCsv, incomeCsv } from "../core/export-csv.mjs";
 import useAppStore from "../state/appStore.js";
 
 /* ======================================================================
@@ -31,6 +32,36 @@ const OVERFLOW_LABEL = {
   txns: "transactions", valuations: "valuation history", netWorthSnapshots: "net-worth history",
   incomeEntries: "dividend/interest ledger", eriEntries: "excess reportable income entries",
 };
+
+// Data OUT, in formats the JSON backup can't serve — CSV for a
+// spreadsheet or accountant, a plain-text tax summary for a return. See
+// core/export-csv.mjs for the (tested) formatting; this only wires the
+// store data and the download.
+function ExportSection() {
+  const txns = useAppStore((s) => s.txns);
+  const incomeEntries = useAppStore((s) => s.incomeEntries);
+  const dl = (content, name, type) => downloadText(content, name, type);
+  const stamp = todayISO();
+  return (
+    <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 space-y-2">
+      <div className="text-sm font-semibold flex items-center gap-1.5"><FileDown size={15} className="text-[var(--accent)]" /> Export data</div>
+      <p className="text-xs text-[var(--muted)] leading-relaxed">
+        The encrypted backup above round-trips into this app; these are for OUTSIDE it — a spreadsheet, or an accountant. CSVs open in Excel/Sheets; the tax summary is plain text to paste into a return.
+      </p>
+      <div className="flex flex-wrap gap-2">
+        <button onClick={() => dl(ledgerCsv(txns), `transactions-${stamp}.csv`, "text/csv")}
+          className="inline-flex items-center gap-1.5 text-sm font-medium px-3 h-9 rounded-lg border border-[var(--border)] bg-[var(--panel)] hover:bg-[var(--panel2)]">
+          <FileDown size={14} /> Transactions CSV
+        </button>
+        <button onClick={() => dl(incomeCsv(incomeEntries), `income-${stamp}.csv`, "text/csv")}
+          className="inline-flex items-center gap-1.5 text-sm font-medium px-3 h-9 rounded-lg border border-[var(--border)] bg-[var(--panel)] hover:bg-[var(--panel2)]">
+          <FileDown size={14} /> Income CSV
+        </button>
+      </div>
+      <p className="text-[11px] text-[var(--muted)]">A per-year investment-income tax summary is on the Income tab (Tax by year), next to the figures it summarises.</p>
+    </div>
+  );
+}
 
 export default function SyncTab() {
   const storageOverflow = useAppStore((s) => s.storageOverflow);
@@ -125,6 +156,9 @@ export default function SyncTab() {
         </p>
         {msg && <div role="status" className="text-xs rounded-lg border border-[var(--border)] bg-[var(--panel2)] px-3 py-2">{msg}</div>}
       </div>
+
+      <ExportSection />
+
 
       {storageOverflow.length > 0 && (
         <div role="status" className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 text-xs text-[var(--muted)] leading-relaxed flex items-start gap-1.5">
