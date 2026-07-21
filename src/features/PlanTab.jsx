@@ -971,7 +971,7 @@ export default function PlanTab({
                 { k: "btl", label: "Buy-to-let", icon: Building2 },
               ] },
             ].map(({ group, tabs }) => (
-              <div key={group} style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+              <div key={group} role="tablist" aria-label={group} style={{ display: "flex", flexDirection: "column", gap: 2 }}>
                 <div style={{ fontSize: 9.5, letterSpacing: ".08em", textTransform: "uppercase", color: T.muted, fontWeight: 700, paddingLeft: 12 }}>{group}</div>
                 <div style={{ display: "flex", gap: 2, flexWrap: "wrap" }}>
                   {tabs.map(({ k, label, icon: Icon }) => {
@@ -980,6 +980,8 @@ export default function PlanTab({
                       <button
                         key={k}
                         className="rp-tab"
+                        role="tab"
+                        aria-selected={active}
                         onClick={() => setTab(k)}
                         style={{
                           display: "flex",
@@ -1679,6 +1681,12 @@ function RunoffTab({ p, giltCashflows = [], forwardDividends = 0, budgetSpend = 
   // FLAT and erosion of fixed cashflows is visible).
   const [realTerms, setRealTerms] = useState(() => store.get("plan.runoff.real", true));
   React.useEffect(() => store.set("plan.runoff.real", realTerms), [realTerms]);
+  // CGT on portfolio sales — opt-in, because it needs a gain-fraction
+  // assumption the app can't reliably derive for a GIA blended pool.
+  const [cgtOn, setCgtOn] = useState(() => store.get("plan.runoff.cgtOn", false));
+  React.useEffect(() => store.set("plan.runoff.cgtOn", cgtOn), [cgtOn]);
+  const [cgtGain, setCgtGain] = useState(() => store.get("plan.runoff.cgtGain", 40));
+  React.useEffect(() => store.set("plan.runoff.cgtGain", cgtGain), [cgtGain]);
 
   const today = todayISO();
   const startYear = +today.slice(0, 4) + 1; // first FULL calendar year
@@ -1736,14 +1744,19 @@ function RunoffTab({ p, giltCashflows = [], forwardDividends = 0, budgetSpend = 
     giltNominalByYear: inputs.giltNominalByYear, cashStart: inputs.cashStart,
     deferredByYear: inputs.deferredByYear, rsuByYear: inputs.rsuByYear,
     annualDividends: +forwardDividends || 0,
-  }), [expense, horizon, p, startYear, inputs, forwardDividends]);
+    // CGT on the sales that cover a shortfall — off unless the user asks,
+    // since it needs an assumption (what fraction of a sale is gain).
+    cgtGainFraction: cgtOn ? (+cgtGain || 0) / 100 : 0,
+    cgtRate: cgtOn ? 0.24 : 0,        // higher-rate CGT on non-property assets
+    cgtAllowance: cgtOn ? 3000 : 0,   // annual exempt amount
+  }), [expense, horizon, p, startYear, inputs, forwardDividends, cgtOn, cgtGain]);
 
   const s = runoff.summary;
   // Deflate for display when in today's-£ mode (engine stays nominal).
   const deflate = (row, v) => realTerms ? v / Math.pow(1 + effInflation(p) / 100, row.year - startYear) : v;
   const displayRows = runoff.rows.map((r) => {
     const d = { ...r };
-    for (const k of ["expense", "fromGilts", "fromCash", "fromDeferred", "fromRsu", "fromDividends", "fromPortfolio", "surplusToCash", "giltBankEnd", "cashEnd", "giltIn", "deferredIn", "rsuIn", "divIn", "totalIn", "net", "balanceEnd"]) d[k] = deflate(r, r[k]);
+    for (const k of ["expense", "fromGilts", "fromCash", "fromDeferred", "fromRsu", "fromDividends", "fromPortfolio", "portfolioGross", "cgtOnSale", "surplusToCash", "giltBankEnd", "cashEnd", "giltIn", "deferredIn", "rsuIn", "divIn", "totalIn", "net", "balanceEnd"]) d[k] = deflate(r, r[k]);
     d.expenseNeg = -d.expense; // cash-flow view: spend as a negative bar
     return d;
   });
@@ -1786,6 +1799,12 @@ function RunoffTab({ p, giltCashflows = [], forwardDividends = 0, budgetSpend = 
             <Segmented value={realTerms ? "real" : "nominal"} onChange={(v) => setRealTerms(v === "real")} accent={T.blue}
               options={[{ value: "real", label: "Today's £" }, { value: "nominal", label: "Nominal £" }]} />
           </div>
+          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, color: T.ink2, alignSelf: "flex-end", paddingBottom: 6 }}>
+            <input type="checkbox" checked={cgtOn} onChange={(e) => setCgtOn(e.target.checked)} /> Account for CGT on sales
+          </label>
+          {cgtOn && (
+            <Field label="Gain fraction of a sale" value={cgtGain} min={0} max={100} step={5} suffix="%" onChange={setCgtGain} />
+          )}
         </div>
         {budgetSpend?.ready && Math.round(budgetSpend.annualSpend) !== Math.round(+expense || 0) && (
           <p style={{ margin: "10px 0 0", fontSize: 11.5, color: T.muted }}>
@@ -1800,7 +1819,7 @@ function RunoffTab({ p, giltCashflows = [], forwardDividends = 0, budgetSpend = 
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px,1fr))", gap: 12, marginBottom: 14 }}>
             <Card><Stat label="First portfolio sale" value={s.firstDisposalYear ?? "never"} sub={s.firstDisposalYear ? `${s.firstDisposalYear - startYear} clear year${s.firstDisposalYear - startYear === 1 ? "" : "s"} first` : `covered for all ${s.totalYears} years`} tone={s.firstDisposalYear ? "amber" : "green"} /></Card>
             <Card><Stat label="Selling every year from" value={s.permanentDisposalFrom ?? "never"} sub="no later rescue after this" tone={s.permanentDisposalFrom ? "red" : "green"} /></Card>
-            <Card><Stat label="Total sold over horizon" value={gbpK(s.totalFromPortfolio)} sub={`${s.coveredYears}/${s.totalYears} years need no sales`} /></Card>
+            <Card><Stat label="Total sold over horizon" value={gbpK(cgtOn ? s.totalPortfolioGross : s.totalFromPortfolio)} sub={cgtOn && s.totalCgtOnSales > 0 ? `incl. ${gbpK(s.totalCgtOnSales)} CGT` : `${s.coveredYears}/${s.totalYears} years need no sales`} /></Card>
             <Card><Stat label="Gilt ladder ends" value={s.giltLadderEndsYear ?? "no gilts"} sub={s.cashExhaustedYear ? `cash float gone ${s.cashExhaustedYear}` : "cash float never exhausted"} /></Card>
           </div>
 
@@ -1884,8 +1903,10 @@ function RunoffTab({ p, giltCashflows = [], forwardDividends = 0, budgetSpend = 
                         <td style={{ padding: "7px 10px", textAlign: "right", fontFamily: MONO, fontWeight: 600, color: r.net >= 0 ? T.green : T.red }}>
                           {r.net >= 0 ? "+" : "−"}{gbpK(Math.abs(r.net))}
                         </td>
-                        <td style={{ padding: "7px 10px", textAlign: "right", fontFamily: MONO, color: r.fromPortfolio > 0 ? T.red : T.muted }}>
-                          {r.fromPortfolio > 0 ? gbpK(r.fromPortfolio) : "—"}
+                        <td style={{ padding: "7px 10px", textAlign: "right", fontFamily: MONO, color: r.fromPortfolio > 0 ? T.red : T.muted }}
+                          title={cgtOn && r.cgtOnSale > 0 ? `Sell ${gbp(r.portfolioGross)} to net ${gbp(r.fromPortfolio)} after ${gbp(r.cgtOnSale)} CGT` : undefined}>
+                          {(cgtOn ? r.portfolioGross : r.fromPortfolio) > 0 ? gbpK(cgtOn ? r.portfolioGross : r.fromPortfolio) : "—"}
+                          {cgtOn && r.cgtOnSale > 0 && <span style={{ color: T.muted, fontSize: 10.5, marginLeft: 3 }}>·{gbpK(r.cgtOnSale)} tax</span>}
                         </td>
                         <td style={{ padding: "7px 10px", textAlign: "right", fontFamily: MONO, color: T.ink2 }}
                           title={`Cash ${gbp(r.cashEnd)}${r.giltBankEnd > 0 ? ` + banked gilt proceeds ${gbp(r.giltBankEnd)}` : ""}`}>
@@ -1939,6 +1960,7 @@ function RunoffTab({ p, giltCashflows = [], forwardDividends = 0, budgetSpend = 
               RSU vests and deferred-cash tranches are shown NET of tax — marginal UK income-tax bands + employee NI, taxed jointly per year on top of your plan salary while working ({inputs.compTaxRate > 0 ? `effective ${Math.round(inputs.compTaxRate * 100)}% over the horizon` : "none scheduled"}).
               Dividends are held flat at {gbpK(+forwardDividends || 0)}/yr — trailing 12-month income per unit × units held TODAY (so recent buys raise it above last year's cash received), EXCLUDING gilt coupons (those are already in the ladder), and assumed tax-free (ISA/VCT holdings; GIA dividends would bear dividend tax not modelled here). No growth, and no shrinkage as later sales reduce the portfolio: that circularity is disclosed rather than half-modelled.
               Gilts are conventional only: coupons + redemption at PAR, contractual nominal £ with no indexation — index-linked gilts are not modelled. Deferred cash and gilt cashflows are contractual schedules from their own tabs.
+              {cgtOn && ` CGT on sales assumes ${cgtGain}% of each disposal is gain, taxed at 24% above the £3,000 annual exempt amount — a blended-pool estimate, not per-lot matching, and it assumes the sale happens in a GIA (ISA/SIPP disposals are tax-free). "Sold" shows the gross sale needed to net the shortfall.`}
             </Note>
           </div>
         </>

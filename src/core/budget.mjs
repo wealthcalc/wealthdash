@@ -253,6 +253,42 @@ export function spendByMonth({ categories = [], txns = [], months = [], spreadAn
   }));
 }
 
+// Per-category spend for an arbitrary set of months — the primitive
+// behind the "vs previous / vs average" comparison. Returns a Map of
+// categoryId -> £ (transfers excluded, uncategorised ignored: a category
+// comparison over rows with no category is meaningless).
+export function spendByCategory({ categories = [], txns = [], months = [] } = {}) {
+  const inWindow = new Set(months);
+  const byId = new Map(categories.map((c) => [c.id, c]));
+  const out = new Map();
+  for (const t of txns) {
+    if (!t || !t.categoryId || !inWindow.has(monthOf(t.date))) continue;
+    const c = byId.get(t.categoryId);
+    if (!c || c.transfer) continue;
+    out.set(t.categoryId, (out.get(t.categoryId) || 0) + (+t.amount || 0));
+  }
+  return out;
+}
+
+// Attach a per-category comparison to a set of budget rows: this period's
+// actual against a BASELINE (the previous equal-length window, or the
+// per-month average scaled to the window). Baseline choice is the
+// caller's — "vs last month" and "vs typical month" answer different
+// questions and this computes whichever it's handed.
+export function withComparison(rows, { baseline, label }) {
+  return rows.map((r) => {
+    const base = baseline.get(r.id) || 0;
+    const delta = r.actual - base;
+    return {
+      ...r,
+      baseline: r2(base),
+      delta: r2(delta),
+      deltaPct: base > 0 ? r2((delta / base) * 100) : null,
+      baselineLabel: label,
+    };
+  });
+}
+
 // What the Plan/Run-off tabs consume: trailing-12m actual spend and the
 // essential share, plus the data-quality caveats that decide whether the
 // prefill should be offered at all. Deliberately returns `ready: false`

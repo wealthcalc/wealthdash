@@ -149,3 +149,45 @@ test("summary totals and degenerate inputs", () => {
   assert.equal(buildRunoff({ annualExpense: 0, startYear: 2027 }).summary, null);
   assert.throws(() => buildRunoff({ annualExpense: 1 }), /startYear/);
 });
+
+/* --------------------------- CGT on sales ------------------------------ */
+import { grossUpForCgt } from "../core/runoff-model.mjs";
+
+test("grossUpForCgt: default (no tax) is a no-op", () => {
+  assert.deepEqual(grossUpForCgt(10000), { gross: 10000, tax: 0 });
+  assert.deepEqual(grossUpForCgt(10000, { gainFraction: 0.5, rate: 0 }), { gross: 10000, tax: 0 });
+  assert.deepEqual(grossUpForCgt(0, { gainFraction: 0.5, rate: 0.2 }), { gross: 0, tax: 0 });
+});
+
+test("grossUpForCgt: gain within the allowance is untaxed, sell = need", () => {
+  // £10k sale, 30% gain = £3k gain, £3k allowance → no tax
+  const r = grossUpForCgt(10000, { gainFraction: 0.3, rate: 0.2, allowance: 3000 });
+  assert.equal(r.gross, 10000);
+  assert.equal(r.tax, 0);
+});
+
+test("grossUpForCgt: past the allowance you must sell MORE, and it round-trips", () => {
+  // net £40k, 50% gain, 20% CGT, £3k allowance
+  const { gross, tax } = grossUpForCgt(40000, { gainFraction: 0.5, rate: 0.2, allowance: 3000 });
+  assert.ok(gross > 40000, `${gross}`);
+  // selling `gross` and paying `tax` must net exactly the £40k need
+  assert.ok(Math.abs((gross - tax) - 40000) < 0.5, `net ${gross - tax}`);
+  // and the tax equals (gain − allowance) × rate
+  assert.ok(Math.abs(tax - (gross * 0.5 - 3000) * 0.2) < 0.5);
+});
+
+test("buildRunoff surfaces the gross sale and CGT without changing the net waterfall", () => {
+  const base = {
+    annualExpense: 40000, inflation: 0, startYear: 2027, years: 1, cashStart: 0,
+  };
+  const untaxed = buildRunoff(base).rows[0];
+  const taxed = buildRunoff({ ...base, cgtGainFraction: 0.5, cgtRate: 0.2, cgtAllowance: 3000 }).rows[0];
+  // the NET shortfall is identical — tax doesn't change what's needed
+  assert.equal(untaxed.fromPortfolio, 40000);
+  assert.equal(taxed.fromPortfolio, 40000);
+  // but the real sale and its tax are now shown
+  assert.ok(taxed.portfolioGross > 40000);
+  assert.ok(taxed.cgtOnSale > 0);
+  assert.equal(untaxed.portfolioGross, 40000);
+  assert.equal(untaxed.cgtOnSale, 0);
+});

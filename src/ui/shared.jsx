@@ -11,6 +11,20 @@ const store = {
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* sandbox */ } },
 };
 
+// Trigger a client-side file download of `content` as `filename`. The
+// Blob-and-anchor dance was duplicated in a couple of places (sync
+// recovery kit, backup); this is the one copy.
+function downloadText(content, filename, type = "text/plain") {
+  try {
+    const blob = new Blob([content], { type });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  } catch { /* non-browser */ }
+}
+
 
 const fmtRate = (r) => `${(r * 100).toFixed(0)}%`;
 const unitsHeldAt = (txns, dateStr, ticker) => {
@@ -78,10 +92,26 @@ const WrapperChip = ({ wrapper }) => <span className={"text-[11px] font-semibold
 // Shared sub-tab bar, used inside the CGT and Income mega-tabs so related
 // tools live under one top-level tab instead of cluttering the main nav.
 function SubTabs({ tabs, active, onChange }) {
+  // WAI-ARIA tabs pattern: Left/Right (and Home/End) move between tabs,
+  // and only the active tab is in the natural tab order (roving
+  // tabindex), so a keyboard user tabs INTO the group once and arrows
+  // within it rather than tabbing through every tab.
+  const onKey = (e, i) => {
+    let j = null;
+    if (e.key === "ArrowRight") j = (i + 1) % tabs.length;
+    else if (e.key === "ArrowLeft") j = (i - 1 + tabs.length) % tabs.length;
+    else if (e.key === "Home") j = 0;
+    else if (e.key === "End") j = tabs.length - 1;
+    if (j == null) return;
+    e.preventDefault();
+    onChange(tabs[j][0]);
+    e.currentTarget.parentElement?.children[j]?.focus();
+  };
   return (
     <div role="tablist" className="flex flex-wrap gap-1 border-b border-[var(--border)] mb-4">
-      {tabs.map(([k, label]) => (
-        <button key={k} role="tab" aria-selected={active === k} onClick={() => onChange(k)}
+      {tabs.map(([k, label], i) => (
+        <button key={k} role="tab" aria-selected={active === k} tabIndex={active === k ? 0 : -1}
+          onKeyDown={(e) => onKey(e, i)} onClick={() => onChange(k)}
           className={"px-3 py-1.5 text-sm font-medium border-b-2 -mb-px transition " +
             (active === k ? "border-[var(--accent)] text-[var(--fg)]" : "border-transparent text-[var(--muted)] hover:text-[var(--fg)]")}>
           {label}
@@ -488,7 +518,7 @@ if (_style) _style.textContent = `
 if (_style && !document.getElementById("cgt-util")) { _style.id = "cgt-util"; document.head.appendChild(_style); }
 
 export {
-  store, fmtRate, unitsHeldAt, SECURITY_SEED, gbp, gbp0,
+  store, downloadText, fmtRate, unitsHeldAt, SECURITY_SEED, gbp, gbp0,
   WRAPPER_CHIP_CLASS, wrapperChipClass, WrapperChip, SubTabs,
   dmoDateToIso, fetchDmoGiltPrices, num, round2, CurrencyInput, NumberInput,
   uid, todayISO, SAMPLE, METHOD,

@@ -2140,6 +2140,51 @@ doing" surfaces:
   below matured cash and rises as the date nears; NOT suppressed by
   tax-year-end mode (idle cash doesn't care what month it is — tested).
 
+## Review batch — data health, run-off CGT, budget comparison, cross-ref, export, a11y
+Seven items from the July review, engines-first:
+
+**Data health** (`core/data-health.mjs`, 8 tests) collapses seven
+completeness nags — unpriced holdings, stale prices, unledgered vests,
+ERI gaps, uncategorised spend, stale imports — into one scored Home panel.
+Severity reflects how much a thing distorts the numbers (unpriced = high,
+a missing ISIN on a UK trust = low), not how loud it feels; penalties are
+capped per band so one noisy category can't sink the score, and it's
+floored at 0. Collapsed by default with a jump-to-fix per issue. This is
+deliberately separate from the action queue: "your figures are
+incomplete" and "your money needs a decision" are different classes of
+message, and mixing them let a stale price sit above a £20k allowance.
+
+**Run-off CGT** (`grossUpForCgt`, 4 tests) — a GIA shortfall now shows the
+SALE needed, not the net proceeds, because part of a disposal is a taxable
+gain. Opt-in (it needs a gain-fraction assumption the app can't derive for
+a blended pool), defaults to no-op, round-trips exactly. Blended estimate,
+not per-lot matching — disclosed.
+
+**Budget period comparison** (`spendByCategory` + `withComparison`) — a
+per-category "vs previous month / vs prior 12m" column with direction
+arrows, so a creeping category is visible instead of buried in a static
+snapshot.
+
+**Income ↔ spending cross-reference** — the two adjacent halves of a
+household on one line: investment income received vs spend, with the
+percentage it covers. Reads the income ledger directly so the Budget tab
+stays self-contained.
+
+**Export** (`core/export-csv.mjs`, 6 tests) — transaction and income CSVs
+(RFC-4180 escaping WITH spreadsheet formula-injection defang — a merchant
+named `=cmd` can't become a live formula) on the Backup & sync tab, plus a
+per-year plain-text income-tax summary on the Income tab. For an
+accountant or a spreadsheet, which the JSON backup can't serve.
+
+**Accessibility** — `SubTabs` gets the WAI-ARIA tabs keyboard pattern
+(arrow/Home/End nav, roving tabindex); the Plan tab bar gets
+role=tab/tablist.
+
+**Mobile** — the Home and Budget summary areas reflow through responsive
+grids (done as part of the Home layout regroup); wide data tables scroll
+horizontally, the accepted primitive. A full table→card rewrite is noted
+but not done — low value for the effort on a personal tool.
+
 ## Budget tab — spending, statement import, categorisation
 The first part of the app that tracks money going OUT. Three pure engines
 plus a tab, all node-tested (`budget.test.mjs`, `categorise.test.mjs`,
