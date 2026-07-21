@@ -215,3 +215,27 @@ test("mergedSpend is the ONE spend list — statements, manual rows AND recurrin
 
   assert.throws(() => mergedSpend({ spendTxns: [] }), /month/);
 });
+
+test("spendByCategory + withComparison: this period vs a baseline", async () => {
+  const { spendByCategory, withComparison, monthlyBudget } = await import("../core/budget.mjs");
+  const txns = [
+    { id: 1, date: "2026-06-03", amount: 500, categoryId: "gro" },  // baseline month
+    { id: 2, date: "2026-07-03", amount: 650, categoryId: "gro" },  // this month — up 150
+    { id: 3, date: "2026-07-05", amount: 100, categoryId: "fun" },  // new this month
+    { id: 4, date: "2026-07-06", amount: 40, categoryId: "xfer" },  // transfer — excluded
+  ];
+  const prev = spendByCategory({ categories: CATS, txns, months: ["2026-06"] });
+  assert.equal(prev.get("gro"), 500);
+  assert.equal(prev.has("xfer"), false); // transfers never counted
+
+  const rows = monthlyBudget({ categories: CATS, txns, month: "2026-07" }).rows;
+  const compared = withComparison(rows, { baseline: prev, label: "vs June" });
+  const gro = compared.find((r) => r.id === "gro");
+  assert.equal(gro.baseline, 500);
+  assert.equal(gro.delta, 150);
+  assert.equal(gro.deltaPct, 30);
+  // a category with no baseline reports null %, not Infinity
+  const fun = compared.find((r) => r.id === "fun");
+  assert.equal(fun.baseline, 0);
+  assert.equal(fun.deltaPct, null);
+});

@@ -49,6 +49,32 @@
 
 const r2 = (x) => Math.round(x * 100) / 100;
 
+// Gross up a portfolio sale for the CGT it triggers, so a shortfall shows
+// the SALE actually needed rather than the net proceeds. To net `need`
+// from a GIA disposal you must sell more, because part of the proceeds is
+// a taxable gain: the run-off previously showed the net, understating the
+// real drawdown. Model, deliberately simple and disclosed:
+//   gain on a sale of S = S × gainFraction   (the portfolio's overall
+//     unrealised-gain proportion — a blend, not per-lot matching, which
+//     this view has no basis to do)
+//   taxable = max(0, gain − allowance)       (annual exempt amount, per year)
+//   tax = taxable × rate
+//   net = S − tax = need   →   solve for S
+// With gainFraction or rate at 0 (the default) this returns the input
+// unchanged, so untaxed wrappers and "don't model tax" both cost nothing.
+export function grossUpForCgt(need, { gainFraction = 0, rate = 0, allowance = 0 } = {}) {
+  const g = Math.max(0, Math.min(1, +gainFraction || 0));
+  const r = Math.max(0, +rate || 0);
+  const a = Math.max(0, +allowance || 0);
+  if (!(need > 0) || g === 0 || r === 0) return { gross: r2(Math.max(0, need)), tax: 0 };
+  // Regime 1: the whole gain fits inside the allowance → no tax, sell = need.
+  if (need * g <= a) return { gross: r2(need), tax: 0 };
+  // Regime 2: gain exceeds the allowance. need = S(1 − g·r) + a·r.
+  const gross = (need - a * r) / (1 - g * r);
+  const tax = Math.max(0, gross * g - a) * r;
+  return { gross: r2(gross), tax: r2(tax) };
+}
+
 export function buildRunoff({
   annualExpense = 0,      // today's £/yr
   inflation = 0,          // %/yr — uprates the expense (pass effInflation(p))
@@ -59,6 +85,13 @@ export function buildRunoff({
   deferredByYear = {},    // { calendarYear: £ } — scheduled tranches
   rsuByYear = {},         // { calendarYear: £ } — scheduled vests × today's price
   annualDividends = 0,    // flat recurring-dividend estimate, £/yr
+  // CGT on the portfolio sales that cover a shortfall. All default to 0,
+  // so the untaxed case is unchanged. gainFraction = the portfolio's
+  // overall unrealised-gain proportion; cgtRate = the marginal CGT rate;
+  // cgtAllowance = the annual exempt amount (applied per year).
+  cgtGainFraction = 0,
+  cgtRate = 0,
+  cgtAllowance = 0,
 } = {}) {
   if (!startYear) throw new Error("buildRunoff requires startYear — pure functions don't read the clock.");
   if (!(annualExpense > 0)) return { rows: [], summary: null };
@@ -103,13 +136,19 @@ export function buildRunoff({
     // vanish; once paid out it IS cash).
     const surplusToCash = cashBal - cashBefore;
 
-    // 6. whatever's left comes out of the portfolio
+    // 6. whatever's left comes out of the portfolio. In a taxable wrapper
+    // the real SALE is larger than the net need, because CGT is due on the
+    // gain portion — surfaced so a shortfall isn't understated.
     const fromPortfolio = need;
+    const { gross: portfolioGross, tax: cgtOnSale } = grossUpForCgt(need, {
+      gainFraction: cgtGainFraction, rate: cgtRate, allowance: cgtAllowance,
+    });
 
     rows.push({
       year, expense: r2(expense),
       fromGilts: r2(fromGilts), fromCash: r2(fromCash), fromDeferred: r2(fromDeferred),
       fromRsu: r2(fromRsu), fromDividends: r2(fromDividends), fromPortfolio: r2(fromPortfolio),
+      portfolioGross: r2(portfolioGross), cgtOnSale: r2(cgtOnSale),
       surplusToCash: r2(surplusToCash), giltBankEnd: r2(giltBank), cashEnd: r2(cashBal),
       // GROSS inflows received this calendar year, regardless of whether
       // the waterfall needed them — the cash-flow view's positive bars.
@@ -147,6 +186,8 @@ export function buildRunoff({
       coveredYears: rows.filter((r) => r.covered).length,
       totalYears: rows.length,
       totalFromPortfolio: r2(rows.reduce((s, r) => s + r.fromPortfolio, 0)),
+      totalPortfolioGross: r2(rows.reduce((s, r) => s + r.portfolioGross, 0)),
+      totalCgtOnSales: r2(rows.reduce((s, r) => s + r.cgtOnSale, 0)),
       cashExhaustedYear: rows.find((r) => r.cashEnd <= 0.005 && r.fromCash > 0)?.year ?? null,
       giltLadderEndsYear: giltYears.length ? Math.max(...giltYears) : null,
     },

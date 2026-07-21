@@ -7,8 +7,9 @@ import { pensionXirrByWrapper } from "../core/returns.mjs";
 import { accountsMaturingSoon } from "../core/cash.mjs";
 import { allocationDrift } from "../core/rebalancing.mjs";
 import { buildActionQueue } from "../core/action-queue.mjs";
-import { monthlyBudget, planSpendFromBudget, mergedSpend } from "../core/budget.mjs";
+import { monthlyBudget, annualBudget, planSpendFromBudget, mergedSpend } from "../core/budget.mjs";
 import { savingsRate } from "../core/savings-rate.mjs";
+import { dataHealth } from "../core/data-health.mjs";
 import PlanHealthCard from "../ui/PlanHealthCard.jsx";
 import {
   store, gbp0, num, pct, WrapperChip, AllocBar, KIND_LABEL, RateCell, Empty, todayISO,
@@ -322,6 +323,52 @@ function SavingsRateCard({ s, setTab }) {
   );
 }
 
+// Data health — completeness, not decisions. Collapsed to a single line
+// when the score is high (nothing to do), expandable to the itemised list
+// with a jump-to-fix per issue. A green "100%" is a positive signal worth
+// showing, not just an absence of warnings.
+const HEALTH_ICON = { high: "text-[var(--loss)]", medium: "text-[var(--m-bb)]", low: "text-[var(--muted)]" };
+function DataHealthCard({ health, setTab }) {
+  const [open, setOpen] = useState(() => store.get("cgt.home.healthOpen", false));
+  useEffect(() => store.set("cgt.home.healthOpen", open), [open]);
+  const tone = health.score >= 90 ? "gain" : health.score >= 70 ? "m-bb" : "loss";
+  return (
+    <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4">
+      <button onClick={() => setOpen((o) => !o)} aria-expanded={open}
+        className="w-full flex items-center justify-between gap-2 text-left">
+        <span className="text-sm font-semibold flex items-center gap-1.5">
+          <HeartPulseIcon /> Data health
+          {health.clean
+            ? <span className="text-xs font-normal text-[var(--gain)]">— complete, figures can be trusted</span>
+            : <span className="text-xs font-normal text-[var(--muted)]">— {health.issues.length} thing{health.issues.length > 1 ? "s" : ""} to tidy</span>}
+        </span>
+        <span className="flex items-center gap-2 shrink-0">
+          <span className={"text-lg font-semibold num text-[var(--" + tone + ")]"}>{health.score}%</span>
+          <span className="text-[var(--muted)] text-xs">{open ? "▾" : "▸"}</span>
+        </span>
+      </button>
+      {open && !health.clean && (
+        <div className="mt-3 space-y-1.5">
+          {health.issues.map((i) => (
+            <button key={i.id} onClick={() => setTab && setTab(i.tab)}
+              className="w-full text-left text-xs rounded-lg border border-[var(--border)] bg-[var(--panel2)] px-3 py-2 hover:border-[var(--accent)] flex items-start gap-2">
+              <AlertTriangle size={13} className={"mt-0.5 shrink-0 " + HEALTH_ICON[i.severity]} aria-hidden="true" />
+              <span><span className="font-medium text-[var(--fg)]">{i.message}</span> <span className="text-[var(--muted)]">— {i.detail}</span></span>
+            </button>
+          ))}
+        </div>
+      )}
+      {open && health.clean && (
+        <p className="mt-2 text-xs text-[var(--muted)]">Nothing outstanding — every holding is priced, spending is categorised, and imports are current.</p>
+      )}
+    </div>
+  );
+}
+// Small inline icon so the card doesn't need another lucide import line.
+function HeartPulseIcon() {
+  return <PieChart size={15} className="text-[var(--accent)]" aria-hidden="true" />;
+}
+
 function ActionQueueCard({ queue, setTab, dataLine }) {
   return (
     <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 flex flex-col gap-2">
@@ -462,6 +509,28 @@ export default function HomeTab({
   // been bitten once by a memo placed after an early return (see README).
   const mortgagesSoon = useMemo(() => mortgagesEndingSoon(mortgages, todayISO(), 180), [mortgages]);
   const cashMaturing = useMemo(() => accountsMaturingSoon(cashAccounts, todayISO(), 90), [cashAccounts]);
+
+  // Data health — the one place completeness issues live, instead of one
+  // nag per tab. Inputs are already computed above / by the shell; this
+  // only assembles them.
+  const health = useMemo(() => {
+    const spendMonth = todayISO().slice(0, 7);
+    let uncat = 0, spendTotal = 0;
+    if (budgetCategories?.length && spendTxns?.length) {
+      const merged = mergedSpend({ spendTxns, rules: budgetRules || [], recurring: recurringExpenses || [], month: spendMonth });
+      const a = annualBudget({ categories: budgetCategories, txns: merged, month: spendMonth }).summary;
+      uncat = a.uncategorised; spendTotal = a.totalActual + a.uncategorised;
+    }
+    return dataHealth({
+      today: todayISO(),
+      unpricedTickers: model?.total?.unpricedTickers || [],
+      stalePriceTickers: staleTickers,
+      uncategorisedSpend: uncat, totalSpend: spendTotal,
+      staleImports: Object.entries(store.get("cgt.lastImportAt", {})).map(([source, at]) => ({
+        source, days: Math.floor((new Date(todayISO()) - new Date(at)) / DAY),
+      })),
+    });
+  }, [model, staleTickers, budgetCategories, budgetRules, spendTxns, recurringExpenses]);
   const pensionCashflows = useAppStore((s) => s.pensionCashflows);
   // Combined pension XIRR for the SIPP/LISA boxes (core/returns.mjs) —
   // the ledger-based engine can't see pension contribution history (one
@@ -691,6 +760,8 @@ export default function HomeTab({
         <PlanHealthCard planInputs={planInputs} onOpenPlan={() => setTab && setTab("plan")} netWorthSnapshots={netWorthSnapshots} />
         {savings && <SavingsRateCard s={savings} setTab={setTab} />}
       </div>
+
+      <DataHealthCard health={health} setTab={setTab} />
 
       {/* CONTEXT — what's coming in, and how it's split. Reference rather
           than action, so it sits below the trajectory row. */}
