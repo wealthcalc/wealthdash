@@ -751,24 +751,26 @@ export default function HomeTab({
         } />
       </div>
 
-      {/* AM I ON TRACK — the trajectory row. Plan health (where the plan
-          says I'm heading) and savings rate (the input driving it) are one
-          question split in two, so they sit together. Savings rate returns
-          null until there's budget data, in which case plan health takes
-          the full width rather than leaving an orphaned half-row. */}
-      <div className={"grid gap-4 " + (savings ? "lg:grid-cols-2" : "")}>
+      {/* AM I ON TRACK — Plan health on the left; savings rate and the
+          next-90-days income strip stacked on the right beside it, so the
+          "where am I heading / what drives it / what's about to arrive"
+          trio reads as one column of trajectory against the plan. The
+          right column stacks vertically to sit alongside plan health
+          rather than pushing it to a narrow half. */}
+      <div className="grid lg:grid-cols-2 gap-4 items-start">
         <PlanHealthCard planInputs={planInputs} onOpenPlan={() => setTab && setTab("plan")} netWorthSnapshots={netWorthSnapshots} />
-        {savings && <SavingsRateCard s={savings} setTab={setTab} />}
+        <div className="flex flex-col gap-4">
+          {savings && <SavingsRateCard s={savings} setTab={setTab} />}
+          <IncomeStripCard incomeCalendar={incomeCalendar} setTab={setTab} />
+        </div>
       </div>
 
       <DataHealthCard health={health} setTab={setTab} />
 
-      {/* CONTEXT — what's coming in, and how it's split. Reference rather
-          than action, so it sits below the trajectory row. */}
-      <div className="grid sm:grid-cols-2 gap-4">
-        <IncomeStripCard incomeCalendar={incomeCalendar} setTab={setTab} />
-        <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 flex flex-col gap-3">
-          <div className="text-sm font-semibold flex items-center gap-1.5"><PieChart size={15} className="text-[var(--accent)]" /> Allocation</div>
+      {/* CONTEXT — how the portfolio is split. */}
+      <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 flex flex-col gap-3">
+        <div className="text-sm font-semibold flex items-center gap-1.5"><PieChart size={15} className="text-[var(--accent)]" /> Allocation</div>
+        <div className="grid sm:grid-cols-2 gap-x-6 gap-y-3">
           <AllocBar title="By asset class" buckets={model.allocation.assetClass} labelOf={(k) => KIND_LABEL[k] || k} />
           <AllocBar title="By wrapper" buckets={model.allocation.wrapper} />
         </div>
