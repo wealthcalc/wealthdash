@@ -810,6 +810,28 @@ export default function HomeTab({
           <AllocBar title="By asset class" buckets={model.allocation.assetClass} labelOf={(k) => KIND_LABEL[k] || k} />
           <AllocBar title="By wrapper" buckets={model.allocation.wrapper} />
         </div>
+        {/* Two always-visible watch lines — observable, not just alarming
+            (the action queue only surfaces these past a threshold): the
+            largest single position, and idle cash as a share of the whole.
+            Both are recurring, easy-to-miss money considerations. */}
+        <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-[var(--muted)] border-t border-[var(--border)] pt-3">
+          {concentration?.top1 && (
+            <span title="Largest single holding as a share of invested wealth (RSU shares included). Concentration is the risk one company can ruin the plan.">
+              Largest position: <span className="font-medium text-[var(--fg)]">{concentration.top1.ticker} {Math.round(concentration.top1.weight * 100)}%</span>
+              {concentration.top5Weight > 0 && <span className="text-[var(--muted)]"> · top 5 {Math.round(concentration.top5Weight * 100)}%</span>}
+            </span>
+          )}
+          {total.total > 0 && (() => {
+            const cashPct = total.cash / total.total * 100;
+            const draggy = total.cash > 25000 && cashPct > 15;
+            return (
+              <span title="Cash across all wrappers. A large idle balance earns little and drags on long-run returns — but some is a deliberate buffer, so this is an observation, not a verdict.">
+                Cash: <span className={"font-medium " + (draggy ? "text-[var(--m-bb)]" : "text-[var(--fg)]")}>{gbp0(total.cash)} ({Math.round(cashPct)}%)</span>
+                {draggy && <button onClick={() => setTab && setTab("wealth")} className="ml-1 underline underline-offset-2 hover:text-[var(--fg)]">review →</button>}
+              </span>
+            );
+          })()}
+        </div>
       </div>
 
       <DataHealthCard health={health} setTab={setTab} />
