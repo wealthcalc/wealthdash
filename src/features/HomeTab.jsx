@@ -765,17 +765,6 @@ export default function HomeTab({
         </div>
       </div>
 
-      <DataHealthCard health={health} setTab={setTab} />
-
-      {/* CONTEXT — how the portfolio is split. */}
-      <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 flex flex-col gap-3">
-        <div className="text-sm font-semibold flex items-center gap-1.5"><PieChart size={15} className="text-[var(--accent)]" /> Allocation</div>
-        <div className="grid sm:grid-cols-2 gap-x-6 gap-y-3">
-          <AllocBar title="By asset class" buckets={model.allocation.assetClass} labelOf={(k) => KIND_LABEL[k] || k} />
-          <AllocBar title="By wrapper" buckets={model.allocation.wrapper} />
-        </div>
-      </div>
-
       {/* wrapper strip */}
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3">
         {wrappersPresent.map((w) => {
@@ -811,6 +800,19 @@ export default function HomeTab({
           );
         })}
       </div>
+
+      {/* Reference material — how the portfolio is split, then the
+          maintenance checklist — lives at the bottom, below the day-to-day
+          numbers a check-in actually looks at. */}
+      <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 flex flex-col gap-3">
+        <div className="text-sm font-semibold flex items-center gap-1.5"><PieChart size={15} className="text-[var(--accent)]" /> Allocation</div>
+        <div className="grid sm:grid-cols-2 gap-x-6 gap-y-3">
+          <AllocBar title="By asset class" buckets={model.allocation.assetClass} labelOf={(k) => KIND_LABEL[k] || k} />
+          <AllocBar title="By wrapper" buckets={model.allocation.wrapper} />
+        </div>
+      </div>
+
+      <DataHealthCard health={health} setTab={setTab} />
 
       <p className="text-xs text-[var(--muted)]">
         Read-only overview as of {todayISO()}. Prices update from the Wealth tab; cash balances from Pension &amp; LISA / Wealth. The chart's "Net worth" series records daily from whatever you've entered (estimated days flagged); "Invested" is the exact securities-only series used for TWR.
