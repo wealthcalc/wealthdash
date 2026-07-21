@@ -649,8 +649,9 @@ export default function HomeTab({
             Data plumbing (stale/unpriced prices, refresh) is deliberately
             demoted to the single status line at the bottom of this card:
             "your money needs a decision" and "the app would like a refresh
-            click" are different classes of message. */}
-        <SavingsRateCard s={savings} setTab={setTab} />
+            click" are different classes of message. Gets the whole right
+            column next to the headline — it's the one thing on this page
+            that's actionable, so it earns the prime real estate. */}
         <ActionQueueCard queue={queue} setTab={setTab} dataLine={
           <div className="mt-auto pt-2 border-t border-[var(--border)]">
             <div className="flex items-start justify-between gap-2">
@@ -681,9 +682,19 @@ export default function HomeTab({
         } />
       </div>
 
-      {/* plan health · upcoming income · allocation */}
-      <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+      {/* AM I ON TRACK — the trajectory row. Plan health (where the plan
+          says I'm heading) and savings rate (the input driving it) are one
+          question split in two, so they sit together. Savings rate returns
+          null until there's budget data, in which case plan health takes
+          the full width rather than leaving an orphaned half-row. */}
+      <div className={"grid gap-4 " + (savings ? "lg:grid-cols-2" : "")}>
         <PlanHealthCard planInputs={planInputs} onOpenPlan={() => setTab && setTab("plan")} netWorthSnapshots={netWorthSnapshots} />
+        {savings && <SavingsRateCard s={savings} setTab={setTab} />}
+      </div>
+
+      {/* CONTEXT — what's coming in, and how it's split. Reference rather
+          than action, so it sits below the trajectory row. */}
+      <div className="grid sm:grid-cols-2 gap-4">
         <IncomeStripCard incomeCalendar={incomeCalendar} setTab={setTab} />
         <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 flex flex-col gap-3">
           <div className="text-sm font-semibold flex items-center gap-1.5"><PieChart size={15} className="text-[var(--accent)]" /> Allocation</div>
