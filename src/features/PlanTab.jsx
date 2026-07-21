@@ -938,53 +938,71 @@ export default function PlanTab({
 
       {/* ---- Main content ---- */}
       <main style={{ padding: "20px 22px 60px", minWidth: 0 }}>
-          {/* Tabs */}
+          {/* Tabs — grouped into three themes so ten peers stop competing
+              for attention: PROJECTION (where am I heading), RESILIENCE
+              (what if it goes wrong), ESTATE (what's left, and property).
+              Grouping only — the panels themselves are unchanged, so every
+              setTab deep-link keeps working. */}
           <div
             style={{
               display: "flex",
-              gap: 4,
+              gap: 14,
               borderBottom: `1px solid ${T.line}`,
               marginBottom: 20,
               flexWrap: "wrap",
+              alignItems: "flex-end",
             }}
           >
             {[
-              { k: "overview", label: "Overview", icon: Gauge },
-              { k: "accum", label: "Accumulation", icon: TrendingUp },
-              { k: "decum", label: "Decumulation", icon: TrendingDown },
-              { k: "floor", label: "Income floor", icon: Umbrella },
-              { k: "runoff", label: "Run-off", icon: Droplets },
-              { k: "drawdown", label: "Sequencing", icon: Layers },
-              { k: "btl", label: "Buy-to-let", icon: Building2 },
-              { k: "stress", label: "Scenarios & stress", icon: ShieldAlert },
-              { k: "adequacy", label: "Monte Carlo", icon: Activity },
-              { k: "iht", label: "Inheritance tax", icon: Landmark },
-            ].map(({ k, label, icon: Icon }) => {
-              const active = tab === k;
-              return (
-                <button
-                  key={k}
-                  className="rp-tab"
-                  onClick={() => setTab(k)}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 6,
-                    border: "none",
-                    background: "none",
-                    cursor: "pointer",
-                    padding: "10px 12px",
-                    fontSize: 13.5,
-                    fontWeight: 600,
-                    color: active ? T.ink : T.muted,
-                    borderBottom: active ? `2px solid ${T.green}` : "2px solid transparent",
-                    marginBottom: -1,
-                  }}
-                >
-                  <Icon size={15} /> {label}
-                </button>
-              );
-            })}
+              { group: "Projection", tabs: [
+                { k: "overview", label: "Overview", icon: Gauge },
+                { k: "accum", label: "Accumulation", icon: TrendingUp },
+                { k: "decum", label: "Decumulation", icon: TrendingDown },
+                { k: "drawdown", label: "Sequencing", icon: Layers },
+              ] },
+              { group: "Resilience", tabs: [
+                { k: "floor", label: "Income floor", icon: Umbrella },
+                { k: "runoff", label: "Run-off", icon: Droplets },
+                { k: "stress", label: "Scenarios & stress", icon: ShieldAlert },
+                { k: "adequacy", label: "Monte Carlo", icon: Activity },
+              ] },
+              { group: "Estate & property", tabs: [
+                { k: "iht", label: "Inheritance tax", icon: Landmark },
+                { k: "btl", label: "Buy-to-let", icon: Building2 },
+              ] },
+            ].map(({ group, tabs }) => (
+              <div key={group} style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                <div style={{ fontSize: 9.5, letterSpacing: ".08em", textTransform: "uppercase", color: T.muted, fontWeight: 700, paddingLeft: 12 }}>{group}</div>
+                <div style={{ display: "flex", gap: 2, flexWrap: "wrap" }}>
+                  {tabs.map(({ k, label, icon: Icon }) => {
+                    const active = tab === k;
+                    return (
+                      <button
+                        key={k}
+                        className="rp-tab"
+                        onClick={() => setTab(k)}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 6,
+                          border: "none",
+                          background: "none",
+                          cursor: "pointer",
+                          padding: "8px 12px",
+                          fontSize: 13.5,
+                          fontWeight: 600,
+                          color: active ? T.ink : T.muted,
+                          borderBottom: active ? `2px solid ${T.green}` : "2px solid transparent",
+                          marginBottom: -1,
+                        }}
+                      >
+                        <Icon size={15} /> {label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
           </div>
 
           {/* ===== OVERVIEW ===== */}
