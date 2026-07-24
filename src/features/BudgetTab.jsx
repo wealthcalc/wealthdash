@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useRef } from "react";
 import { Plus, Trash2, Upload, Check, AlertTriangle, Wand2 } from "lucide-react";
 import { ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, PieChart, Pie, Cell, Sector } from "recharts";
-import { monthlyBudget, annualBudget, spendByMonth, trailing12, mergedSpend, spendByCategory, withComparison, monthRange } from "../core/budget.mjs";
+import { monthlyBudget, annualBudget, averageAnnualBudget, spendByMonth, trailing12, mergedSpend, spendByCategory, withComparison, monthRange } from "../core/budget.mjs";
 import { uncategorisedGroups, suggestRule } from "../core/categorise.mjs";
 import { parseStatement, dedupeStatement, PROFILES } from "../core/statement-import.mjs";
 import { expandRecurring, statementCoverage, annualCommitment, FREQUENCIES } from "../core/recurring.mjs";
@@ -130,6 +130,9 @@ function Overview({ categories, txns, month, setMonth, setSub, drillTo, incomeEn
   React.useEffect(() => store.set("cgt.budget.view", view), [view]);
   const m = useMemo(() => monthlyBudget({ categories, txns, month }), [categories, txns, month]);
   const a = useMemo(() => annualBudget({ categories, txns, month }), [categories, txns, month]);
+  // "avg" view: representative 12 months from ALL history (dilutes one-off
+  // years), vs "year" which is strictly the last 12 months.
+  const avg = useMemo(() => averageAnnualBudget({ categories, txns, toMonth: month }), [categories, txns, month]);
   const [spreadAnnual, setSpreadAnnual] = useState(() => store.get("cgt.budget.spread", true));
   React.useEffect(() => store.set("cgt.budget.spread", spreadAnnual), [spreadAnnual]);
   const trend = useMemo(
@@ -140,27 +143,33 @@ function Overview({ categories, txns, month, setMonth, setSub, drillTo, incomeEn
   // view) or the prior 12 months' average (year view). Makes drift
   // visible — a static period says nothing about whether a category is
   // creeping up.
+  const baseResult = view === "month" ? m : view === "avg" ? avg : a;
   const compared = useMemo(() => {
-    const base = view === "month" ? prevMonth(month) : null;
-    const rowsIn = (view === "month" ? m : a).rows;
+    const rowsIn = baseResult.rows;
     if (view === "month") {
-      const baseline = spendByCategory({ categories, txns, months: [base] });
+      const baseline = spendByCategory({ categories, txns, months: [prevMonth(month)] });
       return withComparison(rowsIn, { baseline, label: "vs prev month" });
+    }
+    if (view === "avg") {
+      // Average view compares each category against the trailing 12 months,
+      // so you can see whether the RECENT year is running above or below
+      // your long-run typical.
+      const baseline = spendByCategory({ categories, txns, months: trailing12(month) });
+      return withComparison(rowsIn, { baseline, label: "vs last 12m" });
     }
     // year view: average of the 12 months BEFORE this window
     const [y, mo] = month.split("-").map(Number);
     const priorEnd = mo === 1 ? `${y - 1}-12` : `${y}-${String(mo - 1).padStart(2, "0")}`;
     const priorMonths = monthRange(monthRange(`${y - 2}-01`, priorEnd).slice(-12)[0], priorEnd);
     const spent = spendByCategory({ categories, txns, months: priorMonths });
-    const avg = new Map([...spent].map(([k, v]) => [k, v])); // prior-year total = comparable annual baseline
-    return withComparison(rowsIn, { baseline: avg, label: "vs prior 12m" });
-  }, [view, m, a, categories, txns, month]);
-  const cur = { ...(view === "month" ? m : a), rows: compared };
+    return withComparison(rowsIn, { baseline: spent, label: "vs prior 12m" });
+  }, [view, baseResult, categories, txns, month]);
+  const cur = { ...baseResult, rows: compared };
   const s = cur.summary;
   const tm = thisMonth();
   // Any month other than the current one is reached through the picker
   // rather than a button, so it gets no highlighted pill.
-  const activePeriod = view === "year" ? "year" : month === tm ? "this" : "month";
+  const activePeriod = view === "avg" ? "avg" : view === "year" ? "year" : month === tm ? "this" : "month";
 
   if (!txns.length) {
     return <Empty msg="No spending imported yet. Use the Import statements sub-tab to load an Amex or HSBC CSV export, then categorise the rows." />;
@@ -172,28 +181,32 @@ function Overview({ categories, txns, month, setMonth, setSub, drillTo, incomeEn
         <div className="flex gap-1.5">
           {[
             ["year", "Trailing 12 months", () => setView("year")],
+            ["avg", `Average year${avg.summary.monthsWithData ? ` (${avg.summary.monthsWithData}m)` : ""}`, () => setView("avg")],
             ["this", "This month", () => { setView("month"); setMonth(tm); }],
           ].map(([k, label, onClick]) => (
             <button key={k} onClick={onClick}
+              title={k === "avg" ? "A representative 12 months, averaged across all your history — dilutes a one-off expensive year" : undefined}
               className={"text-xs font-medium px-2.5 py-1.5 rounded-full border transition " +
                 (activePeriod === k ? "border-[var(--accent)] bg-[var(--accent)] text-[var(--accent-fg)]" : "border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)]")}>
               {label}
             </button>
           ))}
         </div>
-        <Field label={view === "year" ? "12 months ending" : "Month"}>
-          <input type="month" value={month} onChange={(e) => { setMonth(e.target.value); }} className="input num" />
-        </Field>
+        {view !== "avg" && (
+          <Field label={view === "year" ? "12 months ending" : "Month"}>
+            <input type="month" value={month} onChange={(e) => { setMonth(e.target.value); }} className="input num" />
+          </Field>
+        )}
       </div>
 
       <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))" }}>
-        <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3"><Stat label="Spent" value={gbp0(s.totalActual)} sub={view === "month" ? month : `12 months to ${month}`} /></div>
+        <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3"><Stat label={view === "avg" ? "Spent (avg year)" : "Spent"} value={gbp0(s.totalActual)} sub={view === "month" ? month : view === "avg" ? `averaged over ${s.monthsWithData} months` : `12 months to ${month}`} /></div>
         <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3"><Stat label="Budget" value={gbp0(s.totalLimit)} sub={view === "month" ? "monthly limits only" : "incl. annual categories"} /></div>
         <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3">
           <Stat label={s.variance >= 0 ? "Under budget" : "Over budget"} value={gbp0(Math.abs(s.variance))} tone={s.variance >= 0 ? "green" : "red"} sub={`${s.overCount ?? cur.rows.filter((r) => r.over).length} categor${(s.overCount ?? 0) === 1 ? "y" : "ies"} over`} />
         </div>
         <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3">
-          <Stat label="Essential share" value={view === "year" && s.essentialPct != null ? `${Math.round(s.essentialPct)}%` : gbp0(s.essentialActual)} sub={`discretionary ${gbp0(s.discretionaryActual)}`} />
+          <Stat label="Essential share" value={view !== "month" && s.essentialPct != null ? `${Math.round(s.essentialPct)}%` : gbp0(s.essentialActual)} sub={`discretionary ${gbp0(s.discretionaryActual)}`} />
         </div>
       </div>
 
@@ -275,7 +288,7 @@ function Overview({ categories, txns, month, setMonth, setSub, drillTo, incomeEn
       </div>
 
       <CategoryPie rows={cur.rows} total={s.totalActual} onSlice={drillTo}
-        periodLabel={view === "month" ? month : `12 months to ${month}`} />
+        periodLabel={view === "month" ? month : view === "avg" ? "average year" : `12 months to ${month}`} />
 
       <div className="rounded-xl border border-[var(--border)] overflow-x-auto">
         <table className="w-full text-sm">
@@ -328,12 +341,21 @@ function Overview({ categories, txns, month, setMonth, setSub, drillTo, incomeEn
 /* ----------------------------- Transactions -------------------------- */
 function Transactions({ categories, catById, txns, spendTxns, setManual, setSpendTxns, rules, setRules, filter, setFilter }) {
   const [sort, toggleSort] = useSort("date", "desc");
+  const [year, setYear] = useState("all"); // calendar-year filter
   const groups = useMemo(() => uncategorisedGroups(txns), [txns]);
+  // Every calendar year present, newest first — the filter that lets a
+  // long history be seen a year at a time instead of only the newest 400.
+  const years = useMemo(
+    () => [...new Set(txns.filter((t) => t.date).map((t) => t.date.slice(0, 4)))].sort().reverse(),
+    [txns]
+  );
   const shown = useMemo(() => {
-    if (filter === "uncat") return txns.filter((t) => !t.categoryId);
-    if (filter === "all") return txns;
-    return txns.filter((t) => t.categoryId === filter);
-  }, [txns, filter]);
+    let rows = filter === "uncat" ? txns.filter((t) => !t.categoryId)
+      : filter === "all" ? txns
+        : txns.filter((t) => t.categoryId === filter);
+    if (year !== "all") rows = rows.filter((t) => t.date && t.date.slice(0, 4) === year);
+    return rows;
+  }, [txns, filter, year]);
 
   const [nw, setNw] = useState(() => ({ date: todayISO(), description: "", amount: "", account: "", manualCategoryId: "" }));
   const addOneOff = () => {
@@ -375,6 +397,12 @@ function Transactions({ categories, catById, txns, spendTxns, setManual, setSpen
           <option value="all">All ({txns.length})</option>
           {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
         </select>
+        {years.length > 1 && (
+          <select value={year} onChange={(e) => setYear(e.target.value)} className="input" title="Filter to one calendar year — the list shows the newest 400 rows, so pick a year to reach older transactions">
+            <option value="all">All years</option>
+            {years.map((y) => <option key={y} value={y}>{y}</option>)}
+          </select>
+        )}
       </div>
       {groups.length > 0 && categories.length > 0 && (
         <p className="text-xs text-[var(--muted)] max-w-3xl">Categorise a merchant group once and every past and future transaction from that merchant follows it — the "+ rule…" column also writes a rule, so the match survives a change of card or a reworded description.</p>
@@ -437,12 +465,12 @@ function Transactions({ categories, catById, txns, spendTxns, setManual, setSpen
                 date: (t) => t.date, description: (t) => t.description || "", account: (t) => t.account || "", amount: (t) => +t.amount || 0,
               }).slice(0, 400).map((t) => (
                 <tr key={t.id}>
-                  <td className="py-2 px-3 num text-[var(--muted)]">{t.date}</td>
+                  <td className="py-2 px-3 num text-[var(--muted)] whitespace-nowrap">{t.date}</td>
                   <td className="py-2 px-3">
                     {t.description}
                     {t.estimated && <span className="ml-1.5 text-[10px] uppercase tracking-wide text-[var(--m-bb)]" title="Generated from a recurring commitment — not from a statement">est</span>}
                   </td>
-                  <td className="py-2 px-3 text-[var(--muted)]">{t.account || "—"}</td>
+                  <td className="py-2 px-3 text-[var(--muted)] whitespace-nowrap">{t.account || "—"}</td>
                   <td className={"py-2 px-3 text-right num " + (t.amount < 0 ? "text-[var(--gain)]" : "")}>{gbp(t.amount)}</td>
                   <td className="py-2 px-3">
                     <select className="input text-xs" value={t.categoryId || ""} disabled={t.estimated}
@@ -467,7 +495,7 @@ function Transactions({ categories, catById, txns, spendTxns, setManual, setSpen
               ))}
             </tbody>
           </table>
-          {shown.length > 400 && <p className="text-xs text-[var(--muted)] p-2">Showing the first 400 of {shown.length} — narrow with the filter above.</p>}
+          {shown.length > 400 && <p className="text-xs text-[var(--muted)] p-2">Showing the first 400 of {shown.length} — filter by category or year above to reach the rest.</p>}
         </div>
       )}
     </div>
