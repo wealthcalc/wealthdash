@@ -1687,6 +1687,13 @@ function RunoffTab({ p, giltCashflows = [], forwardDividends = 0, budgetSpend = 
   React.useEffect(() => store.set("plan.runoff.cgtOn", cgtOn), [cgtOn]);
   const [cgtGain, setCgtGain] = useState(() => store.get("plan.runoff.cgtGain", 40));
   React.useEffect(() => store.set("plan.runoff.cgtGain", cgtGain), [cgtGain]);
+  // Include future RSU vests / deferred-cash tranches? On by default (they
+  // ARE scheduled income), but toggling off shows the conservative floor
+  // that leans only on gilts, cash and dividends.
+  const [useRsu, setUseRsu] = useState(() => store.get("plan.runoff.useRsu", true));
+  React.useEffect(() => store.set("plan.runoff.useRsu", useRsu), [useRsu]);
+  const [useDeferred, setUseDeferred] = useState(() => store.get("plan.runoff.useDeferred", true));
+  React.useEffect(() => store.set("plan.runoff.useDeferred", useDeferred), [useDeferred]);
 
   const today = todayISO();
   const startYear = +today.slice(0, 4) + 1; // first FULL calendar year
@@ -1742,14 +1749,20 @@ function RunoffTab({ p, giltCashflows = [], forwardDividends = 0, budgetSpend = 
   const runoff = useMemo(() => buildRunoff({
     annualExpense: +expense || 0, inflation: effInflation(p), startYear, years: Math.max(1, +horizon || 1),
     giltNominalByYear: inputs.giltNominalByYear, cashStart: inputs.cashStart,
-    deferredByYear: inputs.deferredByYear, rsuByYear: inputs.rsuByYear,
+    // RSU vests and deferred cash are less certain than gilts and cash —
+    // vests depend on continued employment and a share price, deferred
+    // tranches on staying at the firm. Toggling them off answers "how does
+    // the run-off look if I DON'T rely on comp I haven't received yet?",
+    // which is the conservative floor worth seeing.
+    deferredByYear: useDeferred ? inputs.deferredByYear : {},
+    rsuByYear: useRsu ? inputs.rsuByYear : {},
     annualDividends: +forwardDividends || 0,
     // CGT on the sales that cover a shortfall — off unless the user asks,
     // since it needs an assumption (what fraction of a sale is gain).
     cgtGainFraction: cgtOn ? (+cgtGain || 0) / 100 : 0,
     cgtRate: cgtOn ? 0.24 : 0,        // higher-rate CGT on non-property assets
     cgtAllowance: cgtOn ? 3000 : 0,   // annual exempt amount
-  }), [expense, horizon, p, startYear, inputs, forwardDividends, cgtOn, cgtGain]);
+  }), [expense, horizon, p, startYear, inputs, forwardDividends, cgtOn, cgtGain, useRsu, useDeferred]);
 
   const s = runoff.summary;
   // Deflate for display when in today's-£ mode (engine stays nominal).
@@ -1805,6 +1818,15 @@ function RunoffTab({ p, giltCashflows = [], forwardDividends = 0, budgetSpend = 
           {cgtOn && (
             <Field label="Gain fraction of a sale" value={cgtGain} min={0} max={100} step={5} suffix="%" onChange={setCgtGain} />
           )}
+          <div style={{ display: "flex", flexDirection: "column", gap: 2, alignSelf: "flex-end", paddingBottom: 4 }}>
+            <div style={{ fontSize: 11.5, color: T.ink2, fontWeight: 600, marginBottom: 2 }}>Include future comp</div>
+            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, color: T.ink2 }}>
+              <input type="checkbox" checked={useRsu} onChange={(e) => setUseRsu(e.target.checked)} /> RSU vests
+            </label>
+            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, color: T.ink2 }}>
+              <input type="checkbox" checked={useDeferred} onChange={(e) => setUseDeferred(e.target.checked)} /> Deferred cash
+            </label>
+          </div>
         </div>
         {budgetSpend?.ready && Math.round(budgetSpend.annualSpend) !== Math.round(+expense || 0) && (
           <p style={{ margin: "10px 0 0", fontSize: 11.5, color: T.muted }}>
@@ -1956,6 +1978,7 @@ function RunoffTab({ p, giltCashflows = [], forwardDividends = 0, budgetSpend = 
             <Note tone="blue">
               Nominal £ throughout ({effInflation(p)}%/yr spend uprating); the gilt bank and cash float earn nothing here — crediting interest would quietly stretch the runway.
               "Cash left" can RISE: income received beyond a year's need (dividends, deferred-cash tranches, RSU vests once gilts have covered the spend) is banked into the float — the small green +£ next to it is that year's top-up. Gilt surpluses stay in their own bank so the ladder's contribution stays auditable. The Cash-flow chart shows the same engine as gross money IN (bars up) vs spend (bar down), with the green line tracking the total float (cash + gilt bank).
+              {(!useRsu || !useDeferred) && <strong style={{ color: T.amber }}>{!useRsu && !useDeferred ? "RSU vests and deferred cash are EXCLUDED" : !useRsu ? "RSU vests are EXCLUDED" : "Deferred cash is EXCLUDED"} — showing the conservative floor without comp you haven't received. </strong>}
               RSUs assume SELL-ON-VEST at today's price ({inputs.rsuUnpriced > 0 ? `${inputs.rsuUnpriced} unpriced vest(s) excluded — set the ticker's price` : "no price forecasting"}); vested-and-held shares are already inside the portfolio, so they're deliberately not a source here.
               RSU vests and deferred-cash tranches are shown NET of tax — marginal UK income-tax bands + employee NI, taxed jointly per year on top of your plan salary while working ({inputs.compTaxRate > 0 ? `effective ${Math.round(inputs.compTaxRate * 100)}% over the horizon` : "none scheduled"}).
               Dividends are held flat at {gbpK(+forwardDividends || 0)}/yr — trailing 12-month income per unit × units held TODAY (so recent buys raise it above last year's cash received), EXCLUDING gilt coupons (those are already in the ladder), and assumed tax-free (ISA/VCT holdings; GIA dividends would bear dividend tax not modelled here). No growth, and no shrinkage as later sales reduce the portfolio: that circularity is disclosed rather than half-modelled.

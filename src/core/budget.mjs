@@ -253,6 +253,74 @@ export function spendByMonth({ categories = [], txns = [], months = [], spreadAn
   }));
 }
 
+// The distinct months (YYYY-MM) that actually have spend data, up to and
+// including `toMonth`. The basis for the "average 12 months" view, which
+// normalises across ALL available history rather than just the last 12 —
+// so 30 months of data smooth out a one-off expensive year that a plain
+// trailing-12m would carry at full weight.
+export function dataMonths(txns = [], toMonth) {
+  const set = new Set();
+  for (const t of txns) {
+    if (!t || !t.date) continue;
+    const m = monthOf(t.date);
+    if (!toMonth || m <= toMonth) set.add(m);
+  }
+  return [...set].sort();
+}
+
+// A representative 12-MONTH view built from the AVERAGE across every month
+// with data — the annual figure you'd expect in a typical year, with
+// lumpy one-offs diluted by the length of history. Actuals are the total
+// over all data-months × 12 / monthsWithData; limits are the true annual
+// budget (monthly × 12, or the annual figure). `monthsWithData` is
+// surfaced so the UI can say how much history the average rests on — an
+// average over 3 months means little, over 30 means a lot.
+export function averageAnnualBudget({ categories = [], txns = [], toMonth } = {}) {
+  const months = dataMonths(txns, toMonth);
+  const n = months.length;
+  if (!n) return { rows: [], summary: { monthsWithData: 0, totalActual: 0, totalLimit: 0, variance: 0, essentialActual: 0, discretionaryActual: 0, essentialPct: null, uncategorised: 0, transfers: 0, monthsCovered: 12 } };
+  const scale = 12 / n; // total-over-history → representative year
+  const inWindow = new Set(months);
+  const spend = new Map();
+  let uncategorised = 0, transfers = 0;
+  for (const t of txns) {
+    if (!t || !inWindow.has(monthOf(t.date))) continue;
+    const amt = +t.amount || 0;
+    if (!t.categoryId) { uncategorised += amt; continue; }
+    spend.set(t.categoryId, (spend.get(t.categoryId) || 0) + amt);
+  }
+  const rows = [];
+  let totalActual = 0, totalLimit = 0, essentialActual = 0;
+  for (const c of categories) {
+    const raw = spend.get(c.id) || 0;
+    if (c.transfer) { transfers += raw * scale; continue; }
+    const actual = raw * scale;
+    const limit = c.annual > 0 && !(c.monthly > 0) ? +c.annual : (+c.monthly || 0) * 12;
+    rows.push({
+      id: c.id, name: c.name, essential: !!c.essential,
+      annualOnly: c.annual > 0 && !(c.monthly > 0),
+      actual: r2(actual), limit: r2(limit), variance: r2(limit - actual),
+      pctUsed: limit ? r2((actual / limit) * 100) : null,
+      over: actual > limit,
+    });
+    totalActual += actual; totalLimit += limit;
+    if (c.essential) essentialActual += actual;
+  }
+  rows.sort((a, b) => b.actual - a.actual);
+  return {
+    months, rows,
+    summary: {
+      monthsWithData: n,
+      totalActual: r2(totalActual), totalLimit: r2(totalLimit), variance: r2(totalLimit - totalActual),
+      essentialActual: r2(essentialActual), discretionaryActual: r2(totalActual - essentialActual),
+      essentialPct: totalActual > 0 ? r2((essentialActual / totalActual) * 100) : null,
+      uncategorised: r2(uncategorised * scale), transfers: r2(transfers),
+      monthsCovered: 12,
+      overCount: rows.filter((r) => r.over).length,
+    },
+  };
+}
+
 // Per-category spend for an arbitrary set of months — the primitive
 // behind the "vs previous / vs average" comparison. Returns a Map of
 // categoryId -> £ (transfers excluded, uncategorised ignored: a category

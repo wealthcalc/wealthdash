@@ -239,3 +239,36 @@ test("spendByCategory + withComparison: this period vs a baseline", async () => 
   assert.equal(fun.baseline, 0);
   assert.equal(fun.deltaPct, null);
 });
+
+test("averageAnnualBudget normalises ALL history to a representative year", async () => {
+  const { averageAnnualBudget } = await import("../core/budget.mjs");
+  // 18 months of data: £600/mo groceries every month, plus a one-off £3600
+  // in a single month. Trailing-12m would over- or under-weight the one-off
+  // depending on where it fell; the average spreads it across 18 months.
+  const txns = [];
+  const months = [];
+  for (let i = 0; i < 18; i++) {
+    const y = 2025 + Math.floor(i / 12), mo = (i % 12) + 1;
+    const m = `${y}-${String(mo).padStart(2, "0")}`;
+    months.push(m);
+    txns.push({ id: `g${i}`, date: `${m}-05`, amount: 600, categoryId: "gro" });
+  }
+  txns.push({ id: "spike", date: "2025-03-11", amount: 3600, categoryId: "fun" }); // one-off
+
+  const a = averageAnnualBudget({ categories: CATS, txns, toMonth: "2026-06" });
+  assert.equal(a.summary.monthsWithData, 18);
+  const gro = a.rows.find((r) => r.id === "gro");
+  // 600/mo over 18 months → still 600×12 = 7200 representative annual
+  assert.equal(gro.actual, 7200);
+  const fun = a.rows.find((r) => r.id === "fun");
+  // 3600 over 18 months = 200/mo → 2400 representative annual (diluted)
+  assert.equal(fun.actual, 2400);
+  // limits are the TRUE annual budget, not scaled by history length
+  assert.equal(gro.limit, 7200);  // 600 × 12
+  assert.equal(fun.limit, 2400);  // 200 × 12
+
+  // empty history returns a safe zero shape, not NaN
+  const empty = averageAnnualBudget({ categories: CATS, txns: [], toMonth: "2026-06" });
+  assert.equal(empty.summary.monthsWithData, 0);
+  assert.equal(empty.summary.essentialPct, null);
+});
