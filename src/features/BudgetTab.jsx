@@ -177,26 +177,21 @@ function Overview({ categories, txns, month, setMonth, setSub, drillTo, incomeEn
 
   return (
     <div className="space-y-4">
-      <div className="flex items-end gap-3 flex-wrap">
-        <div className="flex gap-1.5">
-          {[
-            ["year", "Trailing 12 months", () => setView("year")],
-            ["avg", `Average year${avg.summary.monthsWithData ? ` (${avg.summary.monthsWithData}m)` : ""}`, () => setView("avg")],
-            ["this", "This month", () => { setView("month"); setMonth(tm); }],
-          ].map(([k, label, onClick]) => (
-            <button key={k} onClick={onClick}
-              title={k === "avg" ? "A representative 12 months, averaged across all your history — dilutes a one-off expensive year" : undefined}
-              className={"text-xs font-medium px-2.5 py-1.5 rounded-full border transition " +
-                (activePeriod === k ? "border-[var(--accent)] bg-[var(--accent)] text-[var(--accent-fg)]" : "border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)]")}>
-              {label}
-            </button>
-          ))}
-        </div>
-        {view !== "avg" && (
-          <Field label={view === "year" ? "12 months ending" : "Month"}>
-            <input type="month" value={month} onChange={(e) => { setMonth(e.target.value); }} className="input num" />
-          </Field>
-        )}
+      {/* Three fixed periods, all anchored to now — no month picker (its
+          appearing/disappearing made the row jump, and browsing an
+          arbitrary past month added little the three views don't). */}
+      <div className="flex gap-1.5 flex-wrap">
+        {[
+          ["year", "Trailing 12 months", "The last 12 calendar months to today.", () => { setView("year"); setMonth(tm); }],
+          ["avg", `Average year${avg.summary.monthsWithData ? ` (${avg.summary.monthsWithData}m)` : ""}`, "A representative 12 months, averaged across all your history — dilutes a one-off expensive year.", () => setView("avg")],
+          ["this", "This month", "Spending so far this calendar month.", () => { setView("month"); setMonth(tm); }],
+        ].map(([k, label, tip, onClick]) => (
+          <button key={k} onClick={onClick} title={tip}
+            className={"text-xs font-medium px-2.5 py-1.5 rounded-full border transition " +
+              (activePeriod === k ? "border-[var(--accent)] bg-[var(--accent)] text-[var(--accent-fg)]" : "border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)]")}>
+            {label}
+          </button>
+        ))}
       </div>
 
       <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))" }}>

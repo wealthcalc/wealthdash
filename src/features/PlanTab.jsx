@@ -1804,7 +1804,7 @@ function RunoffTab({ p, giltCashflows = [], forwardDividends = 0, budgetSpend = 
         <p style={{ margin: "0 0 12px", fontSize: 12.5, color: T.muted, maxWidth: 680 }}>
           An annual spend, funded in strict order: gilt cashflows (surpluses bank forward), your cash float, deferred-cash tranches, RSU vests, recurring dividends — and only then portfolio sales. The question this answers: <strong>when does the selling start?</strong>
         </p>
-        <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "center" }}>
+        <div style={{ display: "flex", gap: 18, flexWrap: "wrap", alignItems: "flex-start" }}>
           <Field label="Annual spend (today's £)" value={expense} min={0} max={500000} step={1000} prefix="£" onChange={setExpense} />
           <Field label="Horizon (years)" value={horizon} min={1} max={40} onChange={setHorizon} />
           <div>
@@ -1812,20 +1812,28 @@ function RunoffTab({ p, giltCashflows = [], forwardDividends = 0, budgetSpend = 
             <Segmented value={realTerms ? "real" : "nominal"} onChange={(v) => setRealTerms(v === "real")} accent={T.blue}
               options={[{ value: "real", label: "Today's £" }, { value: "nominal", label: "Nominal £" }]} />
           </div>
-          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, color: T.ink2, alignSelf: "flex-end", paddingBottom: 6 }}>
-            <input type="checkbox" checked={cgtOn} onChange={(e) => setCgtOn(e.target.checked)} /> Account for CGT on sales
-          </label>
-          {cgtOn && (
-            <Field label="Gain fraction of a sale" value={cgtGain} min={0} max={100} step={5} suffix="%" onChange={setCgtGain} />
-          )}
-          <div style={{ display: "flex", flexDirection: "column", gap: 2, alignSelf: "flex-end", paddingBottom: 4 }}>
-            <div style={{ fontSize: 11.5, color: T.ink2, fontWeight: 600, marginBottom: 2 }}>Include future comp</div>
+          {/* Each option group is a self-contained column, so revealing the
+              CGT slider grows THIS column downward rather than shoving the
+              comp toggles sideways. */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <div style={{ fontSize: 11.5, color: T.ink2, fontWeight: 600 }}>Include future comp</div>
             <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, color: T.ink2 }}>
               <input type="checkbox" checked={useRsu} onChange={(e) => setUseRsu(e.target.checked)} /> RSU vests
             </label>
             <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, color: T.ink2 }}>
               <input type="checkbox" checked={useDeferred} onChange={(e) => setUseDeferred(e.target.checked)} /> Deferred cash
             </label>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 210 }}>
+            <div style={{ fontSize: 11.5, color: T.ink2, fontWeight: 600 }}>Portfolio sales</div>
+            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, color: T.ink2 }}>
+              <input type="checkbox" checked={cgtOn} onChange={(e) => setCgtOn(e.target.checked)} /> Account for CGT
+            </label>
+            {cgtOn && (
+              <div style={{ marginTop: 2 }}>
+                <Field label="Gain fraction of a sale" value={cgtGain} min={0} max={100} step={5} suffix=" %" onChange={setCgtGain} />
+              </div>
+            )}
           </div>
         </div>
         {budgetSpend?.ready && Math.round(budgetSpend.annualSpend) !== Math.round(+expense || 0) && (
