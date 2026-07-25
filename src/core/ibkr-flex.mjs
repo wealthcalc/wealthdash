@@ -67,7 +67,7 @@ function shapeInterestAccruals(rows = [], { defaultWrapper = "GIA" } = {}) {
 // raw: { trades, cashTransactions, interestAccruals, cashReport,
 // openPositions, fromDate, toDate, period } — the exact shape
 // api/ibkr-flex.mjs returns.
-export function shapeFlexPull(raw = {}, { defaultWrapper = "GIA", baseCurrency = "GBP" } = {}) {
+export function shapeFlexPull(raw = {}, { defaultWrapper = "GIA", baseCurrency = "GBP", seedByIsin = {} } = {}) {
   const warnings = [];
   const rawTrades = raw.trades || [];
   const rawCash = raw.cashTransactions || [];
@@ -75,12 +75,12 @@ export function shapeFlexPull(raw = {}, { defaultWrapper = "GIA", baseCurrency =
 
   const trades = [];
   for (const attrs of rawTrades) {
-    const t = ibTradeFromRow(getterFor(attrs), defaultWrapper, baseCurrency, warnings);
+    const t = ibTradeFromRow(getterFor(attrs), defaultWrapper, baseCurrency, warnings, seedByIsin);
     if (t) trades.push(t);
   }
   const income = [];
   for (const attrs of rawCash) {
-    const c = ibCashFromRow(getterFor(attrs), defaultWrapper, baseCurrency);
+    const c = ibCashFromRow(getterFor(attrs), defaultWrapper, baseCurrency, seedByIsin);
     if (c) income.push(c);
   }
   const fromInterest = shapeInterestAccruals(rawInterest, { defaultWrapper });

@@ -26,23 +26,52 @@ const _ibdate = (x) => {
   m = s.match(/^(\d{4})\/(\d{2})\/(\d{2})/); if (m) return `${m[1]}-${m[2]}-${m[3]}`; return "";
 };
 const _IBSTOCK = new Set(["stk", "etf", "fund", "stocks", "equity", "closedendfund"]);
+
+// Turn an IBKR symbol into a ticker the app's PRICE lookups recognise.
+// IBKR reports raw exchange symbols: an LSE share as "VOD" (Yahoo wants
+// "VOD.L") and a gilt under a bond name/ISIN rather than the app's "TG31"
+// convention. Two deterministic corrections, in order:
+//   1. ISIN in the app's security seed → the seed's canonical ticker. This
+//      turns a gilt into TG31/TN28 etc. (DMO prices gilts by ISIN, so the
+//      display ticker just needs to be the one the app knows) and any
+//      seeded share into its canonical symbol.
+//   2. Otherwise an LSE-listed / GBP-denominated equity gets ".L" appended
+//      — how Yahoo quotes every London line — unless it already carries a
+//      suffix or class dot.
+// `seedByIsin` is { ISIN: ticker }, supplied by the caller from the seed
+// (this module stays React-free and doesn't import it).
+export function resolveIbkrTicker(symbol, isin, currency, exchange, seedByIsin = {}) {
+  const sym = String(symbol || "").trim().toUpperCase();
+  const is = String(isin || "").trim().toUpperCase();
+  if (is && seedByIsin[is]) return seedByIsin[is];
+  if (!sym || sym.includes(".")) return sym;
+  const lse = /^LSE/.test(String(exchange || "").toUpperCase());
+  if (lse || currency === "GBP") return `${sym}.L`;
+  return sym;
+}
 const _ibpick = (headerIndex) => (row, ...keys) => { for (const k of keys) { const i = headerIndex[k]; if (i != null && row[i] !== undefined) return row[i]; } return undefined; };
-function _ibTrade(get, defaultWrapper, baseCurrency, warnings) {
+function _ibTrade(get, defaultWrapper, baseCurrency, warnings, seedByIsin = {}) {
   const symbol = (get("symbol", "underlyingsymbol") || "").trim().toUpperCase();
   const date = _ibdate(get("tradedate", "datetime", "date"));
   if (!symbol || !date) return null;
+  const isin = (get("isin", "securityid") || "").trim().toUpperCase();
+  const currency = (get("currencyprimary", "currency") || "GBP").trim().toUpperCase();
+  const exchange = get("listingexchange", "exchange", "primaryexchange") || "";
   const asset = _ibnorm(get("assetclass", "assetcategory") || "stk");
-  if (asset && !_IBSTOCK.has(asset)) { warnings.push(`Skipped ${symbol} ${date}: asset class "${asset}" not supported.`); return null; }
+  // A bond that is a KNOWN gilt (its ISIN is in the seed) is imported
+  // anyway and remapped to the app's gilt ticker — otherwise UK gilts
+  // pulled from IBKR (asset class BOND) would be silently skipped.
+  const seededGilt = isin && seedByIsin[isin];
+  if (asset && !_IBSTOCK.has(asset) && !seededGilt) { warnings.push(`Skipped ${symbol} ${date}: asset class "${asset}" not supported.`); return null; }
+  const ticker = resolveIbkrTicker(symbol, isin, currency, exchange, seedByIsin);
   const qtyRaw = _ibnum(get("quantity"));
   const bs = (get("buysell") || "").trim().toUpperCase();
   const side = bs ? (bs.startsWith("S") ? "SELL" : "BUY") : (qtyRaw < 0 ? "SELL" : "BUY");
   const quantity = Math.abs(qtyRaw); if (!quantity) return null;
-  const currency = (get("currencyprimary", "currency") || "GBP").trim().toUpperCase();
   const proceeds = _ibnum(get("proceeds")), commission = _ibnum(get("ibcommission", "commission", "commfee", "commissionandtax")), taxes = _ibnum(get("taxes", "tax"));
   const netcash = get("netcash");
   const native = Math.abs(netcash !== undefined && netcash !== "" ? _ibnum(netcash) + taxes : proceeds + commission + taxes);
   const fxToBase = _ibnum(get("fxratetobase", "fxrate"));
-  const isin = (get("isin", "securityid") || "").trim().toUpperCase();
   let gbpAmount = null, fxRate = null, needsFx = false;
   if (currency === "GBP") { gbpAmount = native; fxRate = 1; }
   else if (baseCurrency === "GBP" && fxToBase) { gbpAmount = native * fxToBase; fxRate = fxToBase; }
@@ -56,9 +85,9 @@ function _ibTrade(get, defaultWrapper, baseCurrency, warnings) {
   // overlapping history is immune to a value rounding slightly differently
   // between two pulls of the same trade. null (not fabricated) when absent.
   const ibkrId = get("tradeid", "transactionid") || null;
-  return { date, ticker: symbol, isin, side, quantity, nativeCurrency: currency, nativeAmount: native, fxRate, gbpAmount: gbpAmount == null ? null : Math.round(gbpAmount * 100) / 100, needsFx, wrapper: defaultWrapper, ibkrId };
+  return { date, ticker, isin, side, quantity, nativeCurrency: currency, nativeAmount: native, fxRate, gbpAmount: gbpAmount == null ? null : Math.round(gbpAmount * 100) / 100, needsFx, wrapper: defaultWrapper, ibkrId };
 }
-function _ibCash(get, defaultWrapper, baseCurrency) {
+function _ibCash(get, defaultWrapper, baseCurrency, seedByIsin = {}) {
   const typ = _ibnorm(get("type", "activitydescription", "description") || "");
   let kind = null;
   if (typ.includes("withholding")) return null;
@@ -70,6 +99,8 @@ function _ibCash(get, defaultWrapper, baseCurrency) {
   const fxToBase = _ibnum(get("fxratetobase", "fxrate"));
   const symbol = (get("symbol", "underlyingsymbol") || "").trim().toUpperCase();
   const isin = (get("isin", "securityid") || "").trim().toUpperCase();
+  const exchange = get("listingexchange", "exchange", "primaryexchange") || "";
+  const ticker = resolveIbkrTicker(symbol, isin, currency, exchange, seedByIsin);
   let gbp = null, fxRate = null, needsFx = false;
   if (currency === "GBP") { gbp = amount; fxRate = 1; }
   else if (baseCurrency === "GBP" && fxToBase) { gbp = amount * fxToBase; fxRate = fxToBase; }
@@ -77,9 +108,9 @@ function _ibCash(get, defaultWrapper, baseCurrency) {
   // Same hidden-id purpose as ibkrId on a trade (see _ibTrade) — a Flex
   // Statement CashTransaction row carries its own unique transactionID.
   const ibkrId = get("transactionid", "tradeid") || null;
-  return { date, ticker: symbol, isin, kind, nativeCurrency: currency, nativeAmount: amount, fxRate, amount: gbp == null ? null : Math.round(gbp * 100) / 100, needsFx, wrapper: defaultWrapper, ibkrId };
+  return { date, ticker, isin, kind, nativeCurrency: currency, nativeAmount: amount, fxRate, amount: gbp == null ? null : Math.round(gbp * 100) / 100, needsFx, wrapper: defaultWrapper, ibkrId };
 }
-function _ibFlex(rows, defaultWrapper, baseCurrency, warnings) {
+function _ibFlex(rows, defaultWrapper, baseCurrency, warnings, seedByIsin = {}) {
   const header = rows[0].map(_ibnorm); const headerIndex = {}; header.forEach((h, i) => { if (!(h in headerIndex)) headerIndex[h] = i; });
   const pick = _ibpick(headerIndex); const has = (...k) => k.some((x) => headerIndex[x] != null);
   const looksTrades = has("tradedate", "buysell", "tradeprice") || (has("quantity") && has("proceeds"));
@@ -87,13 +118,13 @@ function _ibFlex(rows, defaultWrapper, baseCurrency, warnings) {
   const trades = [], income = [];
   for (let r = 1; r < rows.length; r++) {
     const row = rows[r]; const get = (...k) => pick(row, ...k);
-    if (looksCash && !looksTrades) { const c = _ibCash(get, defaultWrapper, baseCurrency); if (c) income.push(c); continue; }
-    const t = _ibTrade(get, defaultWrapper, baseCurrency, warnings); if (t) { trades.push(t); continue; }
-    if (has("type", "amount")) { const c = _ibCash(get, defaultWrapper, baseCurrency); if (c) income.push(c); }
+    if (looksCash && !looksTrades) { const c = _ibCash(get, defaultWrapper, baseCurrency, seedByIsin); if (c) income.push(c); continue; }
+    const t = _ibTrade(get, defaultWrapper, baseCurrency, warnings, seedByIsin); if (t) { trades.push(t); continue; }
+    if (has("type", "amount")) { const c = _ibCash(get, defaultWrapper, baseCurrency, seedByIsin); if (c) income.push(c); }
   }
   return { trades, income };
 }
-function _ibActivity(rows, defaultWrapper, baseCurrency, warnings) {
+function _ibActivity(rows, defaultWrapper, baseCurrency, warnings, seedByIsin = {}) {
   const trades = [], income = []; const sections = {};
   for (const row of rows) { const name = row[0], tag = row[1];
     if (tag === "Header") sections[name] = { header: row.slice(2).map(_ibnorm), data: [] };
@@ -102,7 +133,7 @@ function _ibActivity(rows, defaultWrapper, baseCurrency, warnings) {
   if (sections["Trades"]) { const { pick } = build(sections["Trades"]);
     for (const row of sections["Trades"].data) { const get = (...k) => pick(row, ...k);
       const disc = _ibnorm(get("datadiscriminator") || "order"); if (disc && !["order", "trade"].includes(disc)) continue;
-      const t = _ibTrade(get, defaultWrapper, baseCurrency, warnings); if (t) trades.push(t); } }
+      const t = _ibTrade(get, defaultWrapper, baseCurrency, warnings, seedByIsin); if (t) trades.push(t); } }
   for (const secName of ["Dividends", "Payment In Lieu Of Dividends", "Interest"]) {
     if (!sections[secName]) continue; const { pick } = build(sections[secName]);
     for (const row of sections[secName].data) { const get = (...k) => pick(row, ...k);
@@ -127,11 +158,11 @@ export const ibCashFromRow = _ibCash;
 export const ibNormKey = _ibnorm;
 export const ibDate = _ibdate;
 
-export function parseIBKR(text, { defaultWrapper = "GIA", baseCurrency = "GBP" } = {}) {
+export function parseIBKR(text, { defaultWrapper = "GIA", baseCurrency = "GBP", seedByIsin = {} } = {}) {
   const rows = parseCSVRows(text); if (!rows.length) return { trades: [], income: [], warnings: ["Empty file."], baseCurrency };
   const warnings = [];
   const sectioned = rows.some((r) => r[1] === "Header" && ["Trades", "Dividends", "Interest", "Deposits & Withdrawals", "Payment In Lieu Of Dividends"].includes(r[0]));
-  const { trades, income } = sectioned ? _ibActivity(rows, defaultWrapper, baseCurrency, warnings) : _ibFlex(rows, defaultWrapper, baseCurrency, warnings);
+  const { trades, income } = sectioned ? _ibActivity(rows, defaultWrapper, baseCurrency, warnings, seedByIsin) : _ibFlex(rows, defaultWrapper, baseCurrency, warnings, seedByIsin);
   const needFx = trades.filter((t) => t.needsFx).length + income.filter((t) => t.needsFx).length;
   if (needFx) warnings.push(`${needFx} row(s) in a non-GBP currency need an FX rate; fetching by trade date.`);
   return { trades, income, warnings, baseCurrency, format: sectioned ? "activity" : "flex" };
