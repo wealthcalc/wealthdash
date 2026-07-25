@@ -2,7 +2,8 @@ import React, { useState, useMemo, useRef } from "react";
 import { Plus, Trash2, Upload, Check, AlertTriangle, Wand2 } from "lucide-react";
 import { ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, PieChart, Pie, Cell, Sector } from "recharts";
 import { monthlyBudget, annualBudget, averageAnnualBudget, spendByMonth, trailing12, mergedSpend, spendByCategory, withComparison, monthRange, yearOverlay } from "../core/budget.mjs";
-import { uncategorisedGroups, suggestRule } from "../core/categorise.mjs";
+import { uncategorisedGroups, suggestRule, normaliseMerchant } from "../core/categorise.mjs";
+import { detectRecurring, topMerchants } from "../core/detect-recurring.mjs";
 import { parseStatement, dedupeStatement, PROFILES } from "../core/statement-import.mjs";
 import { expandRecurring, statementCoverage, annualCommitment, FREQUENCIES } from "../core/recurring.mjs";
 import { store, gbp, gbp0, SubTabs, uid, todayISO, Field, Empty, Stat, useSort, sortRows, SortTh } from "../ui/shared.jsx";
@@ -299,6 +300,8 @@ function Overview({ categories, txns, month, setMonth, setSub, drillTo, incomeEn
         </table>
       </div>
 
+      <TopMerchantsPanel categories={categories} txns={txns} view={view} month={month} ytdMonths={ytdMonths} />
+
       {/* Moved to the bottom: the per-month essential/discretionary bars vs
           the budget line — detail you drill into after the headline views
           above, not the first thing you scan. */}
@@ -344,6 +347,39 @@ function Overview({ categories, txns, month, setMonth, setSub, drillTo, incomeEn
             : "Money is shown in the month it actually left your account, so an annual bill towers over its neighbours. The budget line is monthly limits only — that spike is by design, not an overspend."}
         </p>
       </div>
+    </div>
+  );
+}
+
+/* --------------------------- Top merchants --------------------------- */
+// Where the money actually goes, by shop — a different lens from category.
+// Scoped to the current period so it agrees with the totals above.
+function TopMerchantsPanel({ categories, txns, view, month, ytdMonths }) {
+  const windowTxns = useMemo(() => {
+    if (view === "avg") return txns; // all history
+    const months = new Set(view === "month" ? [month] : view === "ytd" ? ytdMonths : trailing12(month));
+    return txns.filter((t) => t.date && months.has(t.date.slice(0, 7)));
+  }, [txns, view, month, ytdMonths]);
+  const transferIds = useMemo(() => new Set(categories.filter((c) => c.transfer).map((c) => c.id)), [categories]);
+  const { rows, total } = useMemo(() => topMerchants(windowTxns, { transferIds, limit: 12 }), [windowTxns, transferIds]);
+  if (!rows.length) return null;
+  const max = rows[0].total;
+  return (
+    <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3">
+      <div className="text-xs font-medium text-[var(--muted)] mb-2">Top merchants — where the money goes</div>
+      <div className="space-y-1">
+        {rows.map((r) => (
+          <div key={r.key} className="flex items-center gap-2 text-xs">
+            <span className="w-40 truncate" title={r.sample}>{r.label}</span>
+            <span className="flex-1 h-2 rounded-full bg-[var(--panel2)] overflow-hidden">
+              <span className="block h-full rounded-full bg-[var(--accent)]" style={{ width: `${Math.max(2, (r.total / max) * 100)}%` }} />
+            </span>
+            <span className="num w-20 text-right">{gbp0(r.total)}</span>
+            <span className="num w-10 text-right text-[var(--muted)]">{Math.round(r.weight)}%</span>
+          </div>
+        ))}
+      </div>
+      <p className="text-[11px] text-[var(--muted)] mt-2">Grouped by merchant (store-number noise collapsed), refunds netted, transfers excluded — {gbp0(total)} across the top {rows.length}.</p>
     </div>
   );
 }
@@ -416,7 +452,7 @@ function YearOverlayChart({ categories, txns }) {
         {cy && <span className="inline-flex items-center gap-1.5 text-xs font-medium text-[var(--fg)]"><span className="w-2 h-2 rounded-full inline-block" style={{ background: "var(--accent)" }} />{cy}</span>}
         {cy && projected.endEstimate != null && <span className="inline-flex items-center gap-1.5 text-xs text-[var(--muted)]"><span className="inline-block" style={{ width: 12, borderTop: "2px dashed var(--accent)" }} />projected full year</span>}
       </div>
-      <p className="text-xs text-[var(--muted)] mt-1.5">Each line is a calendar year's total spend accumulating month by month (all categories, transfers excluded). The current year running above the others means you're spending faster than in prior years; the dotted line extends it at the year-to-date pace.</p>
+      <p className="text-xs text-[var(--muted)] mt-1.5">Each line is a calendar year's total spend accumulating month by month (all categories, transfers excluded). Only COMPLETE prior years are drawn — a partial first year would read artificially low — plus the current year in bold. Running above the others means you're spending faster than in prior years; the dotted line extends the current year at its year-to-date pace.</p>
     </div>
   );
 }
@@ -697,6 +733,22 @@ function Recurring({ recurring, setRecurring, categories, catById, suppressed, g
     return m;
   }, [generated]);
 
+  // Auto-detect subscriptions/direct debits in the imported rows the user
+  // hasn't already declared. Merchant keys of existing commitments are
+  // passed so the same thing isn't re-suggested.
+  const [dismissed, setDismissed] = useState(() => new Set());
+  const detected = useMemo(() => {
+    const existing = new Set(recurring.map((x) => normaliseMerchant(x.label)));
+    return detectRecurring(spendTxns, { existingKeys: existing }).filter((d) => !dismissed.has(d.key));
+  }, [spendTxns, recurring, dismissed]);
+  const addDetected = (d) => {
+    setRecurring((p) => [...p, {
+      id: uid(), label: d.label, amount: d.amount, frequency: d.frequency,
+      startDate: d.startDate, endDate: "", categoryId: d.categoryId || "", account: d.account || "", alwaysInclude: false,
+    }]);
+    setDismissed((s) => new Set(s).add(d.key));
+  };
+
   const add = () => {
     if (!r.label.trim() || !(+r.amount) || !r.startDate) return;
     setRecurring((p) => [...p, { ...r, label: r.label.trim(), amount: +r.amount }]);
@@ -706,6 +758,26 @@ function Recurring({ recurring, setRecurring, categories, catById, suppressed, g
 
   return (
     <div className="space-y-3">
+      {detected.length > 0 && (
+        <div className="rounded-xl border border-[var(--accent)] bg-[var(--panel)] p-3 space-y-2">
+          <div className="text-sm font-semibold flex items-center gap-1.5"><Wand2 size={15} className="text-[var(--accent)]" /> {detected.length} possible recurring payment{detected.length > 1 ? "s" : ""} found in your imports</div>
+          <div className="space-y-1.5">
+            {detected.slice(0, 8).map((d) => (
+              <div key={d.key} className="flex items-center gap-2 flex-wrap text-xs rounded-lg border border-[var(--border)] bg-[var(--panel2)] px-3 py-2">
+                <span className="font-medium text-[var(--fg)]">{d.label}</span>
+                <span className="text-[var(--muted)]">{gbp(d.amount)} {d.frequency} · {d.charges} charges · ~{gbp0(d.annualEstimate)}/yr{d.account ? ` · ${d.account}` : ""}</span>
+                {d.priceRose && <span className="text-[var(--m-bb)]" title={`Rose from ${gbp(d.priceFrom)} to ${gbp(d.priceTo)} — about +${gbp0(d.annualIncrease)}/yr`}>▲ price up {gbp(d.priceFrom)}→{gbp(d.priceTo)}</span>}
+                <span className="ml-auto flex gap-2">
+                  <button onClick={() => addDetected(d)} className="text-[var(--accent)] font-medium hover:underline">Add</button>
+                  <button onClick={() => setDismissed((s) => new Set(s).add(d.key))} className="text-[var(--muted)] hover:text-[var(--fg)]">Dismiss</button>
+                </span>
+              </div>
+            ))}
+          </div>
+          <p className="text-[11px] text-[var(--muted)]">Detected from same-merchant, regular-cadence, consistent-amount charges. Adding one creates a commitment you can edit below; it auto-suppresses in months your statement already covers.</p>
+        </div>
+      )}
+
       <h3 className="text-sm font-semibold">Recurring commitments</h3>
       <p className="text-xs text-[var(--muted)] max-w-3xl">
         Fixed outgoings you know about without reading a statement — direct debits, quarterly service charges, annual building insurance. Each one generates dated transactions automatically, so an account you never import still shows up in the budget.

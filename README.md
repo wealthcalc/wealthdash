@@ -2185,6 +2185,48 @@ grids (done as part of the Home layout regroup); wide data tables scroll
 horizontally, the accepted primitive. A full table→card rewrite is noted
 but not done — low value for the effort on a personal tool.
 
+## Budget & Income analysis batch
+Six features from a review of the two tabs, engines-first.
+
+**Recurring auto-detect** (`core/detect-recurring.mjs`, 7 tests) closes the
+Import→Recurring loop: it clusters same-merchant, regular-cadence,
+consistent-amount charges in the imported rows into subscription
+suggestions (reusing the categorisation merchant-normaliser and the income
+calendar's cadence detector), and flags **price rises** — latest charge
+materially above earliest — with the £/yr increase, the leak people miss.
+Conservative: 3+ charges over a real span, amount-consistency filter so a
+supermarket (variable amounts) isn't mistaken for a subscription. The
+Recurring sub-tab shows suggestions with Add / Dismiss.
+
+**Top merchants** (`topMerchants`) — where the money actually goes, by shop
+rather than category, scoped to the current period. A bar list on the
+Overview.
+
+**VCT holding-period tracker** (`core/vct.mjs`, 6 tests) — the real
+money-at-risk one. VCTs claw back their 30% income-tax relief if sold
+within five years of subscribing; this gives each subscription its own
+five-year clock, the relief at stake (30% of cost, an upper bound —
+disclosed), FIFO handling of partial sales/buybacks, and what clears within
+a year. On the real portfolio: ~£15k of relief locked across 23
+subscriptions. Each BUY is treated as a subscription (the ledger can't tell
+a new subscription from a secondary-market buy — stated in the UI).
+
+**Dividend cut/growth** (`core/income-analysis.mjs`) — the ledger knows
+what each holding paid year-on-year; comparing the last complete 12 months
+against the prior 12 flags cuts and growth. A holding with income in only
+one window is new/lapsed, never a fabricated %.
+
+**Income concentration** (same module) — trailing-12m income by holding,
+top-N share and effective-N (1/HHI), the income-side mirror of the Home
+capital-concentration line.
+
+Both income-analysis lenses and the VCT tracker live on a new **Analysis**
+sub-tab of Income.
+
+**Year-overlay chart** now draws COMPLETE prior years only (a partial first
+year read artificially low) plus the current partial year — the trend
+baseline should be full years.
+
 ## Budget tab — spending, statement import, categorisation
 The first part of the app that tracks money going OUT. Three pure engines
 plus a tab, all node-tested (`budget.test.mjs`, `categorise.test.mjs`,
