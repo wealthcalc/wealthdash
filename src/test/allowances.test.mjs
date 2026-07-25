@@ -159,3 +159,32 @@ test("whole-position moves are marked (contract-note convenience)", () => {
   const p = bedAndIsaPlan({ pools: { A: { qty: 100, cost: 1000 } }, prices: { A: 15 }, aeaLeft: 1e9, isaLeft: 1e9 });
   assert.equal(p.rows[0].wholePosition, true);
 });
+
+test("lossHarvest: finds underwater pools and where the loss does useful work", async () => {
+  const { lossHarvest } = await import("../core/allowances.mjs");
+  const pools = {
+    DOWN: { qty: 100, cost: 5000 },  // now worth 3000 → £2000 loss
+    UP: { qty: 100, cost: 1000 },    // now worth 2000 → gain, ignored
+    FLAT: { qty: 10, cost: 1000 },   // ~break-even, ignored
+  };
+  const prices = { DOWN: 30, UP: 20, FLAT: 100.01 };
+
+  // With £5000 of realised gains and £3000 AEA left: £2000 of gains sit
+  // above the AEA, so the whole £2000 loss offsets them this year.
+  const h = lossHarvest({ pools, prices, realisedGains: 5000, aeaLeft: 3000 });
+  assert.equal(h.rows.length, 1);
+  assert.equal(h.rows[0].ticker, "DOWN");
+  assert.equal(h.rows[0].loss, 2000);
+  assert.equal(h.rows[0].lossPct, 40);
+  assert.equal(h.totalLoss, 2000);
+  assert.equal(h.offsetsThisYear, 2000);
+  assert.equal(h.carriesForward, 0);
+  assert.equal(h.wastedIfHarvestedNow, false);
+
+  // Same losses but gains are WITHIN the AEA → harvesting now banks
+  // nothing this year (it would all carry forward).
+  const h2 = lossHarvest({ pools, prices, realisedGains: 2000, aeaLeft: 3000 });
+  assert.equal(h2.offsetsThisYear, 0);
+  assert.equal(h2.carriesForward, 2000);
+  assert.equal(h2.wastedIfHarvestedNow, true);
+});

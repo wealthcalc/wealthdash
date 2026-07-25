@@ -798,31 +798,43 @@ function Categories({ categories, setCategories, rules, setRules, catById, txns 
 }
 
 /* --------------------------- Import statements ------------------------ */
+const rowKey = (r) => `${r.date}|${r.description}|${r.amount}`;
+
 function ImportStatements({ spendTxns, setSpendTxns, setSub }) {
   const [profile, setProfile] = useState("auto");
   const [account, setAccount] = useState("");
-  const [parsed, setParsed] = useState(null);
+  const [fxRate, setFxRate] = useState(1);      // Revolut foreign-currency conversion
+  const [fileText, setFileText] = useState(null);
+  const [fileName, setFileName] = useState("");
   const [flip, setFlip] = useState(false);
+  const [excluded, setExcluded] = useState(() => new Set()); // rows the user removed
   const fileRef = useRef(null);
 
   const onFile = async (f) => {
     if (!f) return;
-    const text = await f.text();
-    const res = parseStatement(text, { profile, account: account || undefined });
-    setParsed({ ...res, fileName: f.name });
+    setFileText(await f.text());
+    setFileName(f.name);
     setFlip(false);
+    setExcluded(new Set());
   };
+  // Re-parse whenever the file, profile, account or FX rate changes — so
+  // changing the Revolut rate updates the preview live.
+  const parsed = useMemo(() => {
+    if (!fileText) return null;
+    return parseStatement(fileText, { profile, account: account || undefined, fxRate: +fxRate || 1 });
+  }, [fileText, profile, account, fxRate]);
 
   const rows = useMemo(() => {
     if (!parsed?.rows?.length) return [];
-    return flip ? parsed.rows.map((r) => ({ ...r, amount: -r.amount })) : parsed.rows;
-  }, [parsed, flip]);
+    const base = flip ? parsed.rows.map((r) => ({ ...r, amount: -r.amount })) : parsed.rows;
+    return base.filter((r) => !excluded.has(rowKey(r)));
+  }, [parsed, flip, excluded]);
   const dedup = useMemo(() => (rows.length ? dedupeStatement(rows, spendTxns) : null), [rows, spendTxns]);
 
   const commit = () => {
     if (!dedup?.rows.length) return;
     setSpendTxns((p) => [...p, ...dedup.rows.map((r) => ({ ...r, id: uid() }))]);
-    setParsed(null);
+    setFileText(null); setFileName(""); setExcluded(new Set());
     if (fileRef.current) fileRef.current.value = "";
     setSub("txns");
   };
@@ -837,6 +849,9 @@ function ImportStatements({ spendTxns, setSpendTxns, setSub }) {
       <div className="flex items-end gap-2 flex-wrap rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3">
         <Field label="Format"><select value={profile} onChange={(e) => setProfile(e.target.value)} className="input">{Object.entries(PROFILES).map(([k, p]) => <option key={k} value={k}>{p.label}</option>)}</select></Field>
         <Field label="Account label (optional)"><input value={account} onChange={(e) => setAccount(e.target.value)} className="input w-40" placeholder="e.g. Amex Gold" /></Field>
+        {profile === "revolut" && (
+          <Field label="FX → GBP (foreign rows)"><input type="number" step="0.01" value={fxRate} onChange={(e) => setFxRate(e.target.value)} className="input num w-28" title="Revolut exports each transaction in its own currency. Set the £-per-unit rate for the statement period (e.g. 0.86 for EUR); GBP rows are unaffected." /></Field>
+        )}
         <Field label="CSV file"><input ref={fileRef} type="file" accept=".csv,text/csv" onChange={(e) => onFile(e.target.files?.[0])} className="input text-xs py-1.5" /></Field>
       </div>
 
@@ -862,29 +877,39 @@ function ImportStatements({ spendTxns, setSpendTxns, setSub }) {
                 </div>
                 <p className="text-[var(--muted)]">Check a few rows below: normal purchases should show as POSITIVE amounts, refunds and salary/payments as negative.</p>
               </div>
-              <div className="rounded-xl border border-[var(--border)] overflow-x-auto">
+              {/* ALL rows are shown (scrollable), each removable — so you
+                  can drop the odd row you don't want before importing,
+                  rather than only previewing the first few. */}
+              <div className="rounded-xl border border-[var(--border)] overflow-auto" style={{ maxHeight: 420 }}>
                 <table className="w-full text-sm">
-                  <thead className="bg-[var(--panel2)] text-[var(--muted)] text-xs uppercase tracking-wide">
-                    <tr>{["Date", "Description", "Amount", ""].map((h, i) => <th key={i} className={"py-2 px-3 font-medium " + (i === 2 ? "text-right" : "text-left")}>{h}</th>)}</tr>
+                  <thead className="bg-[var(--panel2)] text-[var(--muted)] text-xs uppercase tracking-wide sticky top-0">
+                    <tr>{["Date", "Description", "Amount", "", ""].map((h, i) => <th key={i} className={"py-2 px-3 font-medium " + (i === 2 ? "text-right" : "text-left")}>{h}</th>)}</tr>
                   </thead>
                   <tbody className="divide-y divide-[var(--border)] bg-[var(--panel)]">
-                    {rows.slice(0, 12).map((r, i) => {
+                    {rows.map((r) => {
                       const dupe = dedup.duplicates.some((d) => d.date === r.date && d.description === r.description && d.amount === r.amount);
                       return (
-                        <tr key={i} className={dupe ? "opacity-45" : ""}>
-                          <td className="py-1.5 px-3 num text-[var(--muted)]">{r.date}</td>
+                        <tr key={rowKey(r)} className={dupe ? "opacity-45" : ""}>
+                          <td className="py-1.5 px-3 num text-[var(--muted)] whitespace-nowrap">{r.date}</td>
                           <td className="py-1.5 px-3">{r.description}</td>
                           <td className={"py-1.5 px-3 text-right num " + (r.amount < 0 ? "text-[var(--gain)]" : "")}>{gbp(r.amount)}</td>
-                          <td className="py-1.5 px-3 text-xs text-[var(--muted)]">{dupe ? "already imported" : ""}</td>
+                          <td className="py-1.5 px-3 text-xs text-[var(--muted)] whitespace-nowrap">{dupe ? "already imported" : ""}</td>
+                          <td className="py-1.5 px-3 text-right">
+                            <button onClick={() => setExcluded((s) => new Set(s).add(rowKey(r)))} aria-label={`Remove ${r.description} from this import`} title="Remove from this import" className="text-[var(--muted)] hover:text-[var(--loss)]"><Trash2 size={14} aria-hidden="true" /></button>
+                          </td>
                         </tr>
                       );
                     })}
                   </tbody>
                 </table>
               </div>
-              <button onClick={commit} disabled={!dedup.rows.length} className="btn-accent disabled:opacity-50">
-                <Upload size={15} /> Import {dedup.rows.length} transaction{dedup.rows.length === 1 ? "" : "s"}
-              </button>
+              <div className="flex items-center gap-3 flex-wrap">
+                <button onClick={commit} disabled={!dedup.rows.length} className="btn-accent disabled:opacity-50">
+                  <Upload size={15} /> Import {dedup.rows.length} transaction{dedup.rows.length === 1 ? "" : "s"}
+                </button>
+                {excluded.size > 0 && <button onClick={() => setExcluded(new Set())} className="text-xs text-[var(--accent)] underline underline-offset-2">restore {excluded.size} removed</button>}
+                <span className="text-xs text-[var(--muted)]">Showing all {rows.length} rows{excluded.size ? ` (${excluded.size} removed)` : ""} — remove any you don't want with the bin icon.</span>
+              </div>
             </>
           )}
         </div>
@@ -892,7 +917,7 @@ function ImportStatements({ spendTxns, setSpendTxns, setSub }) {
 
       <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3 text-xs text-[var(--muted)] space-y-1.5">
         <div className="font-medium text-[var(--fg)] flex items-center gap-1.5"><Check size={13} /> Getting the CSV</div>
-        <p><strong>Amex</strong>: Statements → choose a period → Download → CSV. <strong>HSBC</strong>: Online banking → account → Download transactions → CSV (headerless exports are handled).</p>
+        <p><strong>Amex</strong>: Statements → choose a period → Download → CSV. <strong>HSBC</strong>: Online banking → account → Download transactions → CSV (headerless exports are handled). <strong>Revolut</strong>: app or web → Statement → Excel/CSV; exchanges, top-ups and pending rows are skipped automatically, and foreign-currency rows are converted at the FX rate you set.</p>
         <p>The parser detects columns from the header, or by position when there isn't one, and works out the sign convention from the balance of debits to credits — then shows you what it decided before anything is saved. If a bank's format defeats it, the warnings above say what was missing rather than importing a half-read file.</p>
       </div>
     </div>

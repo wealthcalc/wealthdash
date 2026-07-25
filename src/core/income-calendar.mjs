@@ -152,7 +152,52 @@ export function buildIncomeCalendar({
     if (dates.length < 2) continue;
     if (s.ticker && unitsHeldAt(txns, today, s.ticker) <= 1e-9) continue; // fully sold — no future income
     const cadence = detectCadence(dates);
-    if (!cadence || cadence.label === "irregular") continue;
+    // FALLBACK for irregular-but-established payers — the VCT case. VCTs
+    // (and some trusts) pay roughly the same pattern each year but on
+    // drifting dates that fit no fixed cadence band, so the band
+    // classifier calls them "irregular" and, without this, they'd be
+    // dropped entirely — under-forecasting annual income by whatever those
+    // holdings pay.
+    //
+    // The RHYTHM (how many payments, roughly when) comes from projecting
+    // the trailing 12 months forward a year. But the AMOUNT does NOT copy
+    // last year's payments — that would carry a one-off SPECIAL dividend
+    // straight into the forecast and overstate it. Instead the year's
+    // total is a ROBUST annual payout rate: the MEDIAN of the last up-to-3
+    // trailing-year totals, which discards a special-heavy year rather
+    // than averaging it in. That median annual figure is then spread
+    // evenly across the projected payment dates. Honestly marked
+    // "estimated". Only applies with real history (> 300 days span) so a
+    // couple of close one-off payments aren't mistaken for a pattern.
+    const spanDays = (+new Date(dates[dates.length - 1]) - +new Date(dates[0])) / DAY_MS;
+    if (!cadence || cadence.label === "irregular") {
+      if (spanDays < 300) continue;
+      const fromISO = addDaysISO(today, -365);
+      const wrapper = wrappers[wrappers.length - 1] || "GIA";
+      // Projected dates: trailing-12m payment dates, each + a year.
+      const projDates = [];
+      for (let i = 0; i < dates.length; i++) {
+        if (dates[i] <= fromISO || dates[i] > today) continue;
+        const proj = addDaysISO(dates[i], 365);
+        if (proj > today && proj <= horizonISO) projDates.push(proj);
+      }
+      if (!projDates.length) continue;
+      // Robust annual rate: median of up-to-3 trailing-year totals.
+      const yearTotals = [];
+      for (let y = 1; y <= 3; y++) {
+        const hi = addDaysISO(today, -365 * (y - 1)), lo = addDaysISO(today, -365 * y);
+        let sum = 0, any = false;
+        for (let i = 0; i < dates.length; i++) if (dates[i] > lo && dates[i] <= hi) { sum += +amounts[i] || 0; any = true; }
+        if (any) yearTotals.push(sum);
+      }
+      const sortedYT = yearTotals.sort((a, b) => a - b);
+      const annualRate = sortedYT.length ? sortedYT[Math.floor(sortedYT.length / 2)] : 0;
+      const per = Math.round((annualRate / projDates.length) * 100) / 100;
+      for (const d of projDates) {
+        events.push({ date: d, source: s.kind === "interest" ? "interest" : "dividend", label: s.ticker || "Interest", amount: per, certainty: "estimated", cadence: "annual (est.)", wrapper });
+      }
+      continue;
+    }
     const recent = amounts.slice(-3);
     const avgAmount = Math.round((recent.reduce((a, b) => a + b, 0) / recent.length) * 100) / 100;
     // Wrapper attribution: the most recent entry's wrapper — a holding can

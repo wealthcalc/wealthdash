@@ -138,3 +138,34 @@ test("dedupe makes overlapping re-downloads safe", () => {
   // known limit: same-day, same-merchant, same-amount pairs collapse.)
   assert.notEqual(statementKey({ ...a, amount: 42.11 }), statementKey(a));
 });
+
+test("Revolut: COMPLETED-only, skips exchanges, converts foreign currency, adds fees", () => {
+  const csv = [
+    "Type,Product,Started Date,Completed Date,Description,Amount,Fee,Currency,State,Balance",
+    "Card Payment,Current,2024-01-01 10:00:00,2024-01-02 10:00:00,Lidl,-20.00,0.00,EUR,COMPLETED,100",
+    "Card Payment,Current,2024-01-03 10:00:00,2024-01-04 10:00:00,Amazon,-10.00,0.50,GBP,COMPLETED,90",
+    "Exchange,Current,2024-01-05 10:00:00,2024-01-05 10:00:00,Exchanged to GBP,-50.00,0.00,EUR,COMPLETED,40",
+    "Topup,Current,2024-01-06 10:00:00,2024-01-06 10:00:00,Top-Up,200.00,0.00,GBP,COMPLETED,240",
+    "Card Payment,Current,2024-01-07 10:00:00,2024-01-08 10:00:00,Pending shop,-5.00,0.00,GBP,PENDING,235",
+  ].join("\n");
+  const { rows, meta, warnings } = parseStatement(csv, { profile: "revolut", fxRate: 0.85 });
+  // 2 real spends: EUR Lidl (converted) and GBP Amazon (with fee)
+  assert.equal(rows.length, 2);
+  const lidl = rows.find((r) => r.description === "Lidl");
+  assert.equal(lidl.amount, 17);      // 20 EUR × 0.85
+  const amazon = rows.find((r) => r.description === "Amazon");
+  assert.equal(amazon.amount, 10.5);  // 10 + 0.50 fee, GBP unconverted
+  assert.equal(rows[0].account, "Revolut");
+  assert.equal(meta.foreignCount, 1);
+  // exchange, topup and the pending row are all gone
+  assert.ok(warnings.some((w) => /exchange/i.test(w)));
+  assert.ok(warnings.some((w) => /completed/i.test(w)));
+  // completed date is used (money left on the 2nd, not started on the 1st)
+  assert.equal(lidl.date, "2024-01-02");
+});
+
+test("Revolut: a non-Revolut CSV is rejected with a useful message", () => {
+  const { rows, warnings } = parseStatement("Date,Amount\n01/01/2024,5", { profile: "revolut" });
+  assert.equal(rows.length, 0);
+  assert.match(warnings[0], /Revolut/);
+});

@@ -4,7 +4,7 @@ import { ukTaxYear } from "../core/cgt-engine.mjs";
 import { cfgFor, aeaForYear, paFor, liabilityForYear, sharesForTargetGain, nextTaxYear, optimiseDisposals } from "../core/uk-tax.mjs";
 import { buildTaxPack, renderTaxPackHTML } from "../core/tax-pack.mjs";
 import { locationPlan } from "../core/asset-location.mjs";
-import { ISA_LIMIT, isaSubscriptionsByYear, realisedForYear, bedAndIsaPlan } from "../core/allowances.mjs";
+import { ISA_LIMIT, isaSubscriptionsByYear, realisedForYear, bedAndIsaPlan, lossHarvest } from "../core/allowances.mjs";
 import { rebalancePlan, BUCKETS, BUCKET_LABEL } from "../core/rebalancing.mjs";
 import { KIND_LABEL, store, fmtRate, gbp, gbp0, WrapperChip, SubTabs, num, uid, todayISO, METHOD, CurrencyInput, NumberInput, Field, Stat, Row, MethodChip, Empty } from "../ui/shared.jsx";
 import useAppStore from "../state/appStore.js";
@@ -371,6 +371,64 @@ function BedIsaTab({ pools = {}, prices = {}, disposals = [], income = 0, allTxn
       <p className="text-xs text-[var(--muted)] leading-relaxed">
         How this works: selling in the GIA crystallises the gain against your remaining AEA; the same-day repurchase <em>inside the ISA</em> is not matched by the 30-day rule (it applies to repurchases in the same capacity), so the base cost resets and all future growth is sheltered. The rebuy consumes ISA allowance; stamp duty (0.5%) applies to UK shares and investment trusts but not ETFs/funds; spreads and dealing fees are estimates — reconcile the generated entries against contract notes. Gilts never need this: they&apos;re already CGT-exempt.
       </p>
+
+      <LossHarvestPanel pools={pools} prices={prices} realisedGains={realised.gains} aeaLeft={effAea} />
+    </div>
+  );
+}
+
+/* ----------------------- Capital-loss harvesting --------------------- */
+// The mirror of gain harvesting: selling an underwater GIA holding banks a
+// capital loss that offsets this year's gains (above the AEA) or carries
+// forward. Sits under Bed & ISA because the same manoeuvre — sell in the
+// GIA, rebuy in the ISA — realises the loss while keeping you invested and
+// sidesteps the 30-day rule.
+function LossHarvestPanel({ pools, prices, realisedGains, aeaLeft }) {
+  const h = useMemo(() => lossHarvest({ pools, prices, realisedGains, aeaLeft }), [pools, prices, realisedGains, aeaLeft]);
+  if (!h.rows.length) {
+    return (
+      <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4">
+        <h3 className="text-sm font-semibold flex items-center gap-1.5">Capital-loss harvesting</h3>
+        <p className="text-xs text-[var(--muted)] mt-1">No GIA holdings are currently underwater, so there are no losses to harvest. This appears whenever a priced GIA pool is worth less than its book cost.</p>
+      </div>
+    );
+  }
+  return (
+    <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 space-y-3">
+      <div>
+        <h3 className="text-sm font-semibold">Capital-loss harvesting</h3>
+        <p className="text-xs text-[var(--muted)] mt-1 max-w-3xl">
+          GIA holdings below their book cost. Selling realises the loss, which is set against this year&apos;s gains ABOVE the annual exempt amount first (mandatory), then carries forward indefinitely once registered with HMRC. To stay invested, rebuy inside an ISA/pension, buy a similar-but-not-identical holding, or wait 30 days — a straight rebuy of the same line within 30 days cancels the loss.
+        </p>
+      </div>
+      <div className="grid sm:grid-cols-3 gap-3">
+        <div className="rounded-lg border border-[var(--border)] bg-[var(--panel2)] p-3"><div className="text-[11px] uppercase tracking-wide text-[var(--muted)]">Harvestable loss</div><div className="text-lg font-semibold num">{gbp0(h.totalLoss)}</div></div>
+        <div className="rounded-lg border border-[var(--border)] bg-[var(--panel2)] p-3"><div className="text-[11px] uppercase tracking-wide text-[var(--muted)]">Offsets gains this year</div><div className={"text-lg font-semibold num " + (h.offsetsThisYear > 0 ? "text-[var(--gain)]" : "")}>{gbp0(h.offsetsThisYear)}</div></div>
+        <div className="rounded-lg border border-[var(--border)] bg-[var(--panel2)] p-3"><div className="text-[11px] uppercase tracking-wide text-[var(--muted)]">Carries forward</div><div className="text-lg font-semibold num">{gbp0(h.carriesForward)}</div></div>
+      </div>
+      {h.wastedIfHarvestedNow && (
+        <div className="text-xs rounded-lg border border-[var(--m-bb)] bg-[var(--panel2)] px-3 py-2">
+          Your realised gains this year are within the annual exempt amount, so harvesting a loss NOW banks no cash this year — it would only carry forward. Worth doing if you expect future gains to use it, but there&apos;s no immediate saving.
+        </div>
+      )}
+      <div className="rounded-xl border border-[var(--border)] overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead className="bg-[var(--panel2)] text-[var(--muted)] text-xs uppercase tracking-wide">
+            <tr>{["Holding", "Value", "Book cost", "Loss", ""].map((c, i) => <th key={i} className={"py-2 px-3 font-medium " + (i === 0 ? "text-left" : "text-right")}>{c}</th>)}</tr>
+          </thead>
+          <tbody className="divide-y divide-[var(--border)] bg-[var(--panel)]">
+            {h.rows.map((r) => (
+              <tr key={r.ticker}>
+                <td className="py-2 px-3 font-medium">{r.ticker}</td>
+                <td className="py-2 px-3 text-right num">{gbp0(r.value)}</td>
+                <td className="py-2 px-3 text-right num text-[var(--muted)]">{gbp0(r.cost)}</td>
+                <td className="py-2 px-3 text-right num text-[var(--loss)]">−{gbp0(r.loss)}</td>
+                <td className="py-2 px-3 text-right num text-[var(--muted)] text-xs">{r.lossPct != null ? `−${r.lossPct}%` : ""}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

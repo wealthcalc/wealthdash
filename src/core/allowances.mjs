@@ -137,6 +137,60 @@ export function realisedForYear(disposals = [], year, aea = 3000) {
 //   mode "value": lowest gain-per-£ first  -> maximises value sheltered
 //   mode "gain":  highest gain-per-£ first -> maximises gain washed (base
 //                 cost reset), the classic year-end harvesting objective.
+// CAPITAL-LOSS HARVESTING — the mirror image of gain harvesting. Selling a
+// GIA holding that's underwater REALISES a capital loss, which offsets
+// gains in the SAME tax year first (mandatory), then carries forward
+// indefinitely once registered with HMRC. This finds those losses and
+// shows what they'd offset.
+//
+// Two honest points this encodes:
+//  - Losses realised this year MUST be set against this year's gains
+//    before the annual exempt amount is applied — you can't "save" a loss
+//    to preserve the AEA. So harvesting a loss is only worth cash if
+//    you have gains ABOVE the AEA to soak it up, or you expect future
+//    gains to carry it into. Below the AEA, a realised loss is wasted.
+//  - The 30-day (bed-and-breakfast) rule matches a repurchase of the SAME
+//    line within 30 days against the disposal, cancelling the loss. To
+//    stay invested you must wait 30 days, buy a similar-but-not-identical
+//    holding, or rebuy inside an ISA/pension or via a spouse — the same
+//    escape routes bed-&-ISA uses.
+export function lossHarvest({ pools = {}, prices = {}, realisedGains = 0, aeaLeft = 0 } = {}) {
+  const rows = [];
+  for (const [ticker, p] of Object.entries(pools)) {
+    const qty = +p.qty, cost = +p.cost;
+    const price = +prices[ticker];
+    if (!(qty > 1e-9) || !Number.isFinite(price) || price <= 0) continue;
+    const value = qty * price;
+    const loss = cost - value; // positive = unrealised LOSS
+    if (loss <= 0.5) continue;
+    rows.push({
+      ticker, qty, price, value: Math.round(value * 100) / 100,
+      cost: Math.round(cost * 100) / 100,
+      loss: Math.round(loss * 100) / 100,
+      lossPct: cost > 0 ? Math.round((loss / cost) * 1000) / 10 : null,
+    });
+  }
+  rows.sort((a, b) => b.loss - a.loss);
+  const totalLoss = Math.round(rows.reduce((s, r) => s + r.loss, 0) * 100) / 100;
+  // How much of the harvestable loss does useful work THIS year: it offsets
+  // gains above the AEA (gains within the AEA are already tax-free, so a
+  // loss set against them is wasted). Anything beyond that carries forward.
+  const gainsAboveAea = Math.max(0, realisedGains - aeaLeft);
+  const offsetsThisYear = Math.min(totalLoss, gainsAboveAea);
+  const carriesForward = Math.round((totalLoss - offsetsThisYear) * 100) / 100;
+  return {
+    rows,
+    totalLoss,
+    offsetsThisYear: Math.round(offsetsThisYear * 100) / 100,
+    carriesForward,
+    gainsAboveAea: Math.round(gainsAboveAea * 100) / 100,
+    // A loss only saves tax this year if there are gains above the AEA;
+    // otherwise it's purely a carry-forward play (still worth doing if you
+    // expect future gains, but banks no cash now).
+    wastedIfHarvestedNow: realisedGains <= aeaLeft,
+  };
+}
+
 // Costs are estimates: 0.5% stamp duty on the ISA repurchase for UK shares
 // and investment trusts (ETFs/funds/gilts exempt), plus a user-set spread.
 // The 30-day rule does NOT bite: a repurchase inside an ISA is not matched
