@@ -9,7 +9,7 @@ import useAppStore from "../state/appStore.js";
 import { shapeFlexPull, shapeCashReport } from "../core/ibkr-flex.mjs";
 import { parseISharesWorkbook } from "../core/ishares-eri.mjs";
 import { buildRsuImport, guessTickerFromFilename, detectRsuCsvFormat } from "../core/rsu-import.mjs";
-import { store, gbp, num, uid, todayISO, fxHistorical, Field, Empty, SubTabs, round2, dedupeAgainstExisting } from "../ui/shared.jsx";
+import { store, gbp, num, uid, todayISO, fxHistorical, Field, Empty, SubTabs, round2, dedupeAgainstExisting, SECURITY_SEED } from "../ui/shared.jsx";
 
 const FIELDS = ["date", "ticker", "side", "quantity", "nativeCurrency", "nativeAmount", "fxRate", "gbpAmount"];
 const FIELDS_DIV = ["date", "ticker", "kind", "nativeCurrency", "nativeAmount", "fxRate", "gbpAmount"];
@@ -96,8 +96,20 @@ function ImportTab({ setTab, recomputeProviderCost }) {
 
   const readFile = (e, cb) => { const f = e.target.files?.[0]; if (!f) return; const r = new FileReader(); r.onload = () => cb(String(r.result)); r.readAsText(f); e.target.value = ""; };
 
+  // ISIN → the app's own ticker, so IBKR's raw symbols get remapped to the
+  // names the price lookups know: gilts to TG31/TN28 (DMO prices by ISIN),
+  // and any seeded/tagged share to its canonical symbol. Built from the
+  // security seed AND the user's own secMeta (their tags win, since a
+  // re-registered or manually-corrected ISIN is the live truth).
+  const seedByIsin = useMemo(() => {
+    const m = {};
+    for (const [ticker, meta] of Object.entries(SECURITY_SEED)) if (meta?.isin) m[String(meta.isin).toUpperCase()] = ticker;
+    for (const [ticker, meta] of Object.entries(secMeta || {})) if (meta?.isin) m[String(meta.isin).toUpperCase()] = ticker;
+    return m;
+  }, [secMeta]);
+
   // ---- IBKR ----
-  const parseIb = (text) => { const t = (text ?? raw).trim(); if (!t) return; setIb(parseIBKR(t, { defaultWrapper: wrapper })); };
+  const parseIb = (text) => { const t = (text ?? raw).trim(); if (!t) return; setIb(parseIBKR(t, { defaultWrapper: wrapper, seedByIsin })); };
   React.useEffect(() => { if (ib) setIb((r) => ({ ...r, trades: r.trades.map((t) => ({ ...t, wrapper })), income: r.income.map((t) => ({ ...t, wrapper })) })); }, [wrapper]); // eslint-disable-line
 
   // ---- IBKR: live pull via the Flex Web Service (api/ibkr-flex.mjs proxies
@@ -118,7 +130,7 @@ function ImportTab({ setTab, recomputeProviderCost }) {
       });
       const j = await r.json();
       if (!r.ok) { setFlexError(j.error || `IBKR pull failed (${r.status}).`); setFlexBusy(false); return; }
-      setIb(shapeFlexPull(j, { defaultWrapper: wrapper }));
+      setIb(shapeFlexPull(j, { defaultWrapper: wrapper, seedByIsin }));
       setCashReport(shapeCashReport(j));
     } catch (e) {
       setFlexError(e?.message || "Couldn't reach the IBKR proxy — is this running on the deployed app (not a local sandbox)?");

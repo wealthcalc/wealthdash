@@ -28,7 +28,7 @@ test("flex: GBP BUY nets proceeds + commission + taxes", () => {
   assert.equal(trades.length, 1);
   const t = trades[0];
   assert.equal(t.date, "2024-05-01");
-  assert.equal(t.ticker, "VOD");
+  assert.equal(t.ticker, "VOD.L"); // LSE GBP equity gets the Yahoo .L suffix
   assert.equal(t.isin, "GB00BH4HKS39");
   assert.equal(t.side, "BUY");
   assert.equal(t.quantity, 10);
@@ -93,7 +93,7 @@ test("flex: unsupported asset classes are skipped with a warning", () => {
     "\n20240501,VOD,GB00BH4HKS39,BUY,10,-1000,-5,0,GBP,1,ETF";
   const { trades, warnings } = parseIBKR(csv);
   assert.equal(trades.length, 1);
-  assert.equal(trades[0].ticker, "VOD");
+  assert.equal(trades[0].ticker, "VOD.L");
   assert.ok(warnings.some((w) => w.includes('asset class "opt"')));
 });
 
@@ -196,4 +196,34 @@ test("date formats: yyyymmdd, yyyy-mm-dd and yyyy/mm/dd all normalise", () => {
     "\n2024/05/03,CCC,,BUY,1,-100,0,0,GBP,1,STK";
   const { trades } = parseIBKR(csv);
   assert.deepEqual(trades.map((t) => t.date), ["2024-05-01", "2024-05-02", "2024-05-03"]);
+});
+
+test("resolveIbkrTicker: ISIN remap wins, LSE .L for GBP equities", async () => {
+  const { resolveIbkrTicker } = await import("../core/ibkr-import.mjs");
+  const seed = { GB00BMGR2809: "TG31", GB00B03MLX29: "SHEL" };
+  // gilt by ISIN → the app's ticker (a raw bond name is discarded)
+  assert.equal(resolveIbkrTicker("UKT 0.25 31", "GB00BMGR2809", "GBP", "", seed), "TG31");
+  // seeded share by ISIN
+  assert.equal(resolveIbkrTicker("RDSB", "GB00B03MLX29", "GBP", "LSE", seed), "SHEL");
+  // unseeded LSE GBP share gets .L for Yahoo
+  assert.equal(resolveIbkrTicker("VOD", "GB00BH4HKS39", "GBP", "LSE", seed), "VOD.L");
+  // GBP currency alone is enough (flex CSV may omit the exchange)
+  assert.equal(resolveIbkrTicker("LGEN", "", "GBP", "", seed), "LGEN.L");
+  // a US-listed USD share is left alone
+  assert.equal(resolveIbkrTicker("AAPL", "US0378331005", "USD", "NASDAQ", seed), "AAPL");
+  // already-suffixed symbols aren't double-suffixed
+  assert.equal(resolveIbkrTicker("VOD.L", "", "GBP", "LSE", seed), "VOD.L");
+});
+
+test("parseIBKR remaps a gilt bond via seedByIsin instead of skipping it", async () => {
+  const { parseIBKR } = await import("../core/ibkr-import.mjs");
+  // A flex CSV row for a gilt (asset class BOND, which is normally skipped).
+  const csv = [
+    "Symbol,ISIN,AssetClass,TradeDate,Quantity,BuySell,CurrencyPrimary,Proceeds,ListingExchange",
+    "UKT 0 1/4 31,GB00BMGR2809,BOND,20260115,10000,BUY,GBP,-9000,LSE",
+  ].join("\n");
+  const { trades } = parseIBKR(csv, { seedByIsin: { GB00BMGR2809: "TG31" } });
+  assert.equal(trades.length, 1);
+  assert.equal(trades[0].ticker, "TG31");     // remapped, not skipped, not the raw name
+  assert.equal(trades[0].isin, "GB00BMGR2809");
 });

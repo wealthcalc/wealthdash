@@ -63,7 +63,14 @@ export function giaDragPct(position, secMeta = {}, rates, { realisationFactor = 
   const meta = secMeta[position.ticker] || {};
   const kind = position.kind || "fund";
   const a = KIND_ASSUMPTIONS[kind] || KIND_ASSUMPTIONS.fund;
-  const yieldPct = Number.isFinite(+meta.yieldPct) ? +meta.yieldPct : a.incomeYield;
+  let yieldPct = Number.isFinite(+meta.yieldPct) ? +meta.yieldPct : a.incomeYield;
+  // A gilt's income drag is its COUPON, not a generic 3.5% bond yield. A
+  // low-coupon gilt held below par returns mostly CGT-exempt redemption
+  // gain (s115 TCGA) and pays little interest, so its true GIA drag is
+  // tiny — the 3.5% default wrongly flagged such gilts as worth sheltering
+  // (3.5% × a 45% additional rate = 1.58% of phantom drag). Use the real
+  // coupon when secMeta carries it.
+  if (kind === "gilt" && Number.isFinite(+meta.coupon)) yieldPct = +meta.coupon;
   const incomeRate = a.incomeKind === "interest" ? rates.interest : rates.dividend;
   const cgtExempt = a.cgtExempt || position.cgtExempt;
   const capitalDrag = cgtExempt ? 0 : (a.growth / 100) * rates.cgt * realisationFactor;

@@ -66,3 +66,17 @@ test("no shelter capacity -> minimal equals current, everything stays put", () =
   assert.equal(plan.moves.length, 0);
   assert.equal(plan.savingPerYear, 0);
 });
+
+test("a low-coupon gilt has tiny GIA drag — its coupon, not a 3.5% default", async () => {
+  const { giaDragPct, marginalRates } = await import("../core/asset-location.mjs");
+  const rates = marginalRates(200000); // additional-rate taxpayer
+  const pos = { ticker: "TG31", kind: "gilt", marketValue: 50000, priced: true };
+  // Without a coupon it wrongly used 3.5% → 3.5% × 45% = 1.575%.
+  // With a real 0.25% coupon it should be ~0.11%, negligible.
+  const withCoupon = giaDragPct(pos, { TG31: { kind: "gilt", coupon: 0.25 } }, rates);
+  assert.ok(withCoupon < 0.002, `drag ${withCoupon} should be ~0.1%`);
+  const noCoupon = giaDragPct(pos, {}, rates);
+  assert.ok(noCoupon > 0.015, "the old default is what we're fixing");
+  // capital drag stays zero either way — gilts are CGT-exempt
+  assert.equal(giaDragPct({ ...pos, kind: "gilt" }, { TG31: { kind: "gilt", coupon: 0 } }, rates), 0);
+});
