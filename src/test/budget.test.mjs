@@ -284,3 +284,35 @@ test("annualBudget pro-rates annual-only limits to the window (the YTD fix)", ()
   // monthly categories already pro-rated by months (£600 × 6)
   assert.equal(half.rows.find((r) => r.id === "gro")?.limit ?? 3600, 3600);
 });
+
+test("yearOverlay: cumulative spend per year, transfers out, uncategorised in", async () => {
+  const { yearOverlay } = await import("../core/budget.mjs");
+  const txns = [
+    { id: 1, date: "2024-01-10", amount: 100, categoryId: "gro" },
+    { id: 2, date: "2024-02-10", amount: 200, categoryId: "gro" },
+    { id: 3, date: "2025-01-10", amount: 150, categoryId: "gro" },
+    { id: 4, date: "2025-01-11", amount: 50 },                      // uncategorised — counts
+    { id: 5, date: "2025-02-10", amount: 300, categoryId: "xfer" }, // transfer — excluded
+  ];
+  const o = yearOverlay({ categories: CATS, txns });
+  assert.deepEqual(o.years, [2024, 2025]);
+  // cumulative: Jan then Feb
+  const jan = o.rows[0], feb = o.rows[1];
+  assert.equal(jan[2024], 100);
+  assert.equal(feb[2024], 300);        // 100 + 200 cumulative
+  assert.equal(jan[2025], 200);        // 150 categorised + 50 uncategorised
+  assert.equal(feb[2025], 200);        // Feb transfer excluded, so unchanged
+  // months beyond the data still accumulate (flat) for a PAST year
+  assert.equal(o.rows[11][2024], 300); // Dec 2024 = full-year cumulative
+});
+
+test("yearOverlay: the current year's line stops at the present month, not a plateau", async () => {
+  const { yearOverlay } = await import("../core/budget.mjs");
+  const y = new Date().getFullYear();
+  const nowM = new Date().getMonth();
+  const txns = [{ id: 1, date: `${y}-01-05`, amount: 100, categoryId: "gro" }];
+  const o = yearOverlay({ categories: CATS, txns });
+  // this month and earlier are numbers; later months are null (line ends)
+  assert.ok(typeof o.rows[nowM][y] === "number");
+  if (nowM < 11) assert.equal(o.rows[nowM + 1][y], null);
+});

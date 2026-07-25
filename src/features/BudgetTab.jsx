@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useRef } from "react";
 import { Plus, Trash2, Upload, Check, AlertTriangle, Wand2 } from "lucide-react";
 import { ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, PieChart, Pie, Cell, Sector } from "recharts";
-import { monthlyBudget, annualBudget, averageAnnualBudget, spendByMonth, trailing12, mergedSpend, spendByCategory, withComparison, monthRange } from "../core/budget.mjs";
+import { monthlyBudget, annualBudget, averageAnnualBudget, spendByMonth, trailing12, mergedSpend, spendByCategory, withComparison, monthRange, yearOverlay } from "../core/budget.mjs";
 import { uncategorisedGroups, suggestRule } from "../core/categorise.mjs";
 import { parseStatement, dedupeStatement, PROFILES } from "../core/statement-import.mjs";
 import { expandRecurring, statementCoverage, annualCommitment, FREQUENCIES } from "../core/recurring.mjs";
@@ -249,52 +249,7 @@ function Overview({ categories, txns, month, setMonth, setSub, drillTo, incomeEn
         </button>
       )}
 
-      <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3">
-        <div className="flex items-center justify-between gap-3 flex-wrap mb-1.5">
-          <div className="text-xs font-medium text-[var(--muted)]">Spend by month vs budget</div>
-          <div className="flex gap-1.5">
-            {[["spread", "Annual costs spread"], ["cash", "As actually paid"]].map(([k, label]) => (
-              <button key={k} onClick={() => setSpreadAnnual(k === "spread")}
-                className={"text-xs font-medium px-2.5 py-1 rounded-full border transition " +
-                  ((spreadAnnual ? "spread" : "cash") === k ? "border-[var(--accent)] bg-[var(--accent)] text-[var(--accent-fg)]" : "border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)]")}>
-                {label}
-              </button>
-            ))}
-          </div>
-        </div>
-        <ResponsiveContainer width="100%" height={240}>
-          <ComposedChart data={trend} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-            <CartesianGrid stroke="var(--border)" vertical={false} />
-            <XAxis dataKey="month" tick={{ fontSize: 10, fill: "var(--muted)" }} tickLine={false} axisLine={{ stroke: "var(--border)" }} />
-            <YAxis tickFormatter={gbp0} tick={{ fontSize: 11, fill: "var(--muted)" }} tickLine={false} axisLine={false} width={60} />
-            <Tooltip contentStyle={{ background: "var(--panel)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 12 }}
-              formatter={(v, n) => [gbp(v), { essential: "Essential", discretionary: "Discretionary", limit: "Monthly budget", uncategorised: "Uncategorised" }[n] || n]} />
-            {/* Essential vs discretionary must read apart at a glance, so
-                they're indigo vs amber. NOT --accent/--m-pool, which are
-                the SAME hex (#4338ca) in light mode and two shades of
-                indigo in dark — invisible as a distinction. */}
-            <Bar dataKey="essential" stackId="s" fill="var(--accent)" name="essential" />
-            <Bar dataKey="discretionary" stackId="s" fill="var(--m-bb)" name="discretionary" />
-            <Bar dataKey="uncategorised" stackId="s" fill="var(--muted)" fillOpacity={0.5} name="uncategorised" radius={[3, 3, 0, 0]} />
-            <Line type="stepAfter" dataKey="limit" stroke="var(--fg)" strokeWidth={1.5} strokeDasharray="5 4" dot={false} name="limit" />
-          </ComposedChart>
-        </ResponsiveContainer>
-        <div className="flex flex-wrap gap-3 mt-2">
-          {[["var(--accent)", "Essential"], ["var(--m-bb)", "Discretionary"], ["var(--muted)", "Uncategorised"]].map(([c, t]) => (
-            <span key={t} className="inline-flex items-center gap-1.5 text-xs text-[var(--muted)]">
-              <span className="w-2 h-2 rounded-full inline-block" style={{ background: c }} />{t}
-            </span>
-          ))}
-          <span className="inline-flex items-center gap-1.5 text-xs text-[var(--muted)]">
-            <span className="inline-block" style={{ width: 12, borderTop: "2px dashed var(--fg)" }} />Budget
-          </span>
-        </div>
-        <p className="text-xs text-[var(--muted)] mt-1.5">
-          {spreadAnnual
-            ? "Annual costs (insurance, holidays) are averaged across the 12 months so the underlying run-rate is readable — and the budget line includes annual budgets ÷ 12 to match. The money didn't actually leave evenly: switch to \"As actually paid\" for the cash-flow truth."
-            : "Money is shown in the month it actually left your account, so an annual bill towers over its neighbours. The budget line is monthly limits only — that spike is by design, not an overspend."}
-        </p>
-      </div>
+      <YearOverlayChart categories={categories} txns={txns} />
 
       <CategoryPie rows={cur.rows} total={s.totalActual} onSlice={drillTo}
         periodLabel={view === "month" ? month : view === "avg" ? "average year" : view === "ytd" ? "year to date" : `12 months to ${month}`} />
@@ -343,9 +298,129 @@ function Overview({ categories, txns, month, setMonth, setSub, drillTo, incomeEn
           </tbody>
         </table>
       </div>
+
+      {/* Moved to the bottom: the per-month essential/discretionary bars vs
+          the budget line — detail you drill into after the headline views
+          above, not the first thing you scan. */}
+      <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3">
+        <div className="flex items-center justify-between gap-3 flex-wrap mb-1.5">
+          <div className="text-xs font-medium text-[var(--muted)]">Spend by month vs budget</div>
+          <div className="flex gap-1.5">
+            {[["spread", "Annual costs spread"], ["cash", "As actually paid"]].map(([k, label]) => (
+              <button key={k} onClick={() => setSpreadAnnual(k === "spread")}
+                className={"text-xs font-medium px-2.5 py-1 rounded-full border transition " +
+                  ((spreadAnnual ? "spread" : "cash") === k ? "border-[var(--accent)] bg-[var(--accent)] text-[var(--accent-fg)]" : "border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)]")}>
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <ResponsiveContainer width="100%" height={240}>
+          <ComposedChart data={trend} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+            <CartesianGrid stroke="var(--border)" vertical={false} />
+            <XAxis dataKey="month" tick={{ fontSize: 10, fill: "var(--muted)" }} tickLine={false} axisLine={{ stroke: "var(--border)" }} />
+            <YAxis tickFormatter={gbp0} tick={{ fontSize: 11, fill: "var(--muted)" }} tickLine={false} axisLine={false} width={60} />
+            <Tooltip contentStyle={{ background: "var(--panel)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 12 }}
+              formatter={(v, n) => [gbp(v), { essential: "Essential", discretionary: "Discretionary", limit: "Monthly budget", uncategorised: "Uncategorised" }[n] || n]} />
+            <Bar dataKey="essential" stackId="s" fill="var(--accent)" name="essential" />
+            <Bar dataKey="discretionary" stackId="s" fill="var(--m-bb)" name="discretionary" />
+            <Bar dataKey="uncategorised" stackId="s" fill="var(--muted)" fillOpacity={0.5} name="uncategorised" radius={[3, 3, 0, 0]} />
+            <Line type="stepAfter" dataKey="limit" stroke="var(--fg)" strokeWidth={1.5} strokeDasharray="5 4" dot={false} name="limit" />
+          </ComposedChart>
+        </ResponsiveContainer>
+        <div className="flex flex-wrap gap-3 mt-2">
+          {[["var(--accent)", "Essential"], ["var(--m-bb)", "Discretionary"], ["var(--muted)", "Uncategorised"]].map(([c, t]) => (
+            <span key={t} className="inline-flex items-center gap-1.5 text-xs text-[var(--muted)]">
+              <span className="w-2 h-2 rounded-full inline-block" style={{ background: c }} />{t}
+            </span>
+          ))}
+          <span className="inline-flex items-center gap-1.5 text-xs text-[var(--muted)]">
+            <span className="inline-block" style={{ width: 12, borderTop: "2px dashed var(--fg)" }} />Budget
+          </span>
+        </div>
+        <p className="text-xs text-[var(--muted)] mt-1.5">
+          {spreadAnnual
+            ? "Annual costs (insurance, holidays) are averaged across the 12 months so the underlying run-rate is readable — and the budget line includes annual budgets ÷ 12 to match. The money didn't actually leave evenly: switch to \"As actually paid\" for the cash-flow truth."
+            : "Money is shown in the month it actually left your account, so an annual bill towers over its neighbours. The budget line is monthly limits only — that spike is by design, not an overspend."}
+        </p>
+      </div>
     </div>
   );
 }
+
+/* --------------------------- Year overlay ---------------------------- */
+// Each calendar year's spend accumulated Jan→Dec, drawn on top of one
+// another, so the current year's running total reads against prior years:
+// above the pack = spending faster than usual, below = slower. A dotted
+// projection extends the current year at its run-rate to a full-year
+// estimate. core/budget.mjs's yearOverlay does the accumulation.
+const OVERLAY_PALETTE = ["#9aa4b2", "#7c8aa0", "#5f8fbf", "#4E9A8F", "#B0884E"];
+function YearOverlayChart({ categories, txns }) {
+  const o = useMemo(() => yearOverlay({ categories, txns }), [categories, txns]);
+  const projected = useMemo(() => {
+    // Extend the current year's cumulative at its average monthly run-rate.
+    if (!o.currentYear) return { data: o.rows, endEstimate: null };
+    const cy = o.currentYear;
+    // Latest month index (0-11) with a real cumulative value this year.
+    let last = -1;
+    for (let i = 0; i < o.rows.length; i++) if (typeof o.rows[i][cy] === "number") last = i;
+    if (last < 0) return { data: o.rows, endEstimate: null };
+    const cumSoFar = o.rows[last][cy];
+    const runRate = cumSoFar / (last + 1); // £/month elapsed
+    const endEstimate = r2ui(runRate * 12);
+    const data = o.rows.map((row, i) => {
+      const r = { ...row };
+      // Dotted line: joins the last real point, then projects to December.
+      if (i === last) r.proj = cumSoFar;
+      else if (i > last) r.proj = r2ui(runRate * (i + 1));
+      else r.proj = null;
+      return r;
+    });
+    return { data, endEstimate, runRate };
+  }, [o]);
+
+  if (o.years.length < 1 || !o.rows.some((r) => o.years.some((y) => typeof r[y] === "number"))) {
+    return null;
+  }
+  const cy = o.currentYear;
+  return (
+    <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3">
+      <div className="flex items-baseline justify-between gap-3 flex-wrap mb-1.5">
+        <div className="text-xs font-medium text-[var(--muted)]">Cumulative spend by year — is {cy || "this year"} above or below trend?</div>
+        {projected.endEstimate != null && (
+          <div className="text-xs text-[var(--muted)]">At this pace, {cy} ends near <strong className="text-[var(--fg)] num">{gbp0(projected.endEstimate)}</strong></div>
+        )}
+      </div>
+      <ResponsiveContainer width="100%" height={260}>
+        <ComposedChart data={projected.data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+          <CartesianGrid stroke="var(--border)" vertical={false} />
+          <XAxis dataKey="month" tick={{ fontSize: 10, fill: "var(--muted)" }} tickLine={false} axisLine={{ stroke: "var(--border)" }} />
+          <YAxis tickFormatter={gbp0} tick={{ fontSize: 11, fill: "var(--muted)" }} tickLine={false} axisLine={false} width={60} />
+          <Tooltip contentStyle={{ background: "var(--panel)", border: "1px solid var(--border)", borderRadius: 8, fontSize: 12 }}
+            formatter={(v, n) => [gbp(v), n === "proj" ? `${cy} projected` : n]} />
+          {/* Prior years, muted; the current year bold on top; the dotted
+              projection last so it sits above everything. */}
+          {o.years.filter((y) => y !== cy).map((y, idx) => (
+            <Line key={y} type="monotone" dataKey={y} name={String(y)} stroke={OVERLAY_PALETTE[idx % OVERLAY_PALETTE.length]} strokeWidth={1.4} dot={false} connectNulls />
+          ))}
+          {cy && <Line type="monotone" dataKey={cy} name={String(cy)} stroke="var(--accent)" strokeWidth={2.4} dot={false} connectNulls />}
+          {cy && <Line type="monotone" dataKey="proj" stroke="var(--accent)" strokeWidth={1.6} strokeDasharray="4 4" dot={false} connectNulls />}
+        </ComposedChart>
+      </ResponsiveContainer>
+      <div className="flex flex-wrap gap-3 mt-2">
+        {o.years.filter((y) => y !== cy).map((y, idx) => (
+          <span key={y} className="inline-flex items-center gap-1.5 text-xs text-[var(--muted)]">
+            <span className="w-2 h-2 rounded-full inline-block" style={{ background: OVERLAY_PALETTE[idx % OVERLAY_PALETTE.length] }} />{y}
+          </span>
+        ))}
+        {cy && <span className="inline-flex items-center gap-1.5 text-xs font-medium text-[var(--fg)]"><span className="w-2 h-2 rounded-full inline-block" style={{ background: "var(--accent)" }} />{cy}</span>}
+        {cy && projected.endEstimate != null && <span className="inline-flex items-center gap-1.5 text-xs text-[var(--muted)]"><span className="inline-block" style={{ width: 12, borderTop: "2px dashed var(--accent)" }} />projected full year</span>}
+      </div>
+      <p className="text-xs text-[var(--muted)] mt-1.5">Each line is a calendar year's total spend accumulating month by month (all categories, transfers excluded). The current year running above the others means you're spending faster than in prior years; the dotted line extends it at the year-to-date pace.</p>
+    </div>
+  );
+}
+const r2ui = (x) => Math.round(x * 100) / 100;
 
 /* ----------------------------- Transactions -------------------------- */
 function Transactions({ categories, catById, txns, spendTxns, setManual, setSpendTxns, rules, setRules, filter, setFilter }) {
