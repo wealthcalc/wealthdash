@@ -6,7 +6,9 @@ import { WRAPPERS, isWrapperTaxable, normWrapper } from "../core/portfolio.mjs";
 import { investmentIncomeTax } from "../core/uk-tax.mjs";
 import { addMonthsISO } from "../core/ishares-eri.mjs";
 import { summariseBySource } from "../core/income-calendar.mjs";
-import { store, unitsHeldAt, gbp, SubTabs, num, uid, todayISO, fxToGBP, Field, Empty, useSort, sortRows, SortTh, CurrencyInput, downloadText } from "../ui/shared.jsx";
+import { dividendChanges, incomeConcentration } from "../core/income-analysis.mjs";
+import { vctHoldings } from "../core/vct.mjs";
+import { store, unitsHeldAt, gbp, gbp0, SubTabs, num, uid, todayISO, fxToGBP, Field, Empty, useSort, sortRows, SortTh, CurrencyInput, downloadText } from "../ui/shared.jsx";
 import { taxSummaryText } from "../core/export-csv.mjs";
 import useAppStore from "../state/appStore.js";
 import { removeWithUndo } from "../ui/undo.jsx";
@@ -66,6 +68,7 @@ function IncomeTab({ eriTxns, incomeByYear, incomeAllWrappers = {}, txns, income
   const eriEntries = useAppStore((s) => s.eriEntries), setEriEntries = useAppStore((s) => s.setEriEntries);
   const income = useAppStore((s) => s.income), setIncome = useAppStore((s) => s.setIncome);
   const secMeta = useAppStore((s) => s.secMeta), setSecMeta = useAppStore((s) => s.setSecMeta);
+  const allTxns = useAppStore((s) => s.txns); // VCTs aren't GIA, so the GIA-scoped `txns` prop isn't enough
   const [dv, setDv] = useState(DIV_BLANK());
   const [er, setEr] = useState(ERI_BLANK());
   const [fxBusy, setFxBusy] = useState(false);
@@ -122,7 +125,7 @@ function IncomeTab({ eriTxns, incomeByYear, incomeAllWrappers = {}, txns, income
   return (
     <div className="space-y-5">
       <SubTabs
-        tabs={[["calendar", "Calendar"], ["bywrapper", "Income by wrapper"], ["divint", "Dividends & interest"], ["byyear", "Tax by year"], ["eri", "ERI"]]}
+        tabs={[["calendar", "Calendar"], ["bywrapper", "Income by wrapper"], ["analysis", "Analysis"], ["divint", "Dividends & interest"], ["byyear", "Tax by year"], ["eri", "ERI"]]}
         active={sub} onChange={setSub}
       />
 
@@ -194,6 +197,8 @@ function IncomeTab({ eriTxns, incomeByYear, incomeAllWrappers = {}, txns, income
           ) : <Empty msg="No investment income recorded yet. Add dividends and interest on the Dividends & interest sub-tab (or import them) to see the wrapper breakdown." />}
         </div>
       )}
+
+      {sub === "analysis" && <AnalysisTab incomeEntries={incomeEntries} allTxns={allTxns} secMeta={secMeta} />}
 
       {sub === "byyear" && (
         <div className="space-y-6">
@@ -394,6 +399,98 @@ function IncomeTab({ eriTxns, incomeByYear, incomeAllWrappers = {}, txns, income
           <p className="text-xs text-[var(--muted)] max-w-3xl">Gilt coupons/redemptions and fixed-term cash maturities are contractual dates ("Scheduled"). Dividends and interest are forecast from at least two historical payments at a detected cadence, at the recent average amount ("Estimated") — nothing is forecast for a fully sold holding, or for a holding with fewer than two payments recorded yet (a recently-acquired position, for instance). Pension contributions are deliberately excluded — they're money going into the pension pot, not income received.</p>
           <IncomeCalendarView events={incomeCalendar} />
         </div>
+      )}
+    </div>
+  );
+}
+
+/* ----------------------------- Analysis ------------------------------ */
+// Three lenses over the income data: dividend cut/growth per holding,
+// income concentration (single-source risk), and the VCT 5-year holding-
+// period tracker (relief clawback risk). All from cores; see
+// income-analysis.mjs and vct.mjs.
+function AnalysisTab({ incomeEntries, allTxns, secMeta }) {
+  const today = todayISO();
+  const changes = useMemo(() => dividendChanges({ incomeEntries, today }), [incomeEntries, today]);
+  const conc = useMemo(() => incomeConcentration({ incomeEntries, today, topN: 5 }), [incomeEntries, today]);
+  const vct = useMemo(() => vctHoldings({ txns: allTxns, secMeta, today }), [allTxns, secMeta, today]);
+  const fmtPct = (p) => `${p > 0 ? "+" : ""}${Math.round(p)}%`;
+
+  return (
+    <div className="space-y-6">
+      {/* Income concentration */}
+      {conc.total > 0 && (
+        <div className="space-y-2">
+          <h3 className="font-semibold text-sm">Income concentration</h3>
+          <div className="grid sm:grid-cols-3 gap-3">
+            <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3"><div className="text-[11px] uppercase tracking-wide text-[var(--muted)]">Largest source</div><div className="text-lg font-semibold num">{conc.top1?.ticker} {Math.round(conc.top1?.weight)}%</div></div>
+            <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3"><div className="text-[11px] uppercase tracking-wide text-[var(--muted)]">Top 5 combined</div><div className="text-lg font-semibold num">{Math.round(conc.topNWeight)}%</div></div>
+            <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3"><div className="text-[11px] uppercase tracking-wide text-[var(--muted)]">Effective sources</div><div className="text-lg font-semibold num" title="1 / Herfindahl index — how many equal-sized income streams your mix behaves like">{conc.effectiveN}</div></div>
+          </div>
+          <p className="text-xs text-[var(--muted)]">Trailing 12 months of dividends + interest, by holding. A low effective-sources number or a large top holding means your income leans on a few names — the income-side mirror of single-stock risk.</p>
+        </div>
+      )}
+
+      {/* Dividend cut / growth */}
+      {(changes.cuts.length > 0 || changes.grown.length > 0) && (
+        <div className="space-y-2">
+          <h3 className="font-semibold text-sm">Dividend changes <span className="font-normal text-[var(--muted)]">— last 12 months vs the year before</span></h3>
+          <div className="rounded-xl border border-[var(--border)] overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-[var(--panel2)] text-[var(--muted)] text-xs uppercase tracking-wide">
+                <tr>{["Holding", "Last 12m", "Prior 12m", "Change", ""].map((h, i) => <th key={i} className={"py-2 px-3 font-medium " + (i === 0 ? "text-left" : "text-right")}>{h}</th>)}</tr>
+              </thead>
+              <tbody className="divide-y divide-[var(--border)] bg-[var(--panel)]">
+                {[...changes.cuts, ...changes.grown].map((r) => (
+                  <tr key={r.ticker}>
+                    <td className="py-2 px-3 font-medium">{r.ticker} {r.wrapper && <span className="text-[10px] text-[var(--muted)]">{r.wrapper}</span>}</td>
+                    <td className="py-2 px-3 text-right num">{gbp(r.recent)}</td>
+                    <td className="py-2 px-3 text-right num text-[var(--muted)]">{gbp(r.prior)}</td>
+                    <td className={"py-2 px-3 text-right num " + (r.status === "cut" ? "text-[var(--loss)]" : "text-[var(--gain)]")}>{r.changePct != null ? fmtPct(r.changePct) : "—"}</td>
+                    <td className="py-2 px-3 text-right text-xs">{r.status === "cut" ? <span className="text-[var(--loss)]">cut</span> : <span className="text-[var(--gain)]">grew</span>}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="text-xs text-[var(--muted)]">From your recorded payments (interest excluded). A cut is often the first sign to look harder at a holding; comparison is total received per window, so a partial-year holding or a recent purchase can distort it — treat as a prompt, not a verdict.</p>
+        </div>
+      )}
+
+      {/* VCT holding-period tracker */}
+      {vct.lots.length > 0 && (
+        <div className="space-y-2">
+          <h3 className="font-semibold text-sm">VCT holding period <span className="font-normal text-[var(--muted)]">— keep the 30% relief</span></h3>
+          <div className="grid sm:grid-cols-3 gap-3">
+            <div className="rounded-xl border border-[var(--m-bb)] bg-[var(--panel)] p-3"><div className="text-[11px] uppercase tracking-wide text-[var(--muted)]">Relief at risk if sold now</div><div className="text-lg font-semibold num text-[var(--loss)]">{gbp0(vct.summary.reliefAtRisk)}</div></div>
+            <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3"><div className="text-[11px] uppercase tracking-wide text-[var(--muted)]">Subscriptions still locked</div><div className="text-lg font-semibold num">{vct.summary.lockedCount} / {vct.summary.subscriptions}</div></div>
+            <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3"><div className="text-[11px] uppercase tracking-wide text-[var(--muted)]">Clearing within a year</div><div className="text-lg font-semibold num">{vct.summary.clearingWithinYear}</div></div>
+          </div>
+          <div className="rounded-xl border border-[var(--border)] overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-[var(--panel2)] text-[var(--muted)] text-xs uppercase tracking-wide">
+                <tr>{["VCT", "Subscribed", "5yr clears", "Time left", "Cost held", "Relief at risk"].map((h, i) => <th key={i} className={"py-2 px-3 font-medium " + (i === 0 ? "text-left" : "text-right")}>{h}</th>)}</tr>
+              </thead>
+              <tbody className="divide-y divide-[var(--border)] bg-[var(--panel)]">
+                {vct.lots.map((l, i) => (
+                  <tr key={`${l.ticker}-${l.subscribedDate}-${i}`} className={l.cleared ? "opacity-55" : ""}>
+                    <td className="py-2 px-3 font-medium">{l.ticker}</td>
+                    <td className="py-2 px-3 text-right num text-[var(--muted)]">{l.subscribedDate}</td>
+                    <td className="py-2 px-3 text-right num">{l.clawbackDate}</td>
+                    <td className="py-2 px-3 text-right num">{l.cleared ? <span className="text-[var(--gain)]">free to sell</span> : `${Math.round(l.daysLeft / 30.4)} mo`}</td>
+                    <td className="py-2 px-3 text-right num text-[var(--muted)]">{gbp0(l.costRemaining)}</td>
+                    <td className={"py-2 px-3 text-right num " + (l.reliefAtRisk > 0 ? "text-[var(--loss)]" : "text-[var(--muted)]")}>{l.reliefAtRisk > 0 ? gbp0(l.reliefAtRisk) : "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="text-xs text-[var(--muted)]">Sell (or the VCT buys back) shares within five years of subscribing and HMRC claws back the 30% income-tax relief you claimed. Each BUY is treated as a subscription and its relief as up to 30% of cost — an UPPER BOUND (relief is capped at tax paid that year). A secondary-market purchase earns no relief and isn't at risk, so exclude any of those. Not tax advice.</p>
+        </div>
+      )}
+
+      {conc.total === 0 && !changes.cuts.length && !changes.grown.length && !vct.lots.length && (
+        <Empty msg="Nothing to analyse yet — this view needs recorded dividends/interest (for concentration and dividend changes) and VCT holdings (for the relief tracker)." />
       )}
     </div>
   );
