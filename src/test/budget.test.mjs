@@ -272,3 +272,15 @@ test("averageAnnualBudget normalises ALL history to a representative year", asyn
   assert.equal(empty.summary.monthsWithData, 0);
   assert.equal(empty.summary.essentialPct, null);
 });
+
+test("annualBudget pro-rates annual-only limits to the window (the YTD fix)", () => {
+  const txns = [{ id: 1, date: "2026-03-11", amount: 300, categoryId: "ins" }]; // annual insurance, part paid
+  // Full 12-month window: annual limit is the whole £720 (unchanged).
+  const full = annualBudget({ categories: CATS, txns, month: "2026-12" });
+  assert.equal(full.rows.find((r) => r.id === "ins").limit, 720);
+  // 6-month window (Jan–Jun): the annual budget is halved to £360.
+  const half = annualBudget({ categories: CATS, txns, months: ["2026-01", "2026-02", "2026-03", "2026-04", "2026-05", "2026-06"] });
+  assert.equal(half.rows.find((r) => r.id === "ins").limit, 360);
+  // monthly categories already pro-rated by months (£600 × 6)
+  assert.equal(half.rows.find((r) => r.id === "gro")?.limit ?? 3600, 3600);
+});

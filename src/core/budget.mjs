@@ -158,8 +158,15 @@ export function annualBudget({ categories = [], txns = [], month, months = null 
   for (const c of categories) {
     const actual = spend.get(c.id) || 0;
     if (c.transfer) { transfers += actual; continue; }
+    // Both limits pro-rate to the window length: a monthly limit × the
+    // number of months, and an annual-only limit × (months / 12). For a
+    // full 12-month window this is the whole annual figure (12/12); for a
+    // part-year window like Year-to-date it's the elapsed share, so the
+    // budget you're compared against matches the period actually spent —
+    // otherwise a 7-month YTD would show a full year's annual budgets and
+    // always look under.
     const limit = c.annual > 0 && !(c.monthly > 0)
-      ? +c.annual
+      ? +c.annual * (window.length / 12)
       : (+c.monthly || 0) * window.length;
     rows.push({
       id: c.id, name: c.name, essential: !!c.essential,
