@@ -170,3 +170,46 @@ test("rsu-vest events: future scheduled dates, estimated certainty, horizon-boun
   assert.equal(vests[0].amount, 16000);
   assert.equal(vests[0].certainty, "estimated");
 });
+
+test("VCT fallback: irregular-but-established payers are projected forward a year", () => {
+  // A VCT paying twice a year on drifting dates — median gap lands
+  // between the quarterly and semi-annual bands, so detectCadence calls it
+  // irregular. Without the fallback it would be dropped; with it, the
+  // trailing 12 months project forward.
+  const today = "2026-07-24";
+  const txns = [{ id: 1, date: "2020-01-01", side: "BUY", ticker: "GHV1", quantity: 1000 }];
+  // Two ~200 ordinary dividends a year on drifting dates (irregular
+  // cadence), PLUS a one-off £400 special in the most recent year. The
+  // forecast must be built from the robust annual rate (~£400/yr, the
+  // median of the three years) — NOT the special-inflated last year (£800).
+  const incomeEntries = [
+    { date: "2023-09-01", ticker: "GHV1", amount: 200, wrapper: "VCT" },
+    { date: "2024-02-01", ticker: "GHV1", amount: 200, wrapper: "VCT" },
+    { date: "2024-09-01", ticker: "GHV1", amount: 200, wrapper: "VCT" },
+    { date: "2025-02-01", ticker: "GHV1", amount: 200, wrapper: "VCT" },
+    { date: "2025-09-01", ticker: "GHV1", amount: 200, wrapper: "VCT" }, // trailing 12m
+    { date: "2026-02-01", ticker: "GHV1", amount: 200, wrapper: "VCT" }, // trailing 12m
+    { date: "2026-03-01", ticker: "GHV1", amount: 400, wrapper: "VCT" }, // trailing 12m — SPECIAL
+  ];
+  assert.equal(detectCadence(incomeEntries.map((e) => e.date)).label, "irregular");
+  const ev = buildIncomeCalendar({ incomeEntries, txns, today, horizonDays: 365 });
+  const vct = ev.filter((e) => e.label === "GHV1");
+  const total = vct.reduce((s, e) => s + e.amount, 0);
+  // the special is discounted: ~£400/yr, not £800
+  assert.ok(Math.abs(total - 400) < 1, `forecast total ${total} should be ~400, not 800`);
+  assert.ok(vct.length >= 2);
+  assert.ok(vct.every((e) => e.certainty === "estimated"));
+  assert.ok(vct.every((e) => e.cadence === "annual (est.)"));
+});
+
+test("VCT fallback needs real history — two close one-offs are NOT annualised", () => {
+  const today = "2026-07-24";
+  const txns = [{ id: 1, date: "2026-01-01", side: "BUY", ticker: "NEW", quantity: 100 }];
+  const incomeEntries = [
+    { date: "2026-03-01", ticker: "NEW", amount: 50, wrapper: "VCT" },
+    { date: "2026-06-15", ticker: "NEW", amount: 50, wrapper: "VCT" }, // gap 106d = irregular, span < 300
+  ];
+  assert.equal(detectCadence(incomeEntries.map((e) => e.date)).label, "irregular");
+  const ev = buildIncomeCalendar({ incomeEntries, txns, today, horizonDays: 365 });
+  assert.equal(ev.filter((e) => e.label === "NEW").length, 0);
+});
