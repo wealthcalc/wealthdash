@@ -328,6 +328,49 @@ export function averageAnnualBudget({ categories = [], txns = [], toMonth } = {}
   };
 }
 
+// Year-overlay data: each calendar year's spend accumulated month by
+// month (Jan..Dec), so the years can be drawn on top of one another and
+// the current year's running total read against prior years — the "am I
+// tracking above or below trend?" view. Returns { years: [2024,2025,...],
+// rows: [{ monthIndex:1..12, month:"Jan", [2024]:cum, [2025]:cum, ... }] }.
+// Transfers excluded; uncategorised INCLUDED (it's real money out, and the
+// question is total spend, not budgeted spend). The current (partial) year
+// simply stops accumulating after the latest month with data, so its line
+// ends partway across — which is exactly what makes "ahead/behind" legible.
+export function yearOverlay({ categories = [], txns = [] } = {}) {
+  const transferIds = new Set(categories.filter((c) => c.transfer).map((c) => c.id));
+  const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  // year -> month(0-11) -> summed spend
+  const byYear = new Map();
+  for (const t of txns) {
+    if (!t || !t.date) continue;
+    if (t.categoryId && transferIds.has(t.categoryId)) continue;
+    const y = +t.date.slice(0, 4), mo = +t.date.slice(5, 7) - 1;
+    if (!Number.isFinite(y) || mo < 0 || mo > 11) continue;
+    if (!byYear.has(y)) byYear.set(y, new Array(12).fill(0));
+    byYear.get(y)[mo] += +t.amount || 0;
+  }
+  const years = [...byYear.keys()].sort();
+  if (!years.length) return { years: [], rows: [] };
+  const nowY = +String(new Date().toISOString().slice(0, 4));
+  const nowM = new Date().getMonth(); // 0-11, the latest month that can have data this year
+  const rows = MONTHS.map((label, i) => {
+    const row = { monthIndex: i + 1, month: label };
+    for (const y of years) {
+      const arr = byYear.get(y);
+      // Cumulative to month i. The current year stops at the present month
+      // (later months get null, so the line ends rather than dropping to a
+      // flat plateau that would read as "spending stopped").
+      if (y === nowY && i > nowM) { row[y] = null; continue; }
+      let cum = 0;
+      for (let k = 0; k <= i; k++) cum += arr[k] || 0;
+      row[y] = r2(cum);
+    }
+    return row;
+  });
+  return { years, rows, currentYear: years.includes(nowY) ? nowY : null };
+}
+
 // Per-category spend for an arbitrary set of months — the primitive
 // behind the "vs previous / vs average" comparison. Returns a Map of
 // categoryId -> £ (transfers excluded, uncategorised ignored: a category
