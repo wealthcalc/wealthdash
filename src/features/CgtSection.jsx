@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useCallback, useRef } from "react";
-import { AlertCircle, Download, Wand2, FlaskConical, Check, Printer, Info, Scale } from "lucide-react";
+import { AlertCircle, Download, Wand2, FlaskConical, Check, Printer, Info, Scale, TrendingDown } from "lucide-react";
 import { ukTaxYear } from "../core/cgt-engine.mjs";
 import { cfgFor, aeaForYear, paFor, liabilityForYear, sharesForTargetGain, nextTaxYear, optimiseDisposals } from "../core/uk-tax.mjs";
 import { buildTaxPack, renderTaxPackHTML } from "../core/tax-pack.mjs";
@@ -974,6 +974,31 @@ function WhatIfTab({ pools, disposals, income, carried, prices = {} }) {
           ) : <p className="text-sm text-[var(--muted)]">Enter a current price to see how many shares fit inside this year's allowance.</p>}
         </div>
       </div>
+
+      {/* Loss-harvesting scenario — only when THIS holding is underwater.
+          Selling it realises a capital loss that reduces this year's CGT
+          (or carries forward). liabilityForYear already nets losses against
+          gains, so this reuses the same engine as every other scenario. */}
+      {p > 0 && avg > p && pool.qty > 1e-9 && (() => {
+        const fullLoss = pool.cost - pool.qty * p;
+        const harvestHypo = { date: todayISO(), ticker: tk, quantity: pool.qty, proceeds: pool.qty * p, gain: -fullLoss, taxYear: yearNow, legs: [], cost: pool.cost };
+        const withHarvest = liabilityForYear([...realisedThisYear, harvestHypo], { income, carriedLosses: carried });
+        const cgtSaved = base.tax - withHarvest.tax; // positive = saving this year
+        return (
+          <div className="rounded-xl border border-[var(--m-bb)] bg-[var(--panel)] p-4 space-y-2">
+            <h3 className="font-semibold text-sm flex items-center gap-2"><TrendingDown size={15} className="text-[var(--loss)]" /> Harvest this loss — {tk} is below cost</h3>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm num">
+              <Stat label="Realisable loss" value={gbp(fullLoss)} tone="loss" />
+              <Stat label="CGT saved this year" value={gbp(Math.max(0, cgtSaved))} tone={cgtSaved > 0 ? "gain" : "ink"} />
+              <Stat label="CGT before → after" value={`${gbp(base.tax)} → ${gbp(withHarvest.tax)}`} />
+              <Stat label="Net position after" value={gbp(withHarvest.net)} tone={withHarvest.net >= 0 ? "gain" : "loss"} />
+            </div>
+            <p className="text-xs text-[var(--muted)] leading-relaxed font-sans">
+              Selling the whole {tk} pool banks {gbp(fullLoss)} of loss. It offsets this year&apos;s gains ABOVE the annual exempt amount first (a loss set against gains within the allowance is wasted), then carries forward indefinitely once registered with HMRC. {cgtSaved <= 0 && "Right now your gains are within the allowance, so this banks no cash this year — it's a carry-forward play. "}To stay invested, rebuy inside an ISA/pension, buy a similar-but-not-identical holding, or wait 30 days — a straight rebuy of {tk} within 30 days cancels the loss. The Bed &amp; ISA tab lists every loss-making holding at once.
+            </p>
+          </div>
+        );
+      })()}
     </div>
   );
 }
