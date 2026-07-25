@@ -75,6 +75,10 @@ export const PROFILES = {
   amex: { label: "American Express", signConvention: "spend-positive", account: "Amex" },
   // Current-account exports: spending is money OUT, i.e. negative.
   hsbc: { label: "HSBC", signConvention: "spend-negative", account: "HSBC" },
+  // Revolut has a distinctive multi-column export and needs its own parse
+  // path (see parseRevolut): named columns, a COMPLETED/PENDING state, a
+  // per-currency amount, and Exchange/Topup rows that aren't spending.
+  revolut: { label: "Revolut", signConvention: "spend-negative", account: "Revolut", custom: "revolut" },
   // Generic: let detection decide (see detectSign below).
   auto: { label: "Auto-detect", signConvention: "auto", account: "" },
 };
@@ -153,8 +157,63 @@ export function dedupeStatement(incoming, existing = []) {
 
 // text: raw CSV. profile: key of PROFILES. Returns
 // { rows, warnings, meta: { columns, signConvention, detected } }.
-export function parseStatement(text, { profile = "auto", account = "" } = {}) {
+// Revolut export: Type,Product,Started Date,Completed Date,Description,
+// Amount,Fee,Currency,State,Balance. Its quirks, each handled:
+//   - only State = COMPLETED rows are real (pending/reverted/declined
+//     aren't money that moved);
+//   - the Amount is in the transaction's OWN Currency, so a EUR account
+//     exports EUR figures — a GBP budget needs an FX rate to fold them in
+//     (`fxRate`, applied to any non-GBP row, disclosed as an assumption);
+//   - Type = Exchange / Topup / Transfer are moving money, not spending,
+//     so they're skipped;
+//   - the Fee column is a real cost and is added to the spend;
+//   - Completed Date (not Started) is the date the money actually left.
+export function parseRevolut(text, { account = "Revolut", fxRate = 1 } = {}) {
+  const all = parseCSVRows(String(text || "").trim()).filter((r) => r.some((c) => String(c || "").trim() !== ""));
+  if (!all.length) return { rows: [], warnings: ["The file is empty or isn't readable as CSV."], meta: null };
+  const header = all[0].map(norm);
+  const col = (name) => header.indexOf(name);
+  const ci = { type: col("type"), completed: col("completed date"), started: col("started date"), desc: col("description"), amount: col("amount"), fee: col("fee"), ccy: col("currency"), state: col("state") };
+  if (ci.amount < 0 || (ci.completed < 0 && ci.started < 0)) {
+    return { rows: [], meta: null, warnings: ["This doesn't look like a Revolut export — expected columns like 'Type', 'Completed Date', 'Amount', 'Currency', 'State'."] };
+  }
+  const SKIP_TYPES = new Set(["exchange", "topup", "transfer"]);
+  const rows = [];
+  const warnings = [];
+  let skippedState = 0, skippedType = 0, foreign = 0;
+  const foreignCcys = new Set();
+  for (const r of all.slice(1)) {
+    const state = norm(r[ci.state]);
+    if (ci.state >= 0 && state && state !== "completed") { skippedState++; continue; }
+    const type = norm(r[ci.type]);
+    if (SKIP_TYPES.has(type)) { skippedType++; continue; }
+    const date = parseStatementDate(r[ci.completed] ?? r[ci.started]) || parseStatementDate(r[ci.started]);
+    let amt = parseAmount(r[ci.amount]);
+    if (!date || amt == null) continue;
+    const fee = ci.fee >= 0 ? (parseAmount(r[ci.fee]) || 0) : 0;
+    // Revolut: spend is negative, fees positive-cost. Net cost = -(amount) + fee.
+    let spend = -amt + Math.abs(fee);
+    const ccy = (r[ci.ccy] || "GBP").toString().trim().toUpperCase();
+    if (ccy && ccy !== "GBP") { spend *= (+fxRate || 1); foreign++; foreignCcys.add(ccy); }
+    rows.push({ date, description: String(r[ci.desc] ?? "").trim(), amount: Math.round(spend * 100) / 100, account });
+  }
+  if (skippedState) warnings.push(`${skippedState} non-completed row(s) skipped (pending/reverted/declined).`);
+  if (skippedType) warnings.push(`${skippedType} exchange/top-up/transfer row(s) skipped — those move money between accounts rather than spending it.`);
+  if (foreign) warnings.push(`${foreign} row(s) in ${[...foreignCcys].join(", ")} converted to GBP at ${(+fxRate || 1)} — set the FX rate to match your statement period, or leave as 1 to keep original amounts.`);
+  return {
+    rows, warnings,
+    meta: {
+      profile: "revolut", signConvention: "spend-negative", count: rows.length,
+      spendCount: rows.filter((x) => x.amount > 0).length,
+      foreignCount: foreign, foreignCcys: [...foreignCcys],
+      dateRange: rows.length ? [rows.reduce((m, x) => (x.date < m ? x.date : m), rows[0].date), rows.reduce((m, x) => (x.date > m ? x.date : m), rows[0].date)] : null,
+    },
+  };
+}
+
+export function parseStatement(text, { profile = "auto", account = "", fxRate = 1 } = {}) {
   const p = PROFILES[profile] || PROFILES.auto;
+  if (p.custom === "revolut") return parseRevolut(text, { account: account || p.account, fxRate });
   const all = parseCSVRows(String(text || "").trim()).filter((r) => r.some((c) => String(c || "").trim() !== ""));
   const warnings = [];
   if (!all.length) return { rows: [], warnings: ["The file is empty or isn't readable as CSV."], meta: null };
