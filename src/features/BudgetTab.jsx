@@ -133,6 +133,11 @@ function Overview({ categories, txns, month, setMonth, setSub, drillTo, incomeEn
   // "avg" view: representative 12 months from ALL history (dilutes one-off
   // years), vs "year" which is strictly the last 12 months.
   const avg = useMemo(() => averageAnnualBudget({ categories, txns, toMonth: month }), [categories, txns, month]);
+  // Year to date: 1 Jan of the current year to now. Limits scale to the
+  // elapsed months (annualBudget's `months` window), so "spent vs budget
+  // so far this year" is a like-for-like — not the full-year budget.
+  const ytdMonths = useMemo(() => { const now = thisMonth(); return monthRange(`${now.slice(0, 4)}-01`, now); }, []);
+  const ytd = useMemo(() => annualBudget({ categories, txns, months: ytdMonths }), [categories, txns, ytdMonths]);
   const [spreadAnnual, setSpreadAnnual] = useState(() => store.get("cgt.budget.spread", true));
   React.useEffect(() => store.set("cgt.budget.spread", spreadAnnual), [spreadAnnual]);
   const trend = useMemo(
@@ -143,7 +148,7 @@ function Overview({ categories, txns, month, setMonth, setSub, drillTo, incomeEn
   // view) or the prior 12 months' average (year view). Makes drift
   // visible — a static period says nothing about whether a category is
   // creeping up.
-  const baseResult = view === "month" ? m : view === "avg" ? avg : a;
+  const baseResult = view === "month" ? m : view === "avg" ? avg : view === "ytd" ? ytd : a;
   const compared = useMemo(() => {
     const rowsIn = baseResult.rows;
     if (view === "month") {
@@ -157,6 +162,14 @@ function Overview({ categories, txns, month, setMonth, setSub, drillTo, incomeEn
       const baseline = spendByCategory({ categories, txns, months: trailing12(month) });
       return withComparison(rowsIn, { baseline, label: "vs last 12m" });
     }
+    if (view === "ytd") {
+      // YTD compares against the SAME months last year — the only honest
+      // like-for-like for a partial year (comparing 7 months to a full 12
+      // would always look "under").
+      const priorYtd = ytdMonths.map((mm) => { const [yy, mo] = mm.split("-"); return `${+yy - 1}-${mo}`; });
+      const baseline = spendByCategory({ categories, txns, months: priorYtd });
+      return withComparison(rowsIn, { baseline, label: "vs same period last yr" });
+    }
     // year view: average of the 12 months BEFORE this window
     const [y, mo] = month.split("-").map(Number);
     const priorEnd = mo === 1 ? `${y - 1}-12` : `${y}-${String(mo - 1).padStart(2, "0")}`;
@@ -169,7 +182,7 @@ function Overview({ categories, txns, month, setMonth, setSub, drillTo, incomeEn
   const tm = thisMonth();
   // Any month other than the current one is reached through the picker
   // rather than a button, so it gets no highlighted pill.
-  const activePeriod = view === "avg" ? "avg" : view === "year" ? "year" : month === tm ? "this" : "month";
+  const activePeriod = view === "avg" ? "avg" : view === "ytd" ? "ytd" : view === "year" ? "year" : month === tm ? "this" : "month";
 
   if (!txns.length) {
     return <Empty msg="No spending imported yet. Use the Import statements sub-tab to load an Amex or HSBC CSV export, then categorise the rows." />;
@@ -184,6 +197,7 @@ function Overview({ categories, txns, month, setMonth, setSub, drillTo, incomeEn
         {[
           ["year", "Trailing 12 months", "The last 12 calendar months to today.", () => { setView("year"); setMonth(tm); }],
           ["avg", `Average year${avg.summary.monthsWithData ? ` (${avg.summary.monthsWithData}m)` : ""}`, "A representative 12 months, averaged across all your history — dilutes a one-off expensive year.", () => setView("avg")],
+          ["ytd", `Year to date${ytdMonths.length ? ` (${ytdMonths.length}m)` : ""}`, "1 January this year to now, with the budget scaled to the elapsed months.", () => setView("ytd")],
           ["this", "This month", "Spending so far this calendar month.", () => { setView("month"); setMonth(tm); }],
         ].map(([k, label, tip, onClick]) => (
           <button key={k} onClick={onClick} title={tip}
@@ -195,7 +209,7 @@ function Overview({ categories, txns, month, setMonth, setSub, drillTo, incomeEn
       </div>
 
       <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))" }}>
-        <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3"><Stat label={view === "avg" ? "Spent (avg year)" : "Spent"} value={gbp0(s.totalActual)} sub={view === "month" ? month : view === "avg" ? `averaged over ${s.monthsWithData} months` : `12 months to ${month}`} /></div>
+        <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3"><Stat label={view === "avg" ? "Spent (avg year)" : view === "ytd" ? "Spent (YTD)" : "Spent"} value={gbp0(s.totalActual)} sub={view === "month" ? month : view === "avg" ? `averaged over ${s.monthsWithData} months` : view === "ytd" ? `${ytdMonths[0]} to now` : `12 months to ${month}`} /></div>
         <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3"><Stat label="Budget" value={gbp0(s.totalLimit)} sub={view === "month" ? "monthly limits only" : "incl. annual categories"} /></div>
         <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3">
           <Stat label={s.variance >= 0 ? "Under budget" : "Over budget"} value={gbp0(Math.abs(s.variance))} tone={s.variance >= 0 ? "green" : "red"} sub={`${s.overCount ?? cur.rows.filter((r) => r.over).length} categor${(s.overCount ?? 0) === 1 ? "y" : "ies"} over`} />
@@ -211,7 +225,7 @@ function Overview({ categories, txns, month, setMonth, setSub, drillTo, incomeEn
           view's own total. It answers "does what comes in cover what goes
           out?" without hopping between tabs. */}
       {(() => {
-        const window = view === "month" ? [month] : trailing12(month);
+        const window = view === "month" ? [month] : view === "ytd" ? ytdMonths : trailing12(month);
         const inWin = new Set(window);
         const invIncome = incomeEntries.reduce((sum, e) => sum + (e && e.date && inWin.has(e.date.slice(0, 7)) ? (+e.amount || 0) : 0), 0);
         if (invIncome <= 0) return null;
@@ -283,7 +297,7 @@ function Overview({ categories, txns, month, setMonth, setSub, drillTo, incomeEn
       </div>
 
       <CategoryPie rows={cur.rows} total={s.totalActual} onSlice={drillTo}
-        periodLabel={view === "month" ? month : view === "avg" ? "average year" : `12 months to ${month}`} />
+        periodLabel={view === "month" ? month : view === "avg" ? "average year" : view === "ytd" ? "year to date" : `12 months to ${month}`} />
 
       <div className="rounded-xl border border-[var(--border)] overflow-x-auto">
         <table className="w-full text-sm">
