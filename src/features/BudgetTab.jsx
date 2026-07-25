@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useRef } from "react";
 import { Plus, Trash2, Upload, Check, AlertTriangle, Wand2 } from "lucide-react";
 import { ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, PieChart, Pie, Cell, Sector } from "recharts";
-import { monthlyBudget, annualBudget, averageAnnualBudget, spendByMonth, trailing12, mergedSpend, spendByCategory, withComparison, monthRange, yearOverlay } from "../core/budget.mjs";
+import { monthlyBudget, annualBudget, averageAnnualBudget, spendByMonth, trailing12, mergedSpend, spendByCategory, withComparison, monthRange, yearOverlay, discretionaryRunway } from "../core/budget.mjs";
 import { uncategorisedGroups, suggestRule, normaliseMerchant } from "../core/categorise.mjs";
 import { detectRecurring, topMerchants } from "../core/detect-recurring.mjs";
 import { parseStatement, dedupeStatement, PROFILES } from "../core/statement-import.mjs";
@@ -220,6 +220,8 @@ function Overview({ categories, txns, month, setMonth, setSub, drillTo, incomeEn
         </div>
       </div>
 
+      {view === "ytd" && <DiscretionaryRunway categories={categories} txns={txns} month={thisMonth()} />}
+
       {/* INCOME ↔ SPENDING — the two adjacent halves of a household finally
           on one line. Investment income comes from the Income tab's ledger
           (dividends + interest received in the window); spending is this
@@ -347,6 +349,46 @@ function Overview({ categories, txns, month, setMonth, setSub, drillTo, incomeEn
             : "Money is shown in the month it actually left your account, so an annual bill towers over its neighbours. The budget line is monthly limits only — that spike is by design, not an overspend."}
         </p>
       </div>
+    </div>
+  );
+}
+
+/* ------------------------ Discretionary runway ----------------------- */
+// The forward question: spent so far this year + committed essentials for
+// the rest of the year → how much is left for non-essentials. Shown in the
+// Year-to-date view. Ceiling defaults to the full-year budget; the user
+// can set an affordability ceiling of their own (e.g. income-based).
+function DiscretionaryRunway({ categories, txns, month }) {
+  const [ceiling, setCeiling] = useState(() => store.get("cgt.budget.ceiling", ""));
+  React.useEffect(() => store.set("cgt.budget.ceiling", ceiling), [ceiling]);
+  const r = useMemo(
+    () => discretionaryRunway({ categories, txns, month, ceiling: +ceiling || null }),
+    [categories, txns, month, ceiling]
+  );
+  const hasEssential = categories.some((c) => c.essential && !c.transfer);
+  if (!hasEssential && r.ytdTotal === 0) return null;
+
+  return (
+    <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 space-y-3">
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="text-sm font-semibold">Rest-of-year headroom for non-essentials</div>
+        <label className="flex items-center gap-1.5 text-xs text-[var(--muted)]">
+          Annual ceiling
+          <input type="number" value={ceiling} onChange={(e) => setCeiling(e.target.value)} placeholder={gbp0(r.totalBudget)} className="input num w-28 py-1" title="What you're willing/able to spend across the whole year. Blank = your total budget." />
+        </label>
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div className="rounded-lg border border-[var(--border)] bg-[var(--panel2)] p-3"><div className="text-[11px] uppercase tracking-wide text-[var(--muted)]">Spent so far</div><div className="text-lg font-semibold num">{gbp0(r.ytdTotal)}</div><div className="text-[10px] text-[var(--muted)] num">{gbp0(r.ytdEssential)} ess · {gbp0(r.ytdDiscretionary)} disc{r.ytdUncategorised > 0 ? ` · ${gbp0(r.ytdUncategorised)} uncat` : ""}</div></div>
+        <div className="rounded-lg border border-[var(--border)] bg-[var(--panel2)] p-3"><div className="text-[11px] uppercase tracking-wide text-[var(--muted)]">Essentials still to come</div><div className="text-lg font-semibold num">{gbp0(r.remainingEssential)}</div><div className="text-[10px] text-[var(--muted)]">{r.wholeMonthsLeft} months left</div></div>
+        <div className="rounded-lg border border-[var(--border)] bg-[var(--panel2)] p-3"><div className="text-[11px] uppercase tracking-wide text-[var(--muted)]">Ceiling</div><div className="text-lg font-semibold num">{gbp0(r.ceiling)}</div><div className="text-[10px] text-[var(--muted)]">{r.usedDefaultCeiling ? "your total budget" : "your figure"}</div></div>
+        <div className={"rounded-lg border p-3 " + (r.overCommitted ? "border-[var(--loss)] bg-[var(--panel2)]" : "border-[var(--gain)] bg-[var(--panel2)]")}><div className="text-[11px] uppercase tracking-wide text-[var(--muted)]">{r.overCommitted ? "Over ceiling by" : "Left for non-essentials"}</div><div className={"text-lg font-semibold num " + (r.overCommitted ? "text-[var(--loss)]" : "text-[var(--gain)]")}>{gbp0(Math.abs(r.headroom))}</div><div className="text-[10px] text-[var(--muted)] num">{r.wholeMonthsLeft > 0 && !r.overCommitted ? `${gbp0(r.perMonthHeadroom)}/month` : ""}</div></div>
+      </div>
+      <p className="text-xs text-[var(--muted)]">
+        {r.overCommitted
+          ? `Your spend so far plus committed essentials already exceed the ceiling by ${gbp0(-r.headroom)} — non-essential spending for the rest of the year comes out of savings unless something gives.`
+          : `After what you've spent and the essentials still due (projected from your budget), ${gbp0(r.headroom)} is free for non-essentials over the remaining ${r.wholeMonthsLeft} month${r.wholeMonthsLeft === 1 ? "" : "s"} — about ${gbp0(r.perMonthHeadroom)} a month.`}
+        {" "}Essentials are projected from their budget (monthly limits × months left, plus any unpaid annual bills), so it holds even for lumpy costs still to come.
+      </p>
     </div>
   );
 }

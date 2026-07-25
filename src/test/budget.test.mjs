@@ -320,3 +320,47 @@ test("yearOverlay: the current year's line stops at the present month, not a pla
   assert.ok(typeof o.rows[nowM][y] === "number");
   if (nowM < 11) assert.equal(o.rows[nowM + 1][y], null);
 });
+
+test("discretionaryRunway: spent YTD + remaining essentials → non-essential headroom", async () => {
+  const { discretionaryRunway } = await import("../core/budget.mjs");
+  // As at end of June (month 6): 6 months elapsed, 6 whole months left.
+  const cats = [
+    { id: "gro", name: "Groceries", monthly: 600, essential: true },
+    { id: "fun", name: "Eating out", monthly: 300, essential: false },
+    { id: "ins", name: "Insurance", annual: 1200, essential: true }, // annual-only essential
+  ];
+  const txns = [
+    // 6 months of groceries at budget, plus 6 months of eating out over budget
+    ...["2026-01", "2026-02", "2026-03", "2026-04", "2026-05", "2026-06"].flatMap((m, i) => [
+      { id: `g${i}`, date: `${m}-05`, amount: 600, categoryId: "gro" },
+      { id: `f${i}`, date: `${m}-06`, amount: 400, categoryId: "fun" }, // £400 vs £300 budget
+    ]),
+    { id: "ins", date: "2026-03-01", amount: 1200, categoryId: "ins" }, // insurance already paid
+  ];
+  const r = discretionaryRunway({ categories: cats, txns, month: "2026-06" });
+  assert.equal(r.wholeMonthsLeft, 6);
+  // spent YTD: 6×600 groceries + 6×400 eating + 1200 insurance = 3600 + 2400 + 1200 = 7200
+  assert.equal(r.ytdTotal, 7200);
+  assert.equal(r.ytdEssential, 4800);      // groceries 3600 + insurance 1200
+  assert.equal(r.ytdDiscretionary, 2400);  // eating out
+  // remaining essential: groceries 600×6 = 3600; insurance already fully paid → 0
+  assert.equal(r.remainingEssential, 3600);
+  // ceiling default = full-year budget: (600+300)×12 + 1200 = 10800 + 1200 = 12000
+  assert.equal(r.totalBudget, 12000);
+  assert.equal(r.ceiling, 12000);
+  // headroom = 12000 − 7200 − 3600 = 1200 for the rest of the year
+  assert.equal(r.headroom, 1200);
+  assert.equal(r.perMonthHeadroom, 200); // 1200 / 6
+});
+
+test("discretionaryRunway: over-commitment is surfaced, not floored; custom ceiling", async () => {
+  const { discretionaryRunway } = await import("../core/budget.mjs");
+  const cats = [{ id: "gro", name: "Groceries", monthly: 600, essential: true }];
+  const txns = [{ id: 1, date: "2026-06-15", amount: 9000, categoryId: "gro" }]; // blew it
+  const r = discretionaryRunway({ categories: cats, txns, month: "2026-06", ceiling: 8000 });
+  assert.equal(r.ceiling, 8000);
+  assert.equal(r.usedDefaultCeiling, false);
+  assert.ok(r.overCommitted);
+  assert.ok(r.headroom < 0);
+  assert.throws(() => discretionaryRunway({ categories: cats, txns: [] }), /month/);
+});

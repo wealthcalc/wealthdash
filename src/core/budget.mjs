@@ -419,6 +419,82 @@ export function withComparison(rows, { baseline, label }) {
   });
 }
 
+// DISCRETIONARY RUNWAY — the forward budget question: "I've spent £X so
+// far this year; my essential costs for the rest of the year are roughly
+// £Y; against my ceiling, how much is left for non-essentials?"
+//
+// The pieces, each stated so the number is trustworthy:
+//   - SPENT YTD is actual (Jan..now), split essential/discretionary, with
+//     uncategorised shown separately (it's real money out but of unknown
+//     kind, so it isn't quietly called discretionary).
+//   - REMAINING ESSENTIAL is projected from the BUDGET, not a run-rate:
+//     monthly-essential limits × the whole months left, plus each annual-
+//     only essential's UNPAID remainder (its annual figure minus what's
+//     already gone out this year — so an insurance premium already paid
+//     isn't double-counted). Budget-based because essentials are
+//     commitments you can't easily flex; a run-rate would understate a
+//     lumpy bill still to come.
+//   - CEILING defaults to the full-year budget (every category's annual
+//     figure) but the caller can pass an affordability ceiling instead
+//     (e.g. income-derived). Headroom = ceiling − spentYTD − remaining
+//     essential; per-month is that spread over the whole months left.
+// A negative headroom means committed spend already exceeds the ceiling —
+// surfaced honestly, not floored to zero.
+export function discretionaryRunway({ categories = [], txns = [], month, ceiling = null } = {}) {
+  if (!month) throw new Error("discretionaryRunway requires a month (YYYY-MM).");
+  const [year, mo] = month.split("-").map(Number);
+  const ytdMonthsSet = new Set(monthRange(`${year}-01`, month));
+  const elapsedMonths = mo;            // Jan..current inclusive
+  const wholeMonthsLeft = 12 - mo;     // full months after the current one
+  const byId = new Map(categories.map((c) => [c.id, c]));
+  const isAnnualOnly = (c) => c.annual > 0 && !(c.monthly > 0);
+
+  // Actual spend this year so far.
+  let ytdTotal = 0, ytdEssential = 0, ytdDiscretionary = 0, ytdUncategorised = 0;
+  const spentThisYear = new Map(); // categoryId -> £ (for annual-only remainder)
+  for (const t of txns) {
+    if (!t || !ytdMonthsSet.has(monthOf(t.date))) continue;
+    const amt = +t.amount || 0;
+    const c = t.categoryId ? byId.get(t.categoryId) : null;
+    if (!c) { ytdUncategorised += amt; continue; }
+    if (c.transfer) continue;
+    spentThisYear.set(c.id, (spentThisYear.get(c.id) || 0) + amt);
+    ytdTotal += amt;
+    if (c.essential) ytdEssential += amt; else ytdDiscretionary += amt;
+  }
+
+  // Essential costs still to come this year, from the budget.
+  let remainingEssential = 0;
+  for (const c of categories) {
+    if (c.transfer || !c.essential) continue;
+    if (isAnnualOnly(c)) {
+      remainingEssential += Math.max(0, (+c.annual || 0) - (spentThisYear.get(c.id) || 0));
+    } else {
+      remainingEssential += (+c.monthly || 0) * wholeMonthsLeft;
+    }
+  }
+
+  const totalBudget = categories.reduce((s, c) => s + (c.transfer ? 0 : isAnnualOnly(c) ? (+c.annual || 0) : (+c.monthly || 0) * 12), 0);
+  const cap = ceiling != null && ceiling > 0 ? +ceiling : totalBudget;
+  const committed = ytdTotal + ytdUncategorised + remainingEssential;
+  const headroom = cap - committed;
+  return {
+    month, elapsedMonths, wholeMonthsLeft,
+    ytdTotal: r2(ytdTotal),
+    ytdEssential: r2(ytdEssential),
+    ytdDiscretionary: r2(ytdDiscretionary),
+    ytdUncategorised: r2(ytdUncategorised),
+    remainingEssential: r2(remainingEssential),
+    totalBudget: r2(totalBudget),
+    ceiling: r2(cap),
+    usedDefaultCeiling: !(ceiling != null && ceiling > 0),
+    committed: r2(committed),
+    headroom: r2(headroom),
+    perMonthHeadroom: wholeMonthsLeft > 0 ? r2(headroom / wholeMonthsLeft) : r2(headroom),
+    overCommitted: headroom < 0,
+  };
+}
+
 // What the Plan/Run-off tabs consume: trailing-12m actual spend and the
 // essential share, plus the data-quality caveats that decide whether the
 // prefill should be offered at all. Deliberately returns `ready: false`
