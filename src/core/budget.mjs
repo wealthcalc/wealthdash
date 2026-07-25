@@ -350,10 +350,22 @@ export function yearOverlay({ categories = [], txns = [] } = {}) {
     if (!byYear.has(y)) byYear.set(y, new Array(12).fill(0));
     byYear.get(y)[mo] += +t.amount || 0;
   }
-  const years = [...byYear.keys()].sort();
-  if (!years.length) return { years: [], rows: [] };
   const nowY = +String(new Date().toISOString().slice(0, 4));
   const nowM = new Date().getMonth(); // 0-11, the latest month that can have data this year
+  // Only COMPLETE prior years form the trend baseline, plus the current
+  // (partial) year. A first year with data starting mid-way (e.g. Jan-Dec
+  // coverage began in August) understates every month before its first
+  // record, and a future year is noise — both would mislead the "above or
+  // below trend?" read. A year counts as complete if it has spend in its
+  // first AND last month (a light, data-driven proxy for full coverage).
+  const complete = (y) => {
+    const arr = byYear.get(y);
+    return (arr[0] || 0) !== 0 && (arr[11] || 0) !== 0;
+  };
+  const years = [...byYear.keys()]
+    .filter((y) => y <= nowY && (y === nowY || complete(y)))
+    .sort();
+  if (!years.length) return { years: [], rows: [] };
   const rows = MONTHS.map((label, i) => {
     const row = { monthIndex: i + 1, month: label };
     for (const y of years) {

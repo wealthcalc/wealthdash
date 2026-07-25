@@ -285,25 +285,29 @@ test("annualBudget pro-rates annual-only limits to the window (the YTD fix)", ()
   assert.equal(half.rows.find((r) => r.id === "gro")?.limit ?? 3600, 3600);
 });
 
-test("yearOverlay: cumulative spend per year, transfers out, uncategorised in", async () => {
+test("yearOverlay: complete years only, cumulative, transfers out, uncategorised in", async () => {
   const { yearOverlay } = await import("../core/budget.mjs");
+  // 2020 and 2021 are complete (spend in Jan AND Dec); 2019 starts in
+  // August so it's incomplete and must be excluded (its early months would
+  // read as £0 and drag the trend down).
   const txns = [
-    { id: 1, date: "2024-01-10", amount: 100, categoryId: "gro" },
-    { id: 2, date: "2024-02-10", amount: 200, categoryId: "gro" },
-    { id: 3, date: "2025-01-10", amount: 150, categoryId: "gro" },
-    { id: 4, date: "2025-01-11", amount: 50 },                      // uncategorised — counts
-    { id: 5, date: "2025-02-10", amount: 300, categoryId: "xfer" }, // transfer — excluded
+    { id: 0, date: "2019-08-10", amount: 999, categoryId: "gro" }, // incomplete first year
+    { id: 1, date: "2020-01-10", amount: 100, categoryId: "gro" },
+    { id: 2, date: "2020-02-10", amount: 200, categoryId: "gro" },
+    { id: 3, date: "2020-12-10", amount: 50, categoryId: "gro" },
+    { id: 4, date: "2021-01-10", amount: 150, categoryId: "gro" },
+    { id: 5, date: "2021-01-11", amount: 50 },                      // uncategorised — counts
+    { id: 6, date: "2021-02-10", amount: 300, categoryId: "xfer" }, // transfer — excluded
+    { id: 7, date: "2021-12-10", amount: 40, categoryId: "gro" },
   ];
   const o = yearOverlay({ categories: CATS, txns });
-  assert.deepEqual(o.years, [2024, 2025]);
-  // cumulative: Jan then Feb
+  assert.deepEqual(o.years, [2020, 2021]);      // 2019 dropped as incomplete
   const jan = o.rows[0], feb = o.rows[1];
-  assert.equal(jan[2024], 100);
-  assert.equal(feb[2024], 300);        // 100 + 200 cumulative
-  assert.equal(jan[2025], 200);        // 150 categorised + 50 uncategorised
-  assert.equal(feb[2025], 200);        // Feb transfer excluded, so unchanged
-  // months beyond the data still accumulate (flat) for a PAST year
-  assert.equal(o.rows[11][2024], 300); // Dec 2024 = full-year cumulative
+  assert.equal(jan[2020], 100);
+  assert.equal(feb[2020], 300);                 // 100 + 200 cumulative
+  assert.equal(o.rows[11][2020], 350);          // Dec = full-year total
+  assert.equal(jan[2021], 200);                 // 150 categorised + 50 uncategorised
+  assert.equal(feb[2021], 200);                 // Feb transfer excluded, unchanged
 });
 
 test("yearOverlay: the current year's line stops at the present month, not a plateau", async () => {
