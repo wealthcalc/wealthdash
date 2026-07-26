@@ -72,7 +72,7 @@ function LocationTab({ positions = [], secMeta = {}, income = 0 }) {
       <div className="rounded-xl border border-[var(--border)] overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="bg-[var(--panel2)] text-[var(--muted)] text-xs uppercase tracking-wide">
-            <tr>{["Holding", "Wrapper", "Value", "GIA drag %/yr", "GIA drag £/yr"].map((h, i) => (
+            <tr>{["Holding", "Wrapper", "Value", "Drag %/yr (if in GIA)", "Drag £/yr (if in GIA)"].map((h, i) => (
               <th key={h} className={"px-3 py-2 font-medium " + (i <= 1 ? "text-left" : "text-right")}>{h}</th>
             ))}</tr>
           </thead>
@@ -82,15 +82,18 @@ function LocationTab({ positions = [], secMeta = {}, income = 0 }) {
                 <td className="px-3 py-2 font-medium">{r.ticker}</td>
                 <td className="px-3 py-2 text-[var(--muted)]">{r.wrapper}{r.sheltered ? " (sheltered)" : ""}</td>
                 <td className="px-3 py-2 num text-right">{gbp0(r.value)}</td>
-                <td className="px-3 py-2 num text-right">{pctFmt(r.dragPct)}</td>
-                <td className={"px-3 py-2 num text-right " + (!r.sheltered && r.dragGbp > 100 ? "text-[var(--loss)]" : "")}>{r.sheltered ? `(${gbp0(r.dragGbp)})` : gbp0(r.dragGbp)}</td>
+                <td className={"px-3 py-2 num text-right " + (r.sheltered ? "text-[var(--muted)]" : "")}>{pctFmt(r.dragPct)}</td>
+                <td className={"px-3 py-2 num text-right " + (r.sheltered ? "text-[var(--muted)]" : (r.dragGbp > 100 ? "text-[var(--loss)]" : ""))}>{r.sheltered ? "£0 now" : gbp0(r.dragGbp)}</td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
       <p className="text-xs text-[var(--muted)] leading-relaxed">
-        Drag = income yield × your marginal rate ({(plan.rates.dividend * 100).toFixed(2)}% dividends / {(plan.rates.interest * 100).toFixed(0)}% interest at your income) + expected growth × {(plan.rates.cgt * 100).toFixed(0)}% CGT × 0.5 realisation discount. Yields/growth are kind-based assumptions (override per security via a yieldPct in its metadata); individual gilts are CGT-exempt, which is why low-coupon gilts belong OUTSIDE the shelter. Dividend allowance and PSA aren't netted per holding — the drag is slightly overstated, uniformly. Estimates to guide placement, not tax advice.
+        Drag = income yield × your marginal rate ({(plan.rates.dividend * 100).toFixed(2)}% dividends / {(plan.rates.interest * 100).toFixed(0)}% interest at your income) + expected growth × {(plan.rates.cgt * 100).toFixed(0)}% CGT × 0.5 realisation discount. Yields/growth are kind-based assumptions (so holdings of the same type share a figure until you override <span className="italic">yieldPct</span> per security); individual gilts are CGT-exempt, which is why low-coupon gilts belong OUTSIDE the shelter. Dividend allowance and PSA aren't netted per holding — the drag is slightly overstated, uniformly. Estimates to guide placement, not tax advice.
+      </p>
+      <p className="text-xs text-[var(--muted)] leading-relaxed">
+        Rows marked <span className="whitespace-nowrap">(sheltered)</span> — ISA, SIPP, LISA — pay <span className="font-medium">£0 of this drag now</span> and are excluded from "Annual tax drag now"; the percentage shows only what they'd cost if moved to a GIA, used to rank which holdings most deserve the limited shelter. A SIPP defers annual drag exactly like an ISA, but its withdrawals are later taxed as income — so where you have a choice, put your highest-growth holdings in the ISA and use SIPP room for lower-growth or income assets.
       </p>
     </div>
   );
