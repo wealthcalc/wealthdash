@@ -20,6 +20,7 @@ function CgtSection(props) {
   const carried = useAppStore((s) => s.carried), setCarried = useAppStore((s) => s.setCarried);
   const prices = useAppStore((s) => s.prices), setPrices = useAppStore((s) => s.setPrices);
   const secMeta = useAppStore((s) => s.secMeta);
+  const incomeEntries = useAppStore((s) => s.incomeEntries);
   const allTxns = useAppStore((s) => s.txns), setTxns = useAppStore((s) => s.setTxns);
   const [sub, setSub] = useState(() => store.get("cgt.cgtsubtab", "summary"));
   React.useEffect(() => store.set("cgt.cgtsubtab", sub), [sub]);
@@ -30,7 +31,7 @@ function CgtSection(props) {
         active={sub} onChange={setSub}
       />
       {sub === "summary" && <CgtTab {...{ taxYears, activeYear, setYear, yearDisposals, liab, income, setIncome, carried, setCarried, carryForward, exemptGiltDisposalCount }} />}
-      {sub === "location" && <LocationTab {...{ positions: positions || [], secMeta, income }} />}
+      {sub === "location" && <LocationTab {...{ positions: positions || [], secMeta, income, incomeEntries }} />}
       {sub === "planning" && <PlanningTab {...{ pools, prices, setPrices, disposals, txns, income }} />}
       {sub === "bedisa" && <BedIsaTab {...{ pools, prices, disposals, income, allTxns, secMeta, setTxns }} />}
       {sub === "rebalance" && <RebalanceTab {...{ positions: positions || [], disposals, income }} />}
@@ -45,8 +46,8 @@ function CgtSection(props) {
 // estimated annual tax drag of each holding if held in the GIA, the
 // minimum drag achievable given current shelter capacity, and the moves
 // that close the gap. The Bed & ISA tab prices any actual move.
-function LocationTab({ positions = [], secMeta = {}, income = 0 }) {
-  const plan = useMemo(() => locationPlan({ positions, secMeta, income }), [positions, secMeta, income]);
+function LocationTab({ positions = [], secMeta = {}, income = 0, incomeEntries = [] }) {
+  const plan = useMemo(() => locationPlan({ positions, secMeta, income, incomeEntries, today: todayISO() }), [positions, secMeta, income, incomeEntries]);
   if (!plan.rows.length) return <Empty msg="No priced holdings yet — asset location needs market values." />;
   const pctFmt = (x) => (x * 100).toFixed(2) + "%";
   return (
@@ -72,7 +73,7 @@ function LocationTab({ positions = [], secMeta = {}, income = 0 }) {
       <div className="rounded-xl border border-[var(--border)] overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="bg-[var(--panel2)] text-[var(--muted)] text-xs uppercase tracking-wide">
-            <tr>{["Holding", "Wrapper", "Value", "GIA drag %/yr", "GIA drag £/yr"].map((h, i) => (
+            <tr>{["Holding", "Wrapper", "Value", "Drag %/yr (if in GIA)", "Drag £/yr (if in GIA)"].map((h, i) => (
               <th key={h} className={"px-3 py-2 font-medium " + (i <= 1 ? "text-left" : "text-right")}>{h}</th>
             ))}</tr>
           </thead>
@@ -82,15 +83,18 @@ function LocationTab({ positions = [], secMeta = {}, income = 0 }) {
                 <td className="px-3 py-2 font-medium">{r.ticker}</td>
                 <td className="px-3 py-2 text-[var(--muted)]">{r.wrapper}{r.sheltered ? " (sheltered)" : ""}</td>
                 <td className="px-3 py-2 num text-right">{gbp0(r.value)}</td>
-                <td className="px-3 py-2 num text-right">{pctFmt(r.dragPct)}</td>
-                <td className={"px-3 py-2 num text-right " + (!r.sheltered && r.dragGbp > 100 ? "text-[var(--loss)]" : "")}>{r.sheltered ? `(${gbp0(r.dragGbp)})` : gbp0(r.dragGbp)}</td>
+                <td className={"px-3 py-2 num text-right " + (r.sheltered ? "text-[var(--muted)]" : "")}>{pctFmt(r.dragPct)}{r.yieldSource === "assumed" ? <span className="text-[var(--muted)]" title="Yield is a kind-based assumption — no payment history for this holding yet"> †</span> : r.yieldSource === "override" ? <span className="text-[var(--muted)]" title="Yield manually overridden in this holding's metadata"> ◊</span> : null}</td>
+                <td className={"px-3 py-2 num text-right " + (r.sheltered ? "text-[var(--muted)]" : (r.dragGbp > 100 ? "text-[var(--loss)]" : ""))}>{r.sheltered ? "£0 now" : gbp0(r.dragGbp)}</td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
       <p className="text-xs text-[var(--muted)] leading-relaxed">
-        Drag = income yield × your marginal rate ({(plan.rates.dividend * 100).toFixed(2)}% dividends / {(plan.rates.interest * 100).toFixed(0)}% interest at your income) + expected growth × {(plan.rates.cgt * 100).toFixed(0)}% CGT × 0.5 realisation discount. Yields/growth are kind-based assumptions (override per security via a yieldPct in its metadata); individual gilts are CGT-exempt, which is why low-coupon gilts belong OUTSIDE the shelter. Dividend allowance and PSA aren't netted per holding — the drag is slightly overstated, uniformly. Estimates to guide placement, not tax advice.
+        Drag = income yield × your marginal rate ({(plan.rates.dividend * 100).toFixed(2)}% dividends / {(plan.rates.interest * 100).toFixed(0)}% interest at your income) + expected growth × {(plan.rates.cgt * 100).toFixed(0)}% CGT × 0.5 realisation discount. Income yield uses each holding's actual trailing-12-month dividends/interest where a payment history exists; <span className="whitespace-nowrap">† = a kind-based assumption</span> (no payments yet, so same-type holdings share a figure), <span className="whitespace-nowrap">◊ = a manual override</span>. Growth is always a kind assumption. Individual gilts are CGT-exempt, which is why low-coupon gilts belong OUTSIDE the shelter. Dividend allowance and PSA aren't netted per holding — the drag is slightly overstated, uniformly. Estimates to guide placement, not tax advice.
+      </p>
+      <p className="text-xs text-[var(--muted)] leading-relaxed">
+        Rows marked <span className="whitespace-nowrap">(sheltered)</span> — ISA, SIPP, LISA — pay <span className="font-medium">£0 of this drag now</span> and are excluded from "Annual tax drag now"; the percentage shows only what they'd cost if moved to a GIA, used to rank which holdings most deserve the limited shelter. A SIPP defers annual drag exactly like an ISA, but its withdrawals are later taxed as income — so where you have a choice, put your highest-growth holdings in the ISA and use SIPP room for lower-growth or income assets.
       </p>
     </div>
   );
@@ -620,14 +624,18 @@ function PlanningTab({ pools, prices, setPrices, disposals, txns, income }) {
   );
 }
 
-/* Multi-year gain-harvesting: stagger disposals to soak up each year's AEA
-   (and optionally basic-band room) and show how long an embedded gain takes to wash. */
+/* Multi-year disposal optimiser: stagger realisation of an embedded gain
+   across tax years so each year's AEA (and, where there is any, basic-rate
+   band room at 18%) does the work. Two modes — sell down for cash, or wash
+   (sell & rebuy) to reset base cost while keeping the position. */
 function MultiYearOptimiser({ pools, prices, income }) {
   const yearNow = ukTaxYear(todayISO());
   const [startYear, setStartYear] = useState(yearNow);
   const [years, setYears] = useState(10);
   const [useBasicBand, setUseBasicBand] = useState(false);
   const [growth, setGrowth] = useState(0);
+  const [mode, setMode] = useState("selldown");
+  const wash = mode === "wash";
 
   const startOpts = useMemo(() => { const a = []; let y = yearNow; for (let i = 0; i < 4; i++) { a.push(y); y = nextTaxYear(y); } return a; }, [yearNow]);
   const holdings = useMemo(() => Object.keys(pools).filter((t) => pools[t].qty > 1e-6).map((t) => {
@@ -635,29 +643,54 @@ function MultiYearOptimiser({ pools, prices, income }) {
     return { ticker: t, qty, cost, price: (p != null && p !== "" && !isNaN(+p)) ? +p : NaN };
   }).filter((h) => isFinite(h.price) && h.price > 0), [pools, prices]);
 
+  // Band room doesn't depend on the toggle — probe it so we can honestly
+  // enable/disable the 18% option rather than showing a tick that does nothing.
+  const bandRoom = useMemo(() => {
+    if (!holdings.length) return 0;
+    try { return optimiseDisposals({ holdings, startYear, years: 1, income: +income || 0 }).bandRoomStart; }
+    catch { return 0; }
+  }, [holdings, startYear, income]);
+  const bandAvailable = bandRoom > 1;
+  const effUseBand = useBasicBand && bandAvailable;
+
   const result = useMemo(() => {
     if (!holdings.length) return null;
-    try { return optimiseDisposals({ holdings, startYear, years: Math.max(1, Math.min(40, +years || 1)), income: +income || 0, useBasicBand, growth: (+growth || 0) / 100 }); }
+    try { return optimiseDisposals({ holdings, startYear, years: Math.max(1, Math.min(40, +years || 1)), income: +income || 0, useBasicBand: effUseBand, growth: (+growth || 0) / 100, mode }); }
     catch { return null; }
-  }, [holdings, startYear, years, income, useBasicBand, growth]);
+  }, [holdings, startYear, years, income, effUseBand, growth, mode]);
 
   const priced = holdings.length;
-  const totalTax = result ? result.schedule.reduce((s, r) => s + r.tax, 0) : 0;
 
   return (
     <div className="space-y-3 pt-2">
       <h3 className="text-sm font-semibold flex items-center gap-2"><Wand2 size={15} /> Multi-year disposal optimiser</h3>
       <p className="text-xs text-[var(--muted)]">
-        Staggers sales across tax years to harvest gains up to each year's annual exempt amount (tax-free){useBasicBand ? ", plus basic-rate band room at 18%," : ""} then resets base cost by rebuying at market (bed-&amp;-ISA or bed-&amp;-spouse to sidestep the 30-day rule). Uses your {priced} priced GIA holding{priced === 1 ? "" : "s"}.
+        Stages realisation of your embedded gain across tax years so each year's annual exempt amount{effUseBand ? ", plus the room left in your basic-rate band (taxed at 18%)," : ""} does the work. {wash
+          ? "Wash mode keeps the position: it sells and rebuys at market (bed-&-ISA or bed-&-spouse to sidestep the 30-day rule) to lift the base cost — so quantity is unchanged and there are no net proceeds."
+          : "Sell-down mode actually sells the appreciated shares for cash: quantity falls each year and you never sell more than you hold."} Uses your {priced} priced GIA holding{priced === 1 ? "" : "s"}.
       </p>
 
-      <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3">
+      <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3 space-y-3">
+        <div className="flex flex-wrap gap-1">
+          {[["selldown", "Sell down for cash"], ["wash", "Wash & keep (reset base cost)"]].map(([k, label]) => (
+            <button key={k} onClick={() => setMode(k)}
+              className={"text-xs px-3 py-1.5 rounded-lg border " + (mode === k ? "border-[var(--accent)] bg-[color:color-mix(in_srgb,var(--accent)_15%,transparent)] text-[var(--fg)]" : "border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)]")}>{label}</button>
+          ))}
+        </div>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 items-end">
           <Field label="Start tax year"><select value={startYear} onChange={(e) => setStartYear(e.target.value)} className="input w-full">{startOpts.map((y) => <option key={y}>{y}</option>)}</select></Field>
           <Field label="Horizon (years)"><input type="number" min="1" max="40" value={years} onChange={(e) => setYears(e.target.value)} className="input num w-full" /></Field>
           <Field label="Assumed growth %/yr"><input type="number" step="0.5" value={growth} onChange={(e) => setGrowth(e.target.value)} className="input num w-full" /></Field>
-          <label className="flex items-center gap-2 text-sm cursor-pointer pb-2"><input type="checkbox" checked={useBasicBand} onChange={(e) => setUseBasicBand(e.target.checked)} className="accent-[var(--accent)]" /> Use basic-rate band (18%)</label>
+          <label className={"flex items-center gap-2 text-sm pb-2 " + (bandAvailable ? "cursor-pointer" : "cursor-not-allowed opacity-50")} title={bandAvailable ? "" : "Your income fills the basic-rate band, so there's no 18% room — gains above the allowance would be taxed at 24%."}>
+            <input type="checkbox" checked={effUseBand} disabled={!bandAvailable} onChange={(e) => setUseBasicBand(e.target.checked)} className="accent-[var(--accent)]" /> Also use basic-rate band (18%)
+          </label>
         </div>
+        {!bandAvailable && (
+          <p className="text-xs text-[var(--muted)]">Your income leaves <span className="font-medium">no basic-rate band</span>, so the 18% option is off — any gain above the annual exempt amount would be taxed at 24%, not 18%. The plan below harvests strictly within the tax-free allowance each year.</p>
+        )}
+        {bandAvailable && (
+          <p className="text-xs text-[var(--muted)]">You have about <span className="font-medium">{gbp(bandRoom).replace(".00", "")}</span> of basic-rate band room; ticking the box adds it to each year's harvest, with that slice taxed at 18%.</p>
+        )}
       </div>
 
       {!priced && <Empty msg="Set current prices on the holdings above (or the Holdings tab) to run the optimiser." />}
@@ -666,15 +699,15 @@ function MultiYearOptimiser({ pools, prices, income }) {
         <>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <Stat label="Embedded gain now" value={gbp(result.startEmbedded)} tone={result.startEmbedded >= 0 ? "gain" : "loss"} />
-            <Stat label={useBasicBand ? "Gain washed over horizon" : "Gain washed tax-free"} value={gbp(result.totalWashed)} big tone="gain" />
-            <Stat label="Years to clear" value={result.yearsToClear ? `${result.yearsToClear}` : `>${years}`} sub={result.yearsToClear ? "" : "still embedded gain left"} />
-            <Stat label="Tax over plan" value={gbp(totalTax)} tone={totalTax > 0 ? "loss" : undefined} sub={useBasicBand ? "basic-band 18%" : "within AEA"} />
+            <Stat label={wash ? "Cash raised" : "Cash raised over plan"} value={gbp(result.totalProceeds)} big tone={wash ? undefined : "gain"} sub={wash ? "£0 net — rebought" : "from selling appreciated shares"} />
+            <Stat label="Years to clear the gain" value={result.yearsToClear ? `${result.yearsToClear}` : `>${years}`} sub={result.yearsToClear ? "" : `${gbp(result.remainingAfter)} gain still embedded`} />
+            <Stat label="Tax over plan" value={gbp(result.totalTax)} tone={result.totalTax > 0 ? "loss" : undefined} sub={effUseBand ? "basic-band slice at 18%" : "all within the allowance"} />
           </div>
 
           <div className="rounded-xl border border-[var(--border)] overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="bg-[var(--panel2)] text-[var(--muted)] text-xs uppercase tracking-wide">
-                <tr>{["Tax year", "Harvest", "AEA used", "Tax", "Sell", "Cumulative washed", "Gain still embedded"].map((h, i) => (
+                <tr>{["Tax year", "Gain realised", "AEA used", "Tax", wash ? "Sell & rebuy" : "Sell", wash ? "Proceeds (gross)" : "Cash raised", wash ? "Gain still embedded" : "Gain / units left"].map((h, i) => (
                   <th key={i} className={"px-3 py-2 font-medium " + (i === 0 || i === 4 ? "text-left" : "text-right")}>{h}</th>
                 ))}</tr>
               </thead>
@@ -686,15 +719,17 @@ function MultiYearOptimiser({ pools, prices, income }) {
                     <td className="px-3 py-2 num text-right text-[var(--muted)]">{gbp(r.aeaUsed).replace(".00", "")}</td>
                     <td className={"px-3 py-2 num text-right " + (r.tax > 0 ? "text-[var(--loss)]" : "text-[var(--muted)]")}>{r.tax > 0 ? gbp(r.tax) : "—"}</td>
                     <td className="px-3 py-2 text-[var(--muted)] text-xs">{r.sells.map((s) => `${num(s.shares, s.shares % 1 ? 2 : 0)} ${s.ticker}`).join(", ") || "—"}</td>
-                    <td className="px-3 py-2 num text-right text-[var(--muted)]">{gbp(r.cumulativeWashed)}</td>
-                    <td className="px-3 py-2 num text-right">{gbp(r.remainingUnrealised)}</td>
+                    <td className="px-3 py-2 num text-right text-[var(--muted)]">{gbp(r.proceeds)}</td>
+                    <td className="px-3 py-2 num text-right">{wash ? gbp(r.remainingUnrealised) : <span title="embedded gain still to realise">{gbp(r.remainingUnrealised)} <span className="text-[var(--muted)]">/ {num(r.remainingQty, r.remainingQty % 1 ? 2 : 0)}u</span></span>}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
           <p className="text-xs text-[var(--muted)]">
-            Each year's harvest sells the highest gain-per-share holdings first and assumes you rebuy at the same price to reset base cost. Growth compounds the price of unsold shares. This models the CGT wash only — dealing costs, spreads and stamp duty on rebuys aren't included, and a bed-&amp;-ISA rebuy also consumes ISA allowance.
+            Each year harvests the highest gain-per-share holdings first (crystallising the most latent gain per £ of allowance). Growth compounds the price of unsold shares. {wash
+              ? "Wash mode assumes you rebuy the same line at market to reset base cost, so the same holding is sold and repurchased year after year — cumulative shares transacted exceed the position, and dealing costs, spreads, stamp duty and any ISA allowance a rebuy consumes aren't modelled."
+              : "Sell-down decrements each holding as it goes, so cumulative shares sold can never exceed what you own; \"cash raised\" is gross proceeds before dealing costs and spreads."} Not tax advice.
           </p>
         </>
       )}
