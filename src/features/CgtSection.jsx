@@ -626,16 +626,22 @@ function PlanningTab({ pools, prices, setPrices, disposals, txns, income }) {
 
 /* Multi-year disposal optimiser: stagger realisation of an embedded gain
    across tax years so each year's AEA (and, where there is any, basic-rate
-   band room at 18%) does the work. Two modes — sell down for cash, or wash
-   (sell & rebuy) to reset base cost while keeping the position. */
+   band room at 18%) does the work. Three strategies (mode × objective):
+   sell down for cash, sell down keeping the most units, or wash & keep. */
+const MYO_STRATEGIES = [
+  { key: "cash", mode: "selldown", objective: "cash", label: "Sell for cash", blurb: "Maximise cash raised — sells the highest cost-basis lots first, so each year's allowance frees the most spending money and the position exits fastest." },
+  { key: "gain", mode: "selldown", objective: "gain", label: "Sell, keep most units", blurb: "Maximise gain cleared per share sold — crystallises your biggest latent gains first, so the fewest units leave the market and the most stays invested." },
+  { key: "wash", mode: "wash", objective: "gain", label: "Wash & keep", blurb: "Keep the whole position: sell and rebuy at market (bed-&-ISA / bed-&-spouse) to lift the base cost. Quantity is unchanged and there's no net cash — it just resets your future CGT." },
+];
 function MultiYearOptimiser({ pools, prices, income }) {
   const yearNow = ukTaxYear(todayISO());
   const [startYear, setStartYear] = useState(yearNow);
   const [years, setYears] = useState(10);
   const [useBasicBand, setUseBasicBand] = useState(false);
   const [growth, setGrowth] = useState(0);
-  const [mode, setMode] = useState("selldown");
-  const wash = mode === "wash";
+  const [strategyKey, setStrategyKey] = useState("cash");
+  const strategy = MYO_STRATEGIES.find((s) => s.key === strategyKey) || MYO_STRATEGIES[0];
+  const wash = strategy.mode === "wash";
 
   const startOpts = useMemo(() => { const a = []; let y = yearNow; for (let i = 0; i < 4; i++) { a.push(y); y = nextTaxYear(y); } return a; }, [yearNow]);
   const holdings = useMemo(() => Object.keys(pools).filter((t) => pools[t].qty > 1e-6).map((t) => {
@@ -655,9 +661,9 @@ function MultiYearOptimiser({ pools, prices, income }) {
 
   const result = useMemo(() => {
     if (!holdings.length) return null;
-    try { return optimiseDisposals({ holdings, startYear, years: Math.max(1, Math.min(40, +years || 1)), income: +income || 0, useBasicBand: effUseBand, growth: (+growth || 0) / 100, mode }); }
+    try { return optimiseDisposals({ holdings, startYear, years: Math.max(1, Math.min(40, +years || 1)), income: +income || 0, useBasicBand: effUseBand, growth: (+growth || 0) / 100, mode: strategy.mode, objective: strategy.objective }); }
     catch { return null; }
-  }, [holdings, startYear, years, income, effUseBand, growth, mode]);
+  }, [holdings, startYear, years, income, effUseBand, growth, strategy.mode, strategy.objective]);
 
   const priced = holdings.length;
 
@@ -665,18 +671,17 @@ function MultiYearOptimiser({ pools, prices, income }) {
     <div className="space-y-3 pt-2">
       <h3 className="text-sm font-semibold flex items-center gap-2"><Wand2 size={15} /> Multi-year disposal optimiser</h3>
       <p className="text-xs text-[var(--muted)]">
-        Stages realisation of your embedded gain across tax years so each year's annual exempt amount{effUseBand ? ", plus the room left in your basic-rate band (taxed at 18%)," : ""} does the work. {wash
-          ? "Wash mode keeps the position: it sells and rebuys at market (bed-&-ISA or bed-&-spouse to sidestep the 30-day rule) to lift the base cost — so quantity is unchanged and there are no net proceeds."
-          : "Sell-down mode actually sells the appreciated shares for cash: quantity falls each year and you never sell more than you hold."} Uses your {priced} priced GIA holding{priced === 1 ? "" : "s"}.
+        Stages realisation of your embedded gain across tax years so each year's annual exempt amount{effUseBand ? ", plus the room left in your basic-rate band (taxed at 18%)," : ""} does the work. Uses your {priced} priced GIA holding{priced === 1 ? "" : "s"}.
       </p>
 
       <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3 space-y-3">
         <div className="flex flex-wrap gap-1">
-          {[["selldown", "Sell down for cash"], ["wash", "Wash & keep (reset base cost)"]].map(([k, label]) => (
-            <button key={k} onClick={() => setMode(k)}
-              className={"text-xs px-3 py-1.5 rounded-lg border " + (mode === k ? "border-[var(--accent)] bg-[color:color-mix(in_srgb,var(--accent)_15%,transparent)] text-[var(--fg)]" : "border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)]")}>{label}</button>
+          {MYO_STRATEGIES.map((s) => (
+            <button key={s.key} onClick={() => setStrategyKey(s.key)}
+              className={"text-xs px-3 py-1.5 rounded-lg border " + (strategyKey === s.key ? "border-[var(--accent)] bg-[color:color-mix(in_srgb,var(--accent)_15%,transparent)] text-[var(--fg)]" : "border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)]")}>{s.label}</button>
           ))}
         </div>
+        <p className="text-xs text-[var(--muted)]">{strategy.blurb}</p>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 items-end">
           <Field label="Start tax year"><select value={startYear} onChange={(e) => setStartYear(e.target.value)} className="input w-full">{startOpts.map((y) => <option key={y}>{y}</option>)}</select></Field>
           <Field label="Horizon (years)"><input type="number" min="1" max="40" value={years} onChange={(e) => setYears(e.target.value)} className="input num w-full" /></Field>
@@ -699,7 +704,9 @@ function MultiYearOptimiser({ pools, prices, income }) {
         <>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <Stat label="Embedded gain now" value={gbp(result.startEmbedded)} tone={result.startEmbedded >= 0 ? "gain" : "loss"} />
-            <Stat label={wash ? "Cash raised" : "Cash raised over plan"} value={gbp(result.totalProceeds)} big tone={wash ? undefined : "gain"} sub={wash ? "£0 net — rebought" : "from selling appreciated shares"} />
+            {wash
+              ? <Stat label="Gain washed over plan" value={gbp(result.totalRealised)} big tone="gain" sub="base cost reset — no net cash" />
+              : <Stat label="Cash raised over plan" value={gbp(result.totalProceeds)} big tone="gain" sub="gross, before dealing costs" />}
             <Stat label="Years to clear the gain" value={result.yearsToClear ? `${result.yearsToClear}` : `>${years}`} sub={result.yearsToClear ? "" : `${gbp(result.remainingAfter)} gain still embedded`} />
             <Stat label="Tax over plan" value={gbp(result.totalTax)} tone={result.totalTax > 0 ? "loss" : undefined} sub={effUseBand ? "basic-band slice at 18%" : "all within the allowance"} />
           </div>
@@ -707,7 +714,7 @@ function MultiYearOptimiser({ pools, prices, income }) {
           <div className="rounded-xl border border-[var(--border)] overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="bg-[var(--panel2)] text-[var(--muted)] text-xs uppercase tracking-wide">
-                <tr>{["Tax year", "Gain realised", "AEA used", "Tax", wash ? "Sell & rebuy" : "Sell", wash ? "Proceeds (gross)" : "Cash raised", wash ? "Gain still embedded" : "Gain / units left"].map((h, i) => (
+                <tr>{["Tax year", "Gain realised", "AEA used", "Tax", wash ? "Sell & rebuy" : "Sell", ...(wash ? [] : ["Cash raised"]), wash ? "Gain still embedded" : "Value left to sell"].map((h, i) => (
                   <th key={i} className={"px-3 py-2 font-medium " + (i === 0 || i === 4 ? "text-left" : "text-right")}>{h}</th>
                 ))}</tr>
               </thead>
@@ -719,17 +726,17 @@ function MultiYearOptimiser({ pools, prices, income }) {
                     <td className="px-3 py-2 num text-right text-[var(--muted)]">{gbp(r.aeaUsed).replace(".00", "")}</td>
                     <td className={"px-3 py-2 num text-right " + (r.tax > 0 ? "text-[var(--loss)]" : "text-[var(--muted)]")}>{r.tax > 0 ? gbp(r.tax) : "—"}</td>
                     <td className="px-3 py-2 text-[var(--muted)] text-xs">{r.sells.map((s) => `${num(s.shares, s.shares % 1 ? 2 : 0)} ${s.ticker}`).join(", ") || "—"}</td>
-                    <td className="px-3 py-2 num text-right text-[var(--muted)]">{gbp(r.proceeds)}</td>
-                    <td className="px-3 py-2 num text-right">{wash ? gbp(r.remainingUnrealised) : <span title="embedded gain still to realise">{gbp(r.remainingUnrealised)} <span className="text-[var(--muted)]">/ {num(r.remainingQty, r.remainingQty % 1 ? 2 : 0)}u</span></span>}</td>
+                    {!wash && <td className="px-3 py-2 num text-right text-[var(--muted)]">{gbp(r.proceeds)}</td>}
+                    <td className="px-3 py-2 num text-right" title={wash ? "embedded gain still to realise" : "market value of holdings that still carry a gain"}>{gbp(wash ? r.remainingUnrealised : r.remainingValue)}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
           <p className="text-xs text-[var(--muted)]">
-            Each year harvests the highest gain-per-share holdings first (crystallising the most latent gain per £ of allowance). Growth compounds the price of unsold shares. {wash
-              ? "Wash mode assumes you rebuy the same line at market to reset base cost, so the same holding is sold and repurchased year after year — cumulative shares transacted exceed the position, and dealing costs, spreads, stamp duty and any ISA allowance a rebuy consumes aren't modelled."
-              : "Sell-down decrements each holding as it goes, so cumulative shares sold can never exceed what you own; \"cash raised\" is gross proceeds before dealing costs and spreads."} Not tax advice.
+            {wash
+              ? "Wash & keep sells and rebuys the same line at market to reset base cost, so the position is sold and repurchased year after year — the shares shown are gross churn, not a net disposal, and dealing costs, spreads, stamp duty and any ISA allowance a rebuy consumes aren't modelled. There are no net proceeds."
+              : "Sell-down decrements each holding as it goes, so cumulative shares sold can never exceed what you own. \"Value left to sell\" is the market value of holdings that still carry a gain; \"cash raised\" is gross, before dealing costs and spreads."} The gain sheltered each year is capped by your allowance regardless of strategy — the choice changes cash raised and units kept, not the tax. Not tax advice.
           </p>
         </>
       )}

@@ -207,6 +207,40 @@ test("wash mode keeps qty constant and legitimately re-transacts more than held"
   assert.ok(totalShares > 100, "cumulative sell-and-rebuy exceeds the holding — expected for a wash");
 });
 
+test("objective 'cash' raises more cash than 'gain' for the same gain sheltered", () => {
+  // Two lots, same £ value, different cost basis. HICOST has a low gain-per-
+  // share (lots of proceeds per £ of gain); HIGAIN has a high one.
+  const holdings = [
+    { ticker: "HICOST", qty: 100, cost: 9000, price: 100 }, // gps 10, value 10k
+    { ticker: "HIGAIN", qty: 100, cost: 1000, price: 100 }, // gps 90, value 10k
+  ];
+  const cash = optimiseDisposals({ holdings, startYear: "2025/26", income: 50000, years: 1, objective: "cash" });
+  const gain = optimiseDisposals({ holdings, startYear: "2025/26", income: 50000, years: 1, objective: "gain" });
+  // Same gain sheltered (capped by the £3,000 AEA), but cash-first sells the
+  // low-gain lot → far more proceeds and far more units gone.
+  assert.equal(cash.schedule[0].gainRealised, gain.schedule[0].gainRealised);
+  assert.ok(cash.schedule[0].proceeds > gain.schedule[0].proceeds, `${cash.schedule[0].proceeds} !> ${gain.schedule[0].proceeds}`);
+  assert.equal(cash.schedule[0].sells[0].ticker, "HICOST");
+  assert.equal(gain.schedule[0].sells[0].ticker, "HIGAIN");
+});
+
+test("wash mode reports ZERO cash raised, even with growth (no exponential turnover)", () => {
+  // The old model surfaced gross rebuy turnover as 'cash raised', which
+  // ballooned geometrically once growth compounded the price.
+  const holdings = [{ ticker: "AAA", qty: 100, cost: 1000, price: 100 }];
+  const r = optimiseDisposals({ holdings, startYear: "2025/26", income: 50000, years: 10, growth: 0.10, mode: "wash" });
+  assert.equal(r.totalProceeds, 0);
+  assert.ok(r.schedule.every((yr) => yr.proceeds === 0));
+});
+
+test("remainingValue is a £ figure that falls as a position sells down", () => {
+  const r = optimiseDisposals({ holdings: [H("AAA", 100, 1000, 100)], startYear: "2025/26", income: 50000, years: 10 });
+  // starts at full market value (100 × £100), ends at 0 once the gain clears
+  assert.equal(r.schedule[0].remainingValue > 0, true);
+  assert.ok(r.schedule[0].remainingValue < 10000, "some sold in year 1");
+  assert.equal(r.schedule.at(-1).remainingValue, 0);
+});
+
 test("bandRoomStart exposes whether the 18% toggle can do anything", () => {
   // Additional-rate taxpayer: income fills the basic band, so no 18% room.
   assert.equal(optimiseDisposals({ holdings: [H("AAA", 100, 1000, 100)], startYear: "2025/26", income: 200000 }).bandRoomStart, 0);
