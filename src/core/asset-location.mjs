@@ -58,12 +58,49 @@ export function marginalRates(income = 0) {
 
 const SHELTERED = new Set(["ISA", "SIPP", "LISA"]);
 
+// Real trailing-income yield per security, from the dividend/interest ledger.
+// yieldPct = trailing-`windowDays` income for a ticker ÷ its current market
+// value (aggregated across every wrapper — yield is a property of the security,
+// not where it's held). incomeKind is whichever of interest/dividend dominates,
+// so a bond fund that actually pays interest is taxed at interest rates even if
+// its `kind` wasn't set. Feeds giaDragPct so holdings stop sharing a single
+// kind-default figure once there's a payment history. Pure, node-tested.
+export function yieldsByTicker({ incomeEntries = [], positions = [], today, windowDays = 365 } = {}) {
+  if (!today) throw new Error("yieldsByTicker requires today");
+  const cutoff = new Date(today); cutoff.setDate(cutoff.getDate() - windowDays);
+  const cutISO = cutoff.toISOString().slice(0, 10);
+  const mv = {};
+  for (const p of positions) {
+    if (!p.priced || !(p.marketValue > 0) || !p.ticker) continue;
+    mv[p.ticker] = (mv[p.ticker] || 0) + p.marketValue;
+  }
+  const inc = {};
+  for (const e of incomeEntries) {
+    if (!e.date || !e.ticker || !e.amount || e.date < cutISO || e.date > today) continue;
+    const o = inc[e.ticker] || (inc[e.ticker] = { div: 0, int: 0 });
+    if (e.kind === "interest") o.int += +e.amount; else o.div += +e.amount;
+  }
+  const out = {};
+  for (const [ticker, o] of Object.entries(inc)) {
+    const value = mv[ticker];
+    if (!(value > 0)) continue; // no live holding to divide by → can't form a yield
+    const total = o.div + o.int;
+    out[ticker] = { yieldPct: r2((total / value) * 100), incomeKind: o.int > o.div ? "interest" : "dividend" };
+  }
+  return out;
+}
+
 // Annual GIA tax drag, as a FRACTION of value, for one holding.
-export function giaDragPct(position, secMeta = {}, rates, { realisationFactor = REALISATION_FACTOR } = {}) {
+// Yield priority: an explicit secMeta.yieldPct (manual override) beats a real
+// ledger-derived yield, which beats the kind default.
+export function giaDragPct(position, secMeta = {}, rates, { realisationFactor = REALISATION_FACTOR, realYields = {} } = {}) {
   const meta = secMeta[position.ticker] || {};
+  const real = realYields[position.ticker];
   const kind = position.kind || "fund";
   const a = KIND_ASSUMPTIONS[kind] || KIND_ASSUMPTIONS.fund;
-  let yieldPct = Number.isFinite(+meta.yieldPct) ? +meta.yieldPct : a.incomeYield;
+  let yieldPct = Number.isFinite(+meta.yieldPct) ? +meta.yieldPct
+    : (real && Number.isFinite(+real.yieldPct)) ? +real.yieldPct
+    : a.incomeYield;
   // A gilt's income drag is its COUPON, not a generic 3.5% bond yield. A
   // low-coupon gilt held below par returns mostly CGT-exempt redemption
   // gain (s115 TCGA) and pays little interest, so its true GIA drag is
@@ -71,24 +108,31 @@ export function giaDragPct(position, secMeta = {}, rates, { realisationFactor = 
   // (3.5% × a 45% additional rate = 1.58% of phantom drag). Use the real
   // coupon when secMeta carries it.
   if (kind === "gilt" && Number.isFinite(+meta.coupon)) yieldPct = +meta.coupon;
-  const incomeRate = a.incomeKind === "interest" ? rates.interest : rates.dividend;
+  // Income type: real ledger data (does it actually pay interest or dividends?)
+  // beats the kind assumption.
+  const incomeKind = real && real.incomeKind ? real.incomeKind : a.incomeKind;
+  const incomeRate = incomeKind === "interest" ? rates.interest : rates.dividend;
   const cgtExempt = a.cgtExempt || position.cgtExempt;
   const capitalDrag = cgtExempt ? 0 : (a.growth / 100) * rates.cgt * realisationFactor;
   return (yieldPct / 100) * incomeRate + capitalDrag;
 }
 
-export function locationPlan({ positions = [], secMeta = {}, income = 0 } = {}) {
+export function locationPlan({ positions = [], secMeta = {}, income = 0, incomeEntries = [], today } = {}) {
   const rates = marginalRates(income);
+  const realYields = today ? yieldsByTicker({ incomeEntries, positions, today }) : {};
   const rows = [];
   for (const p of positions) {
     if (!p.priced || !(p.marketValue > 0)) continue;
     const wrapper = p.wrapper === "VCT" ? "GIA" : p.wrapper; // VCT is its own shelter; treat as unshelterable
-    const dragPct = giaDragPct(p, secMeta, rates);
+    const dragPct = giaDragPct(p, secMeta, rates, { realYields });
+    const yieldSource = Number.isFinite(+(secMeta[p.ticker] || {}).yieldPct) ? "override"
+      : realYields[p.ticker] ? "actual" : "assumed";
     rows.push({
       ticker: p.ticker, wrapper: p.wrapper, kind: p.kind, value: r2(p.marketValue),
       dragPct,
       dragGbp: r2(p.marketValue * dragPct),
       sheltered: SHELTERED.has(wrapper),
+      yieldSource, // "override" | "actual" | "assumed" — how the income yield was sourced
     });
   }
   if (!rows.length) return { rows: [], currentDrag: 0, minimalDrag: 0, savingPerYear: 0, moves: [], rates };

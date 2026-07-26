@@ -125,33 +125,75 @@ export function investmentIncomeTax({ salary = 0, interest = 0, dividends = 0, y
   return { year, assumed: !!c.assumed, interestTax: r2(interestTax), dividendTax: r2(dividendTax), tax: r2(interestTax + dividendTax), personalAllowance: pa, band, divAllow: c.divAllow, psa };
 }
 
-/* ---- Multi-year AEA disposal / gain-harvesting optimiser. Verified in
-   uk-tax.test.mjs. ---- */
+/* ---- Multi-year AEA disposal optimiser. Staggers realisation of an
+   embedded gain across tax years so each year's annual exempt amount (and,
+   where the taxpayer has any, the room left in their basic-rate band, taxed
+   at 18%) does the work. Verified in uk-tax.test.mjs.
+
+   Two modes, because they answer different questions:
+   - "selldown" (default): actually SELL the appreciated shares to raise
+     cash. Quantity DECREMENTS each year and can never fall below zero, so
+     the cumulative shares sold can never exceed what's held — this is the
+     bug the old wash-only model had (it re-inflated the position by
+     assuming a rebuy every year, so multi-year "disposals" summed to more
+     than the holding). Reports the proceeds (cash) raised.
+   - "wash": bed-&-ISA / bed-&-spouse — sell AND rebuy at market to reset
+     the base cost while KEEPING the position. Quantity is unchanged; the
+     embedded gain shrinks because avg cost rises. Here the cumulative
+     shares transacted legitimately exceeds the holding (you rebuy each
+     year) — the UI labels it as a repurchase, not a net disposal, and
+     there are no net proceeds.
+
+   The 18% band: `useBasicBand` widens each year's harvestable gain by the
+   room left in the basic-rate band (gains there are taxed at 18%). A
+   taxpayer whose income already fills the basic-rate band has ZERO room, so
+   the toggle correctly does nothing for them — the caller reads
+   `bandRoomStart` to disable/explain it rather than showing a dead tick.
+   ---- */
 export const nextTaxYear = (y) => { const a = Number(y.split("/")[0]) + 1; return `${a}/${String(a + 1).slice(-2)}`; };
-export function optimiseDisposals({ holdings, startYear, years = 10, income = 0, useBasicBand = false, growth = 0 }) {
+const _r2 = (x) => Math.round(x * 100) / 100;
+const _r4 = (x) => Math.round(x * 1e4) / 1e4;
+export function optimiseDisposals({ holdings, startYear, years = 10, income = 0, useBasicBand = false, growth = 0, mode = "selldown" }) {
+  const wash = mode === "wash";
   let hs = holdings.map((h) => ({ ticker: h.ticker, qty: +h.qty, avgCost: +h.qty ? +h.cost / +h.qty : 0, price: +h.price })).filter((h) => h.qty > 0 && isFinite(h.price) && h.price > 0);
   const embedded = () => hs.reduce((s, h) => s + Math.max(0, h.qty * (h.price - h.avgCost)), 0);
-  const startEmbedded = embedded(); const schedule = []; let y = startYear, totalWashed = 0, yearsToClear = null;
+  const heldQty = () => hs.reduce((s, h) => s + h.qty, 0);
+  // Band room at the start year (income constant across the horizon) — lets
+  // the caller show whether the 18% toggle can do anything at all.
+  const startCfg = cfgFor(startYear);
+  const bandRoomStart = Math.max(0, startCfg.basicLimit - Math.max(0, income - paFor(startCfg.pa, income)));
+  const startEmbedded = embedded(); const schedule = [];
+  let y = startYear, totalRealised = 0, totalProceeds = 0, totalTax = 0, yearsToClear = null;
   for (let i = 0; i < years; i++) {
     const cfg = cfgFor(y); const pa = paFor(cfg.pa, income); const taxableIncome = Math.max(0, income - pa);
-    const bandRoom = Math.max(0, cfg.basicLimit - taxableIncome); const rate = cfg.rates[cfg.rates.length - 1];
+    const bandRoom = Math.max(0, cfg.basicLimit - taxableIncome);
+    const basicRate = cfg.rates[cfg.rates.length - 1].basic; // 18% on non-property in current bands
     const gainBudget = cfg.aea + (useBasicBand ? bandRoom : 0);
-    let budgetLeft = gainBudget, realised = 0; const sells = [];
-    const order = hs.map((h, idx) => ({ idx, gps: h.price - h.avgCost })).filter((o) => o.gps > 0).sort((a, b) => b.gps - a.gps);
+    let budgetLeft = gainBudget, realised = 0, proceeds = 0; const sells = [];
+    // Harvest the biggest latent gain-per-share first: crystallises the most
+    // embedded gain for each £ of allowance used.
+    const order = hs.map((h, idx) => ({ idx, gps: h.price - h.avgCost })).filter((o) => o.gps > 1e-9).sort((a, b) => b.gps - a.gps);
     for (const { idx } of order) {
       if (budgetLeft <= 1e-6) break; const h = hs[idx], gps = h.price - h.avgCost;
-      const takeGain = Math.min(h.qty * gps, budgetLeft); const shares = takeGain / gps;
-      h.avgCost = ((h.qty - shares) * h.avgCost + shares * h.price) / h.qty;
-      realised += takeGain; budgetLeft -= takeGain;
-      sells.push({ ticker: h.ticker, shares: Math.round(shares * 1e4) / 1e4, gain: Math.round(takeGain * 100) / 100 });
+      const takeGain = Math.min(h.qty * gps, budgetLeft); const shares = takeGain / gps; // shares <= h.qty always
+      proceeds += shares * h.price; realised += takeGain; budgetLeft -= takeGain;
+      if (wash) h.avgCost = ((h.qty - shares) * h.avgCost + shares * h.price) / h.qty; // keep qty, lift base cost
+      else h.qty = Math.max(0, h.qty - shares);                                         // sell down — never below 0
+      sells.push({ ticker: h.ticker, shares: _r4(shares), gain: _r2(takeGain), proceeds: _r2(shares * h.price) });
     }
     const aeaUsed = Math.min(realised, cfg.aea); const bandGain = Math.max(0, realised - cfg.aea);
-    const tax = Math.round((useBasicBand ? bandGain * rate.basic : 0) * 100) / 100; totalWashed += realised;
+    const tax = _r2(bandGain * basicRate); // band gain is always within the 18% room (budget was capped there)
+    totalRealised += realised; totalProceeds += proceeds; totalTax += tax;
     const remaining = embedded();
-    schedule.push({ year: y, aea: cfg.aea, gainBudget, gainRealised: Math.round(realised * 100) / 100, aeaUsed: Math.round(aeaUsed * 100) / 100, bandGain: Math.round(bandGain * 100) / 100, tax, sells, cumulativeWashed: Math.round(totalWashed * 100) / 100, remainingUnrealised: Math.round(remaining * 100) / 100 });
+    schedule.push({ year: y, aea: cfg.aea, bandRoom: _r2(bandRoom), gainBudget: _r2(gainBudget),
+      gainRealised: _r2(realised), proceeds: _r2(proceeds), aeaUsed: _r2(aeaUsed), bandGain: _r2(bandGain), tax, sells,
+      cumulativeRealised: _r2(totalRealised), cumulativeProceeds: _r2(totalProceeds),
+      remainingUnrealised: _r2(remaining), remainingQty: _r4(heldQty()) });
     if (remaining <= 1e-6 && yearsToClear == null) yearsToClear = i + 1;
     if (remaining <= 1e-6) break;
     if (growth) for (const h of hs) h.price *= 1 + growth; y = nextTaxYear(y);
   }
-  return { schedule, yearsToClear, totalWashed: Math.round(totalWashed * 100) / 100, startEmbedded: Math.round(startEmbedded * 100) / 100, remainingAfter: Math.round(embedded() * 100) / 100 };
+  return { mode, schedule, yearsToClear, bandRoomStart: _r2(bandRoomStart),
+    totalRealised: _r2(totalRealised), totalProceeds: _r2(totalProceeds), totalTax: _r2(totalTax),
+    startEmbedded: _r2(startEmbedded), remainingAfter: _r2(embedded()) };
 }

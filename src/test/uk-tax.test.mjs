@@ -171,9 +171,12 @@ test("embedded gain inside one AEA clears in year one, tax-free", () => {
   const r = optimiseDisposals({ holdings: [H("AAA", 100, 1000, 15)], startYear: "2025/26", income: 50000 });
   assert.equal(r.startEmbedded, 500);
   assert.equal(r.yearsToClear, 1);
-  assert.equal(r.totalWashed, 500);
+  assert.equal(r.totalRealised, 500);
   assert.equal(r.schedule[0].tax, 0);
   assert.equal(r.remainingAfter, 0);
+  // selldown reports the cash raised: 100 shares × £15
+  assert.equal(r.schedule[0].proceeds, 1500);
+  assert.equal(r.totalProceeds, 1500);
 });
 
 test("larger gain staged across successive £3,000 AEAs", () => {
@@ -181,8 +184,34 @@ test("larger gain staged across successive £3,000 AEAs", () => {
   const r = optimiseDisposals({ holdings: [H("AAA", 100, 1000, 100)], startYear: "2025/26", income: 50000, years: 10 });
   assert.equal(r.startEmbedded, 9000);
   assert.equal(r.yearsToClear, 3);
-  assert.equal(r.totalWashed, 9000);
+  assert.equal(r.totalRealised, 9000);
   assert.ok(r.schedule.every((y) => y.tax === 0));
+});
+
+test("selldown NEVER disposes more shares than held across the whole horizon", () => {
+  // The old wash-only model re-inflated the position each year, so multi-year
+  // "disposals" summed to more than the 100 shares actually held. Sell-down
+  // decrements qty, so the cumulative shares sold is bounded by the holding.
+  const r = optimiseDisposals({ holdings: [H("AAA", 100, 1000, 100)], startYear: "2025/26", income: 50000, years: 10 });
+  const totalShares = r.schedule.flatMap((y) => y.sells).reduce((s, x) => s + x.shares, 0);
+  assert.ok(totalShares <= 100 + 1e-6, `sold ${totalShares} of 100 held`);
+  assert.ok(Math.abs(totalShares - 100) < 1e-3, "and it does fully liquidate the gainful shares");
+  assert.ok(Math.abs(r.schedule.at(-1).remainingQty) < 1e-3);
+});
+
+test("wash mode keeps qty constant and legitimately re-transacts more than held", () => {
+  const r = optimiseDisposals({ holdings: [H("AAA", 100, 1000, 100)], startYear: "2025/26", income: 50000, years: 10, mode: "wash" });
+  assert.equal(r.yearsToClear, 3);
+  assert.ok(r.schedule.every((y) => Math.abs(y.remainingQty - 100) < 1e-6), "position is rebought, so qty is unchanged");
+  const totalShares = r.schedule.flatMap((y) => y.sells).reduce((s, x) => s + x.shares, 0);
+  assert.ok(totalShares > 100, "cumulative sell-and-rebuy exceeds the holding — expected for a wash");
+});
+
+test("bandRoomStart exposes whether the 18% toggle can do anything", () => {
+  // Additional-rate taxpayer: income fills the basic band, so no 18% room.
+  assert.equal(optimiseDisposals({ holdings: [H("AAA", 100, 1000, 100)], startYear: "2025/26", income: 200000 }).bandRoomStart, 0);
+  // Nil income: the whole basic-rate band is available.
+  assert.equal(optimiseDisposals({ holdings: [H("AAA", 100, 1000, 100)], startYear: "2025/26", income: 0 }).bandRoomStart, 37700);
 });
 
 test("useBasicBand spends band room at the basic CGT rate", () => {
@@ -208,15 +237,15 @@ test("loss-making and unpriced holdings are ignored", () => {
     startYear: "2025/26", income: 50000,
   });
   assert.equal(r.startEmbedded, 0);
-  assert.equal(r.totalWashed, 0);
+  assert.equal(r.totalRealised, 0);
 });
 
-test("growth compounds unsold prices between years", () => {
+test("growth compounds unsold prices between years (wash mode keeps the position)", () => {
   // qty 100, avg cost 10, price 50 -> embedded 4,000. Year 1 washes 3,000
   // (avg cost blends to 40), leaving 1,000 embedded. 100% growth doubles the
   // price to 100 before year 2 -> embedded balloons to 6,000, so year 2
   // harvests a full 3,000 again rather than just the leftover 1,000.
-  const r = optimiseDisposals({ holdings: [H("AAA", 100, 1000, 50)], startYear: "2025/26", income: 50000, growth: 1.0, years: 2 });
+  const r = optimiseDisposals({ holdings: [H("AAA", 100, 1000, 50)], startYear: "2025/26", income: 50000, growth: 1.0, years: 2, mode: "wash" });
   assert.equal(r.schedule[0].gainRealised, 3000);
   assert.equal(r.schedule[0].remainingUnrealised, 1000);
   assert.equal(r.schedule[1].gainRealised, 3000); // > the 1,000 left pre-growth
