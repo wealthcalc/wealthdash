@@ -149,15 +149,34 @@ export function investmentIncomeTax({ salary = 0, interest = 0, dividends = 0, y
    taxpayer whose income already fills the basic-rate band has ZERO room, so
    the toggle correctly does nothing for them — the caller reads
    `bandRoomStart` to disable/explain it rather than showing a dead tick.
-   ---- */
+
+   `objective` picks WHICH lots each year's allowance is spent on. The gain
+   sheltered per year is capped by the allowance either way, so this doesn't
+   change the tax — it changes cash raised and units kept:
+   - "gain" (default): sell the HIGHEST gain-per-share lots first. Clears the
+     biggest latent gains using the fewest shares, so the most units stay
+     invested; with growth those retained units keep compounding, so more
+     total gain gets washed over the horizon.
+   - "cash": sell the LOWEST gain-per-share (highest cost-basis) lots first.
+     Raises the most cash per £ of allowance and exits the position fastest.
+
+   `proceeds`/`totalProceeds` are the CASH RAISED and are only meaningful in
+   sell-down mode. In wash mode you rebuy immediately, so net cash is zero —
+   we report proceeds as 0 there rather than the gross turnover, which would
+   balloon geometrically with growth (constant units × a compounding price)
+   and mean nothing. ---- */
 export const nextTaxYear = (y) => { const a = Number(y.split("/")[0]) + 1; return `${a}/${String(a + 1).slice(-2)}`; };
 const _r2 = (x) => Math.round(x * 100) / 100;
 const _r4 = (x) => Math.round(x * 1e4) / 1e4;
-export function optimiseDisposals({ holdings, startYear, years = 10, income = 0, useBasicBand = false, growth = 0, mode = "selldown" }) {
+export function optimiseDisposals({ holdings, startYear, years = 10, income = 0, useBasicBand = false, growth = 0, mode = "selldown", objective = "gain" }) {
   const wash = mode === "wash";
   let hs = holdings.map((h) => ({ ticker: h.ticker, qty: +h.qty, avgCost: +h.qty ? +h.cost / +h.qty : 0, price: +h.price })).filter((h) => h.qty > 0 && isFinite(h.price) && h.price > 0);
   const embedded = () => hs.reduce((s, h) => s + Math.max(0, h.qty * (h.price - h.avgCost)), 0);
   const heldQty = () => hs.reduce((s, h) => s + h.qty, 0);
+  // Market value of the holdings that still carry a gain — the meaningful
+  // "left to sell down" figure (summing raw units across different securities
+  // would be nonsense — a share of a £2 line ≠ a share of a £900 line).
+  const appreciatedValue = () => hs.reduce((s, h) => s + ((h.price - h.avgCost) > 1e-9 ? h.qty * h.price : 0), 0);
   // Band room at the start year (income constant across the horizon) — lets
   // the caller show whether the 18% toggle can do anything at all.
   const startCfg = cfgFor(startYear);
@@ -170,13 +189,16 @@ export function optimiseDisposals({ holdings, startYear, years = 10, income = 0,
     const basicRate = cfg.rates[cfg.rates.length - 1].basic; // 18% on non-property in current bands
     const gainBudget = cfg.aea + (useBasicBand ? bandRoom : 0);
     let budgetLeft = gainBudget, realised = 0, proceeds = 0; const sells = [];
-    // Harvest the biggest latent gain-per-share first: crystallises the most
-    // embedded gain for each £ of allowance used.
-    const order = hs.map((h, idx) => ({ idx, gps: h.price - h.avgCost })).filter((o) => o.gps > 1e-9).sort((a, b) => b.gps - a.gps);
+    // Order the lots per the objective (see header): "cash" spends the
+    // allowance on the lowest gain-per-share lots (most proceeds), "gain" on
+    // the highest (fewest shares, most units retained).
+    const order = hs.map((h, idx) => ({ idx, gps: h.price - h.avgCost })).filter((o) => o.gps > 1e-9)
+      .sort((a, b) => objective === "cash" ? a.gps - b.gps : b.gps - a.gps);
     for (const { idx } of order) {
       if (budgetLeft <= 1e-6) break; const h = hs[idx], gps = h.price - h.avgCost;
       const takeGain = Math.min(h.qty * gps, budgetLeft); const shares = takeGain / gps; // shares <= h.qty always
-      proceeds += shares * h.price; realised += takeGain; budgetLeft -= takeGain;
+      if (!wash) proceeds += shares * h.price; // cash only when we don't rebuy
+      realised += takeGain; budgetLeft -= takeGain;
       if (wash) h.avgCost = ((h.qty - shares) * h.avgCost + shares * h.price) / h.qty; // keep qty, lift base cost
       else h.qty = Math.max(0, h.qty - shares);                                         // sell down — never below 0
       sells.push({ ticker: h.ticker, shares: _r4(shares), gain: _r2(takeGain), proceeds: _r2(shares * h.price) });
@@ -187,13 +209,14 @@ export function optimiseDisposals({ holdings, startYear, years = 10, income = 0,
     const remaining = embedded();
     schedule.push({ year: y, aea: cfg.aea, bandRoom: _r2(bandRoom), gainBudget: _r2(gainBudget),
       gainRealised: _r2(realised), proceeds: _r2(proceeds), aeaUsed: _r2(aeaUsed), bandGain: _r2(bandGain), tax, sells,
+      remainingValue: _r2(appreciatedValue()),
       cumulativeRealised: _r2(totalRealised), cumulativeProceeds: _r2(totalProceeds),
       remainingUnrealised: _r2(remaining), remainingQty: _r4(heldQty()) });
     if (remaining <= 1e-6 && yearsToClear == null) yearsToClear = i + 1;
     if (remaining <= 1e-6) break;
     if (growth) for (const h of hs) h.price *= 1 + growth; y = nextTaxYear(y);
   }
-  return { mode, schedule, yearsToClear, bandRoomStart: _r2(bandRoomStart),
+  return { mode, objective, schedule, yearsToClear, bandRoomStart: _r2(bandRoomStart),
     totalRealised: _r2(totalRealised), totalProceeds: _r2(totalProceeds), totalTax: _r2(totalTax),
     startEmbedded: _r2(startEmbedded), remainingAfter: _r2(embedded()) };
 }
