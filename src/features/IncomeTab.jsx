@@ -422,12 +422,16 @@ function donutArc(cx, cy, rO, rI, a0, a1) {
   const [x2, y2] = pt(rI, a1), [x3, y3] = pt(rI, a0);
   return `M${x0.toFixed(2)},${y0.toFixed(2)} A${rO},${rO} 0 ${large} 1 ${x1.toFixed(2)},${y1.toFixed(2)} L${x2.toFixed(2)},${y2.toFixed(2)} A${rI},${rI} 0 ${large} 0 ${x3.toFixed(2)},${y3.toFixed(2)} Z`;
 }
-// Distribution of trailing-12m income by source. Slices beyond the top 10 are
-// grouped into "Others" so the legend stays readable.
+// Distribution of trailing-12m income by source. Compact donut on the left
+// (top 10 + a grouped "Others" so the ring stays legible), with the FULL
+// ranked breakdown as horizontal bars on the right — every source, scaled to
+// the largest so relative sizes read at a glance; rows past the top 10 are the
+// composition of the ring's "Others" slice.
 function IncomePie({ rows, total }) {
   if (!rows.length || !(total > 0)) return null;
-  const top = rows.slice(0, 10);
-  const restVal = rows.slice(10).reduce((s, r) => s + r.value, 0);
+  const TOP = 10;
+  const top = rows.slice(0, TOP);
+  const restVal = rows.slice(TOP).reduce((s, r) => s + r.value, 0);
   const slices = restVal > 1 ? [...top, { ticker: "Others", value: restVal, weight: (restVal / total) * 100 }] : top;
   let acc = -Math.PI / 2;
   const segs = slices.map((s, i) => {
@@ -436,21 +440,33 @@ function IncomePie({ rows, total }) {
     return { ...s, a0, a1, color: INCOME_PIE_COLORS[i % INCOME_PIE_COLORS.length] };
   });
   const cx = 90, cy = 90, rO = 84, rI = 52;
+  const maxW = rows[0].weight || 1;
+  const colorFor = (i) => i < TOP ? INCOME_PIE_COLORS[i % INCOME_PIE_COLORS.length] : "var(--muted)";
   return (
-    <div className="flex flex-wrap items-center gap-5 rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3">
-      <svg viewBox="0 0 180 180" width={168} height={168} role="img" aria-label="Income distribution by source">
-        {segs.map((s, i) => <path key={i} d={donutArc(cx, cy, rO, rI, s.a0, s.a1)} fill={s.color} stroke="var(--panel)" strokeWidth="1.5" />)}
-        <text x={cx} y={cy - 3} textAnchor="middle" style={{ fontSize: 15, fontWeight: 600, fill: "var(--fg)" }}>{gbp0(total)}</text>
-        <text x={cx} y={cy + 13} textAnchor="middle" style={{ fontSize: 10, fill: "var(--muted)" }}>ttm income</text>
-      </svg>
-      <div className="text-xs space-y-1 min-w-[160px]">
-        {segs.map((s, i) => (
-          <div key={i} className="flex items-center gap-2">
-            <span style={{ width: 10, height: 10, background: s.color, borderRadius: 2, display: "inline-block", flexShrink: 0 }} />
-            <span className="font-medium">{s.ticker}</span>
-            <span className="text-[var(--muted)] num ml-auto">{Math.round(s.weight)}% · {gbp0(s.value)}</span>
-          </div>
-        ))}
+    <div className="flex flex-col md:flex-row md:items-stretch gap-5 rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3">
+      <div className="flex items-center justify-center shrink-0">
+        <svg viewBox="0 0 180 180" width={172} height={172} role="img" aria-label="Income distribution by source">
+          {segs.map((s, i) => <path key={i} d={donutArc(cx, cy, rO, rI, s.a0, s.a1)} fill={s.color} stroke="var(--panel)" strokeWidth="1.5" />)}
+          <text x={cx} y={cy - 4} textAnchor="middle" style={{ fontSize: 15, fontWeight: 600, fill: "var(--fg)" }}>{gbp0(total)}</text>
+          <text x={cx} y={cy + 12} textAnchor="middle" style={{ fontSize: 10, fill: "var(--muted)" }}>ttm income</text>
+        </svg>
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="text-[11px] uppercase tracking-wide text-[var(--muted)] mb-1.5">All sources — share of income</div>
+        <div className="space-y-1 max-h-64 overflow-y-auto pr-1">
+          {rows.map((r, i) => (
+            <div key={r.ticker} className="flex items-center gap-2 text-xs">
+              <span style={{ width: 9, height: 9, background: colorFor(i), borderRadius: 2, display: "inline-block", flexShrink: 0 }} />
+              <span className="font-medium w-16 shrink-0 truncate" title={r.ticker}>{r.ticker}</span>
+              <span className="flex-1 h-3 rounded-sm bg-[var(--panel2)] overflow-hidden min-w-[40px]">
+                <span className="block h-full rounded-sm" style={{ width: `${Math.max(2, (r.weight / maxW) * 100)}%`, background: colorFor(i) }} />
+              </span>
+              <span className="num text-right w-10 shrink-0">{r.weight >= 1 ? Math.round(r.weight) : r.weight.toFixed(1)}%</span>
+              <span className="num text-right w-16 shrink-0 text-[var(--muted)]">{gbp0(r.value)}</span>
+            </div>
+          ))}
+        </div>
+        {rows.length > TOP && <div className="text-[11px] text-[var(--muted)] mt-1.5">The ring groups everything below the top {TOP} into “Others”; the bars list all {rows.length} sources individually.</div>}
       </div>
     </div>
   );
