@@ -253,49 +253,71 @@ function TrendChart({ valuations, snapshots }) {
   );
 }
 
-/* Snapshot manager — the daily net-worth snapshots are taken automatically
-   every time the app opens, so a day when a holding was mispriced or a feed
-   glitched can leave a spike that skews the chart and the benchmark overlay.
-   This lets the user prune specific snapshots. Deliberately select-then-remove
-   (not one-click) since a removed historical snapshot can't be recreated. */
-function SnapshotManager({ snapshots }) {
-  const setSnapshots = useAppStore((s) => s.setNetWorthSnapshots);
+/* Snapshot manager — both series the trend chart draws are recorded
+   automatically: a daily NET-WORTH snapshot, and the INVESTED-value history
+   (written whenever prices move). A day when a holding was mispriced or a feed
+   glitched can leave a spike that skews the chart and the benchmark overlay,
+   so this lets the user prune specific points from either series. Deliberately
+   select-then-remove (not one-click) since a removed historical point can't
+   be recreated. */
+function SnapshotManager() {
+  const netWorthSnapshots = useAppStore((s) => s.netWorthSnapshots);
+  const setNetWorthSnapshots = useAppStore((s) => s.setNetWorthSnapshots);
+  const valuations = useAppStore((s) => s.valuations);
+  const setValuations = useAppStore((s) => s.setValuations);
   const [open, setOpen] = useState(false);
+  const [series, setSeries] = useState("networth");
   const [sel, setSel] = useState(() => new Set());
-  const rows = useMemo(() => [...snapshots].sort((a, b) => b.date.localeCompare(a.date)), [snapshots]);
-  if (!snapshots.length) return null;
 
+  const active = series === "networth"
+    ? { data: netWorthSnapshots, setter: setNetWorthSnapshots, label: "net worth" }
+    : { data: valuations, setter: setValuations, label: "invested value" };
+  const rows = useMemo(() => [...active.data].sort((a, b) => b.date.localeCompare(a.date)), [active.data]);
+  const total = netWorthSnapshots.length + valuations.length;
+  if (!total) return null;
+
+  const switchSeries = (k) => { setSeries(k); setSel(new Set()); };
   const toggle = (date) => setSel((s) => { const n = new Set(s); n.has(date) ? n.delete(date) : n.add(date); return n; });
   const removeSelected = () => {
     if (!sel.size) return;
-    setSnapshots((cur) => cur.filter((s) => !sel.has(s.date)));
+    active.setter((cur) => cur.filter((s) => !sel.has(s.date)));
     setSel(new Set());
   };
 
   return (
     <div className="mt-2 border-t border-[var(--border)] pt-2">
       <button onClick={() => setOpen((o) => !o)} className="text-xs text-[var(--muted)] hover:text-[var(--fg)] inline-flex items-center gap-1">
-        {open ? "▾" : "▸"} Manage snapshots ({snapshots.length})
+        {open ? "▾" : "▸"} Manage snapshots ({netWorthSnapshots.length} net worth · {valuations.length} invested)
       </button>
       {open && (
         <div className="mt-2 space-y-2">
-          <p className="text-xs text-[var(--muted)] leading-relaxed">
-            One net-worth snapshot is recorded automatically each day you open the app. If a bad price or feed glitch left a spike that skews the trend or the benchmark overlay, tick it and remove it. Removal is permanent — a past day's snapshot can't be recreated (a fresh one is taken next time you open the app).
-          </p>
-          <div className="rounded-lg border border-[var(--border)] max-h-56 overflow-y-auto">
-            <table className="w-full text-xs">
-              <tbody className="divide-y divide-[var(--border)]">
-                {rows.map((s) => (
-                  <tr key={s.date} className={"hover:bg-[var(--panel2)] " + (sel.has(s.date) ? "bg-[color:color-mix(in_srgb,var(--loss)_10%,transparent)]" : "")}>
-                    <td className="px-2 py-1.5 w-8"><input type="checkbox" checked={sel.has(s.date)} onChange={() => toggle(s.date)} className="accent-[var(--loss)]" aria-label={`Select snapshot ${s.date}`} /></td>
-                    <td className="px-2 py-1.5 num text-[var(--muted)]">{s.date}</td>
-                    <td className="px-2 py-1.5 num text-right font-medium">{gbp0(s.value)}</td>
-                    <td className="px-2 py-1.5 text-[var(--muted)]">{s.estimated ? <span title="recorded with one or more holdings unpriced">est.</span> : ""}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="flex gap-1">
+            {[["networth", `Net worth (${netWorthSnapshots.length})`], ["invested", `Invested (${valuations.length})`]].map(([k, lbl]) => (
+              <button key={k} onClick={() => switchSeries(k)}
+                className={"text-xs px-2.5 py-1 rounded-lg border " + (series === k ? "border-[var(--accent)] bg-[color:color-mix(in_srgb,var(--accent)_15%,transparent)] text-[var(--fg)]" : "border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)]")}>{lbl}</button>
+            ))}
           </div>
+          <p className="text-xs text-[var(--muted)] leading-relaxed">
+            The {active.label} history is recorded automatically{series === "networth" ? " once a day you open the app" : " whenever prices move"}. If a bad price or feed glitch left a spike that skews the trend or the benchmark overlay, tick it and remove it. Removal is permanent — a past point can't be recreated (fresh ones are recorded going forward).
+          </p>
+          {rows.length === 0
+            ? <p className="text-xs text-[var(--muted)]">No {active.label} points recorded yet.</p>
+            : (
+              <div className="rounded-lg border border-[var(--border)] max-h-56 overflow-y-auto">
+                <table className="w-full text-xs">
+                  <tbody className="divide-y divide-[var(--border)]">
+                    {rows.map((s) => (
+                      <tr key={s.date} className={"hover:bg-[var(--panel2)] " + (sel.has(s.date) ? "bg-[color:color-mix(in_srgb,var(--loss)_10%,transparent)]" : "")}>
+                        <td className="px-2 py-1.5 w-8"><input type="checkbox" checked={sel.has(s.date)} onChange={() => toggle(s.date)} className="accent-[var(--loss)]" aria-label={`Select ${active.label} point ${s.date}`} /></td>
+                        <td className="px-2 py-1.5 num text-[var(--muted)]">{s.date}</td>
+                        <td className="px-2 py-1.5 num text-right font-medium">{gbp0(s.value)}</td>
+                        <td className="px-2 py-1.5 text-[var(--muted)]">{s.estimated ? <span title="recorded with one or more holdings unpriced">est.</span> : ""}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           <div className="flex items-center gap-2">
             <button onClick={removeSelected} disabled={!sel.size}
               className={"text-xs font-medium px-3 h-8 rounded-lg border " + (sel.size ? "border-[var(--loss)] text-[var(--loss)] hover:bg-[color:color-mix(in_srgb,var(--loss)_10%,transparent)]" : "border-[var(--border)] text-[var(--muted)] opacity-60 cursor-not-allowed")}>
@@ -767,7 +789,7 @@ export default function HomeTab({
           )}
           <div className="mt-3">
             <TrendChart valuations={valuations} snapshots={netWorthSnapshots} />
-            <SnapshotManager snapshots={netWorthSnapshots} />
+            <SnapshotManager />
           </div>
         </div>
 
