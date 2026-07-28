@@ -192,11 +192,12 @@ export function optimiseDisposals({ holdings, startYear, years = 10, income = 0,
     // Order the lots per the objective (see header): "cash" spends the
     // allowance on the lowest gain-per-share lots (most proceeds), "gain" on
     // the highest (fewest shares, most units retained).
-    const order = hs.map((h, idx) => ({ idx, gps: h.price - h.avgCost })).filter((o) => o.gps > 1e-9)
+    const order = hs.map((h, idx) => ({ idx, gps: h.price - h.avgCost })).filter((o) => o.gps > 1e-9 && hs[o.idx].qty > 1e-9)
       .sort((a, b) => objective === "cash" ? a.gps - b.gps : b.gps - a.gps);
     for (const { idx } of order) {
       if (budgetLeft <= 1e-6) break; const h = hs[idx], gps = h.price - h.avgCost;
       const takeGain = Math.min(h.qty * gps, budgetLeft); const shares = takeGain / gps; // shares <= h.qty always
+      if (shares <= 1e-9) continue;            // nothing left to sell in this lot — don't emit a phantom 0-share row
       if (!wash) proceeds += shares * h.price; // cash only when we don't rebuy
       realised += takeGain; budgetLeft -= takeGain;
       if (wash) h.avgCost = ((h.qty - shares) * h.avgCost + shares * h.price) / h.qty; // keep qty, lift base cost

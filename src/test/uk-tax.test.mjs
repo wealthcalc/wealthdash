@@ -233,6 +233,15 @@ test("wash mode reports ZERO cash raised, even with growth (no exponential turno
   assert.ok(r.schedule.every((yr) => yr.proceeds === 0));
 });
 
+test("a fully-sold lot stops appearing in later years' sell instructions", () => {
+  const holdings = [H("SMALL", 10, 100, 20), H("BIG", 100, 1000, 100)];
+  const r = optimiseDisposals({ holdings, startYear: "2025/26", income: 50000, years: 5, objective: "cash", growth: 0.05 });
+  assert.ok(r.schedule[0].sells.some((s) => s.ticker === "SMALL"), "SMALL sells out in year 1 (cash-first)");
+  for (const yr of r.schedule.slice(1)) {
+    assert.ok(!yr.sells.some((s) => s.ticker === "SMALL"), `SMALL reappeared in ${yr.year} — it's already at zero`);
+  }
+});
+
 test("remainingValue is a £ figure that falls as a position sells down", () => {
   const r = optimiseDisposals({ holdings: [H("AAA", 100, 1000, 100)], startYear: "2025/26", income: 50000, years: 10 });
   // starts at full market value (100 × £100), ends at 0 once the gain clears

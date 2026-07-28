@@ -409,6 +409,53 @@ function IncomeTab({ eriTxns, incomeByYear, incomeAllWrappers = {}, txns, income
 // income concentration (single-source risk), and the VCT 5-year holding-
 // period tracker (relief clawback risk). All from cores; see
 // income-analysis.mjs and vct.mjs.
+
+const INCOME_PIE_COLORS = [
+  "var(--accent)", "var(--m-bb)", "var(--gain)", "var(--m-same)", "#7A5C9E",
+  "#C2705A", "#4E9A8F", "#B0884E", "#8E6FA8", "#5F8FBF", "#A8615F",
+];
+// Raw-SVG donut arc (matches the app's hand-rolled charts — no chart lib).
+function donutArc(cx, cy, rO, rI, a0, a1) {
+  const pt = (r, a) => [cx + r * Math.cos(a), cy + r * Math.sin(a)];
+  const large = a1 - a0 > Math.PI ? 1 : 0;
+  const [x0, y0] = pt(rO, a0), [x1, y1] = pt(rO, a1);
+  const [x2, y2] = pt(rI, a1), [x3, y3] = pt(rI, a0);
+  return `M${x0.toFixed(2)},${y0.toFixed(2)} A${rO},${rO} 0 ${large} 1 ${x1.toFixed(2)},${y1.toFixed(2)} L${x2.toFixed(2)},${y2.toFixed(2)} A${rI},${rI} 0 ${large} 0 ${x3.toFixed(2)},${y3.toFixed(2)} Z`;
+}
+// Distribution of trailing-12m income by source. Slices beyond the top 10 are
+// grouped into "Others" so the legend stays readable.
+function IncomePie({ rows, total }) {
+  if (!rows.length || !(total > 0)) return null;
+  const top = rows.slice(0, 10);
+  const restVal = rows.slice(10).reduce((s, r) => s + r.value, 0);
+  const slices = restVal > 1 ? [...top, { ticker: "Others", value: restVal, weight: (restVal / total) * 100 }] : top;
+  let acc = -Math.PI / 2;
+  const segs = slices.map((s, i) => {
+    const frac = Math.min(0.9999, s.value / total);
+    const a0 = acc, a1 = acc + frac * 2 * Math.PI; acc = a1;
+    return { ...s, a0, a1, color: INCOME_PIE_COLORS[i % INCOME_PIE_COLORS.length] };
+  });
+  const cx = 90, cy = 90, rO = 84, rI = 52;
+  return (
+    <div className="flex flex-wrap items-center gap-5 rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3">
+      <svg viewBox="0 0 180 180" width={168} height={168} role="img" aria-label="Income distribution by source">
+        {segs.map((s, i) => <path key={i} d={donutArc(cx, cy, rO, rI, s.a0, s.a1)} fill={s.color} stroke="var(--panel)" strokeWidth="1.5" />)}
+        <text x={cx} y={cy - 3} textAnchor="middle" style={{ fontSize: 15, fontWeight: 600, fill: "var(--fg)" }}>{gbp0(total)}</text>
+        <text x={cx} y={cy + 13} textAnchor="middle" style={{ fontSize: 10, fill: "var(--muted)" }}>ttm income</text>
+      </svg>
+      <div className="text-xs space-y-1 min-w-[160px]">
+        {segs.map((s, i) => (
+          <div key={i} className="flex items-center gap-2">
+            <span style={{ width: 10, height: 10, background: s.color, borderRadius: 2, display: "inline-block", flexShrink: 0 }} />
+            <span className="font-medium">{s.ticker}</span>
+            <span className="text-[var(--muted)] num ml-auto">{Math.round(s.weight)}% · {gbp0(s.value)}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function AnalysisTab({ incomeEntries, allTxns, secMeta }) {
   const today = todayISO();
   const changes = useMemo(() => dividendChanges({ incomeEntries, today }), [incomeEntries, today]);
@@ -427,6 +474,7 @@ function AnalysisTab({ incomeEntries, allTxns, secMeta }) {
             <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3"><div className="text-[11px] uppercase tracking-wide text-[var(--muted)]">Top 5 combined</div><div className="text-lg font-semibold num">{Math.round(conc.topNWeight)}%</div></div>
             <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3"><div className="text-[11px] uppercase tracking-wide text-[var(--muted)]">Effective sources</div><div className="text-lg font-semibold num" title="1 / Herfindahl index — how many equal-sized income streams your mix behaves like">{conc.effectiveN}</div></div>
           </div>
+          <IncomePie rows={conc.rows} total={conc.total} />
           <p className="text-xs text-[var(--muted)]">Trailing 12 months of dividends + interest, by holding. A low effective-sources number or a large top holding means your income leans on a few names — the income-side mirror of single-stock risk.</p>
         </div>
       )}

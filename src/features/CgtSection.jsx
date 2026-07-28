@@ -48,10 +48,19 @@ function CgtSection(props) {
 // that close the gap. The Bed & ISA tab prices any actual move.
 function LocationTab({ positions = [], secMeta = {}, income = 0, incomeEntries = [] }) {
   const plan = useMemo(() => locationPlan({ positions, secMeta, income, incomeEntries, today: todayISO() }), [positions, secMeta, income, incomeEntries]);
+  const vctValue = useMemo(() => positions
+    .filter((p) => p.priced && p.marketValue > 0 && String(p.wrapper).toUpperCase() === "VCT")
+    .reduce((s, p) => s + p.marketValue, 0), [positions]);
   if (!plan.rows.length) return <Empty msg="No priced holdings yet — asset location needs market values." />;
   const pctFmt = (x) => (x * 100).toFixed(2) + "%";
   return (
     <div className="space-y-4">
+      {vctValue > 0 && (
+        <div className="flex items-start gap-2 text-xs rounded-lg px-3 py-2 border border-[var(--border)] bg-[var(--panel2)] text-[var(--muted)]">
+          <Info size={14} className="mt-0.5 shrink-0 text-[var(--m-bb)]" />
+          <span>{gbp0(vctValue)} of VCT holdings are excluded from this view: VCT dividends are already tax-free and the shares can't be moved into an ISA/SIPP (and the 5-year relief clock locks them), so they carry no drag to optimise.</span>
+        </div>
+      )}
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
         <Stat label="Annual tax drag now" value={gbp0(plan.currentDrag)} sub="estimated cost of current placement" />
         <Stat label="Best achievable" value={gbp0(plan.minimalDrag)} sub="same holdings, optimally placed" />

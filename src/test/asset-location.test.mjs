@@ -60,6 +60,17 @@ test("an already-optimal portfolio reports ~zero saving and no moves", () => {
   assert.equal(plan.moves.length, 0);
 });
 
+test("VCTs are excluded from asset location — tax-free income, can't be sheltered", () => {
+  const plan = locationPlan({
+    positions: [pos("GHV", "VCT", 50000, "investment_trust"), pos("VWRL", "GIA", 10000, "fund")],
+    income: 90000,
+  });
+  assert.ok(!plan.rows.some((r) => r.ticker === "GHV"), "the VCT is not in the drag table");
+  assert.ok(plan.rows.some((r) => r.ticker === "VWRL"), "ordinary GIA holdings still appear");
+  // its value must not count as shelter capacity or drag
+  assert.equal(plan.rows.length, 1);
+});
+
 test("no shelter capacity -> minimal equals current, everything stays put", () => {
   const plan = locationPlan({ positions: [pos("VWRL", "GIA", 50000, "fund")], income: 30000 });
   assert.equal(plan.currentDrag, plan.minimalDrag);

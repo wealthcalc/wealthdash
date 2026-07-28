@@ -123,7 +123,12 @@ export function locationPlan({ positions = [], secMeta = {}, income = 0, incomeE
   const rows = [];
   for (const p of positions) {
     if (!p.priced || !(p.marketValue > 0)) continue;
-    const wrapper = p.wrapper === "VCT" ? "GIA" : p.wrapper; // VCT is its own shelter; treat as unshelterable
+    // VCTs are out of scope for asset location: their dividends are tax-free
+    // and they can't be moved into an ISA/SIPP (and the 5-year relief clock
+    // locks them anyway). Including them would show a phantom drag and, worse,
+    // suggest sheltering something that's already tax-exempt.
+    if (String(p.wrapper).toUpperCase() === "VCT") continue;
+    const wrapper = p.wrapper;
     const dragPct = giaDragPct(p, secMeta, rates, { realYields });
     const yieldSource = Number.isFinite(+(secMeta[p.ticker] || {}).yieldPct) ? "override"
       : realYields[p.ticker] ? "actual" : "assumed";
