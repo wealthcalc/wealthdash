@@ -93,3 +93,34 @@ export function incomeConcentration({ incomeEntries = [], today, topN = 5 } = {}
     effectiveN: hhi > 0 ? r2(1 / hhi) : 0,
   };
 }
+
+// Trailing-12m income grouped by a facet other than the individual holding:
+//   group "wrapper" -> ISA / SIPP / GIA / VCT / … (reveals sheltered vs taxable)
+//   group "kind"    -> Dividends vs Interest
+// Same shape as incomeConcentration.rows so the same chart renders it. The
+// label lives in `.ticker` for that reason. `sheltered` is set on wrapper rows
+// so the caller can total tax-free vs taxable income. Pure, node-tested.
+const SHELTERED_WRAPPERS = new Set(["ISA", "SIPP", "LISA", "VCT"]);
+export function incomeByGroup({ incomeEntries = [], today, group = "wrapper" } = {}) {
+  if (!today) throw new Error("incomeByGroup requires today (ISO).");
+  const from = addDaysISO(today, -365);
+  const map = new Map();
+  for (const e of incomeEntries) {
+    if (!e || !e.date || !(+e.amount > 0)) continue;
+    if (e.date <= from || e.date > today) continue;
+    const key = group === "kind"
+      ? (e.kind === "interest" ? "Interest" : "Dividends")
+      : (e.wrapper ? String(e.wrapper).toUpperCase() : "Unwrapped");
+    map.set(key, (map.get(key) || 0) + +e.amount);
+  }
+  const rows = [...map.entries()].map(([ticker, value]) => ({
+    ticker, value: r2(value), ...(group === "wrapper" ? { sheltered: SHELTERED_WRAPPERS.has(ticker) } : {}),
+  })).sort((a, b) => b.value - a.value);
+  const total = r2(rows.reduce((s, r) => s + r.value, 0));
+  if (total <= 0) return { rows: [], total: 0, shelteredPct: 0 };
+  for (const r of rows) r.weight = r2((r.value / total) * 100);
+  const shelteredPct = group === "wrapper"
+    ? r2((rows.filter((r) => r.sheltered).reduce((s, r) => s + r.value, 0) / total) * 100)
+    : 0;
+  return { rows, total, shelteredPct };
+}

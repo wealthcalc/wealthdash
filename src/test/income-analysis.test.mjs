@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { dividendChanges, incomeConcentration } from "../core/income-analysis.mjs";
+import { dividendChanges, incomeConcentration, incomeByGroup } from "../core/income-analysis.mjs";
 
 const TODAY = "2026-07-24";
 
@@ -60,6 +60,41 @@ test("incomeConcentration: shares, top-N weight, effective-N", () => {
   assert.equal(c.topNWeight, 90);            // UAV 60 + CTY 30
   // effective-N: 1 / (0.36 + 0.09 + 0.01) = 1/0.46 ≈ 2.17
   assert.ok(Math.abs(c.effectiveN - 2.17) < 0.05);
+});
+
+test("incomeByGroup: by wrapper, with sheltered-vs-taxable split", () => {
+  const inc = [
+    { date: "2026-01-01", ticker: "CTY", amount: 600, wrapper: "ISA", kind: "dividend" },
+    { date: "2026-02-01", ticker: "VOD", amount: 300, wrapper: "GIA", kind: "dividend" },
+    { date: "2026-03-01", ticker: "", amount: 100, wrapper: "GIA", kind: "interest" },
+    { date: "2024-01-01", ticker: "OLD", amount: 999, wrapper: "ISA", kind: "dividend" }, // >12m, ignored
+  ];
+  const g = incomeByGroup({ incomeEntries: inc, today: TODAY, group: "wrapper" });
+  assert.equal(g.total, 1000);
+  assert.equal(g.rows[0].ticker, "ISA");     // ranked by value
+  assert.equal(g.rows[0].value, 600);
+  assert.equal(g.rows[0].sheltered, true);
+  const gia = g.rows.find((r) => r.ticker === "GIA");
+  assert.equal(gia.value, 400);
+  assert.equal(gia.sheltered, false);
+  assert.equal(g.shelteredPct, 60);          // ISA £600 of £1000
+});
+
+test("incomeByGroup: by kind splits dividends vs interest; missing wrapper -> Unwrapped", () => {
+  const inc = [
+    { date: "2026-01-01", ticker: "CTY", amount: 700, kind: "dividend" },
+    { date: "2026-02-01", ticker: "", amount: 300, kind: "interest" },
+  ];
+  const byKind = incomeByGroup({ incomeEntries: inc, today: TODAY, group: "kind" });
+  assert.deepEqual(byKind.rows.map((r) => [r.ticker, r.value]), [["Dividends", 700], ["Interest", 300]]);
+  const byWrap = incomeByGroup({ incomeEntries: inc, today: TODAY, group: "wrapper" });
+  assert.equal(byWrap.rows[0].ticker, "Unwrapped");
+  assert.equal(byWrap.rows[0].weight, 100);
+});
+
+test("incomeByGroup: empty and requires today", () => {
+  assert.deepEqual(incomeByGroup({ incomeEntries: [], today: TODAY, group: "wrapper" }), { rows: [], total: 0, shelteredPct: 0 });
+  assert.throws(() => incomeByGroup({ incomeEntries: [] }), /today/);
 });
 
 test("incomeConcentration pools unattributed interest and handles empty", () => {

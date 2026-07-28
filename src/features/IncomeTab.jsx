@@ -6,7 +6,7 @@ import { WRAPPERS, isWrapperTaxable, normWrapper } from "../core/portfolio.mjs";
 import { investmentIncomeTax } from "../core/uk-tax.mjs";
 import { addMonthsISO } from "../core/ishares-eri.mjs";
 import { summariseBySource } from "../core/income-calendar.mjs";
-import { dividendChanges, incomeConcentration } from "../core/income-analysis.mjs";
+import { dividendChanges, incomeConcentration, incomeByGroup } from "../core/income-analysis.mjs";
 import { vctHoldings } from "../core/vct.mjs";
 import { store, unitsHeldAt, gbp, gbp0, SubTabs, num, uid, todayISO, fxToGBP, Field, Empty, useSort, sortRows, SortTh, CurrencyInput, downloadText } from "../ui/shared.jsx";
 import { taxSummaryText } from "../core/export-csv.mjs";
@@ -427,9 +427,9 @@ function donutArc(cx, cy, rO, rI, a0, a1) {
 // ranked breakdown as horizontal bars on the right — every source, scaled to
 // the largest so relative sizes read at a glance; rows past the top 10 are the
 // composition of the ring's "Others" slice.
-function IncomePie({ rows, total }) {
+function IncomePie({ rows, total, title = "All sources — share of income", groupTop = 10 }) {
   if (!rows.length || !(total > 0)) return null;
-  const TOP = 10;
+  const TOP = groupTop;
   const top = rows.slice(0, TOP);
   const restVal = rows.slice(TOP).reduce((s, r) => s + r.value, 0);
   const slices = restVal > 1 ? [...top, { ticker: "Others", value: restVal, weight: (restVal / total) * 100 }] : top;
@@ -452,7 +452,7 @@ function IncomePie({ rows, total }) {
         </svg>
       </div>
       <div className="flex-1 min-w-0">
-        <div className="text-[11px] uppercase tracking-wide text-[var(--muted)] mb-1.5">All sources — share of income</div>
+        <div className="text-[11px] uppercase tracking-wide text-[var(--muted)] mb-1.5">{title}</div>
         <div className="space-y-1 max-h-64 overflow-y-auto pr-1">
           {rows.map((r, i) => (
             <div key={r.ticker} className="flex items-center gap-2 text-xs">
@@ -468,6 +468,37 @@ function IncomePie({ rows, total }) {
         </div>
         {rows.length > TOP && <div className="text-[11px] text-[var(--muted)] mt-1.5">The ring groups everything below the top {TOP} into “Others”; the bars list all {rows.length} sources individually.</div>}
       </div>
+    </div>
+  );
+}
+
+// Three cuts of the same trailing-12m income, switchable: by holding (source),
+// by wrapper (sheltered vs taxable), and by type (dividends vs interest).
+function IncomeBreakdownPanel({ incomeEntries, today, sourceConc }) {
+  const [view, setView] = useState("source");
+  const byWrapper = useMemo(() => incomeByGroup({ incomeEntries, today, group: "wrapper" }), [incomeEntries, today]);
+  const byKind = useMemo(() => incomeByGroup({ incomeEntries, today, group: "kind" }), [incomeEntries, today]);
+  const VIEWS = {
+    source: { data: sourceConc, title: "All sources — share of income", groupTop: 10 },
+    wrapper: { data: byWrapper, title: "By wrapper — sheltered vs taxable", groupTop: 99 },
+    kind: { data: byKind, title: "By type — dividends vs interest", groupTop: 99 },
+  };
+  const cur = VIEWS[view];
+  return (
+    <div className="space-y-2">
+      <div className="flex gap-1">
+        {[["source", "By source"], ["wrapper", "By wrapper"], ["kind", "By type"]].map(([k, l]) => (
+          <button key={k} onClick={() => setView(k)}
+            className={"text-xs px-2.5 py-1 rounded-lg border " + (view === k ? "border-[var(--accent)] bg-[color:color-mix(in_srgb,var(--accent)_15%,transparent)] text-[var(--fg)]" : "border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)]")}>{l}</button>
+        ))}
+      </div>
+      <IncomePie rows={cur.data.rows} total={cur.data.total} title={cur.title} groupTop={cur.groupTop} />
+      {view === "wrapper" && byWrapper.total > 0 && (
+        <p className="text-xs text-[var(--muted)]"><span className="font-medium text-[var(--fg)]">{Math.round(byWrapper.shelteredPct)}%</span> of your trailing-12m income sits in tax-sheltered wrappers (ISA/SIPP/LISA/VCT); the rest is taxable in a GIA. VCT dividends are tax-free even though VCT isn't an ISA/SIPP.</p>
+      )}
+      {view === "kind" && byKind.total > 0 && (
+        <p className="text-xs text-[var(--muted)]">Dividends and interest are taxed differently and have separate allowances (the £500 dividend allowance and the personal savings allowance), so the mix matters for your tax, not just the total.</p>
+      )}
     </div>
   );
 }
@@ -490,7 +521,7 @@ function AnalysisTab({ incomeEntries, allTxns, secMeta }) {
             <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3"><div className="text-[11px] uppercase tracking-wide text-[var(--muted)]">Top 5 combined</div><div className="text-lg font-semibold num">{Math.round(conc.topNWeight)}%</div></div>
             <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3"><div className="text-[11px] uppercase tracking-wide text-[var(--muted)]">Effective sources</div><div className="text-lg font-semibold num" title="1 / Herfindahl index — how many equal-sized income streams your mix behaves like">{conc.effectiveN}</div></div>
           </div>
-          <IncomePie rows={conc.rows} total={conc.total} />
+          <IncomeBreakdownPanel incomeEntries={incomeEntries} today={today} sourceConc={conc} />
           <p className="text-xs text-[var(--muted)]">Trailing 12 months of dividends + interest, by holding. A low effective-sources number or a large top holding means your income leans on a few names — the income-side mirror of single-stock risk.</p>
         </div>
       )}
