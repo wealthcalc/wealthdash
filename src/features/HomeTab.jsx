@@ -253,6 +253,62 @@ function TrendChart({ valuations, snapshots }) {
   );
 }
 
+/* Snapshot manager — the daily net-worth snapshots are taken automatically
+   every time the app opens, so a day when a holding was mispriced or a feed
+   glitched can leave a spike that skews the chart and the benchmark overlay.
+   This lets the user prune specific snapshots. Deliberately select-then-remove
+   (not one-click) since a removed historical snapshot can't be recreated. */
+function SnapshotManager({ snapshots }) {
+  const setSnapshots = useAppStore((s) => s.setNetWorthSnapshots);
+  const [open, setOpen] = useState(false);
+  const [sel, setSel] = useState(() => new Set());
+  const rows = useMemo(() => [...snapshots].sort((a, b) => b.date.localeCompare(a.date)), [snapshots]);
+  if (!snapshots.length) return null;
+
+  const toggle = (date) => setSel((s) => { const n = new Set(s); n.has(date) ? n.delete(date) : n.add(date); return n; });
+  const removeSelected = () => {
+    if (!sel.size) return;
+    setSnapshots((cur) => cur.filter((s) => !sel.has(s.date)));
+    setSel(new Set());
+  };
+
+  return (
+    <div className="mt-2 border-t border-[var(--border)] pt-2">
+      <button onClick={() => setOpen((o) => !o)} className="text-xs text-[var(--muted)] hover:text-[var(--fg)] inline-flex items-center gap-1">
+        {open ? "▾" : "▸"} Manage snapshots ({snapshots.length})
+      </button>
+      {open && (
+        <div className="mt-2 space-y-2">
+          <p className="text-xs text-[var(--muted)] leading-relaxed">
+            One net-worth snapshot is recorded automatically each day you open the app. If a bad price or feed glitch left a spike that skews the trend or the benchmark overlay, tick it and remove it. Removal is permanent — a past day's snapshot can't be recreated (a fresh one is taken next time you open the app).
+          </p>
+          <div className="rounded-lg border border-[var(--border)] max-h-56 overflow-y-auto">
+            <table className="w-full text-xs">
+              <tbody className="divide-y divide-[var(--border)]">
+                {rows.map((s) => (
+                  <tr key={s.date} className={"hover:bg-[var(--panel2)] " + (sel.has(s.date) ? "bg-[color:color-mix(in_srgb,var(--loss)_10%,transparent)]" : "")}>
+                    <td className="px-2 py-1.5 w-8"><input type="checkbox" checked={sel.has(s.date)} onChange={() => toggle(s.date)} className="accent-[var(--loss)]" aria-label={`Select snapshot ${s.date}`} /></td>
+                    <td className="px-2 py-1.5 num text-[var(--muted)]">{s.date}</td>
+                    <td className="px-2 py-1.5 num text-right font-medium">{gbp0(s.value)}</td>
+                    <td className="px-2 py-1.5 text-[var(--muted)]">{s.estimated ? <span title="recorded with one or more holdings unpriced">est.</span> : ""}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="flex items-center gap-2">
+            <button onClick={removeSelected} disabled={!sel.size}
+              className={"text-xs font-medium px-3 h-8 rounded-lg border " + (sel.size ? "border-[var(--loss)] text-[var(--loss)] hover:bg-[color:color-mix(in_srgb,var(--loss)_10%,transparent)]" : "border-[var(--border)] text-[var(--muted)] opacity-60 cursor-not-allowed")}>
+              Remove {sel.size || ""} selected
+            </button>
+            {sel.size > 0 && <button onClick={() => setSel(new Set())} className="text-xs text-[var(--muted)] hover:text-[var(--fg)]">Clear</button>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ----------------------------- action queue ---------------------------- */
 // Labels for core/action-queue.mjs item ids — UI layer, same pattern as
 // TAX_YEAR_END_LABELS above. Each returns { head, rest } so the £ figure
@@ -711,6 +767,7 @@ export default function HomeTab({
           )}
           <div className="mt-3">
             <TrendChart valuations={valuations} snapshots={netWorthSnapshots} />
+            <SnapshotManager snapshots={netWorthSnapshots} />
           </div>
         </div>
 
