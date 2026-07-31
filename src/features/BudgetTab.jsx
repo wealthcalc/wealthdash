@@ -49,7 +49,7 @@ const prevMonth = (m) => {
   return mo === 1 ? `${y - 1}-12` : `${y}-${String(mo - 1).padStart(2, "0")}`;
 };
 
-export default function BudgetTab({ setTab }) {
+export default function BudgetTab({ setTab, projectedIncome = 0 }) {
   const categories = useAppStore((s) => s.budgetCategories), setCategories = useAppStore((s) => s.setBudgetCategories);
   const rules = useAppStore((s) => s.budgetRules), setRules = useAppStore((s) => s.setBudgetRules);
   const spendTxns = useAppStore((s) => s.spendTxns), setSpendTxns = useAppStore((s) => s.setSpendTxns);
@@ -112,7 +112,7 @@ export default function BudgetTab({ setTab }) {
         </div>
       )}
 
-      {sub === "overview" && <Overview {...{ categories, txns, month, setMonth, setSub, drillTo, incomeEntries }} />}
+      {sub === "overview" && <Overview {...{ categories, txns, month, setMonth, setSub, drillTo, incomeEntries, projectedIncome }} />}
       {sub === "txns" && <Transactions {...{ categories, catById, txns, spendTxns, setManual, setSpendTxns, rules, setRules, filter: txnFilter, setFilter: setTxnFilter }} />}
       {sub === "recurring" && <Recurring {...{ recurring, setRecurring, categories, catById, suppressed: recurringOut.suppressed, generated: recurringOut.rows, spendTxns }} />}
       {sub === "categories" && <Categories {...{ categories, setCategories, rules, setRules, catById, txns }} />}
@@ -122,7 +122,7 @@ export default function BudgetTab({ setTab }) {
 }
 
 /* ------------------------------- Overview ---------------------------- */
-function Overview({ categories, txns, month, setMonth, setSub, drillTo, incomeEntries = [] }) {
+function Overview({ categories, txns, month, setMonth, setSub, drillTo, incomeEntries = [], projectedIncome = 0 }) {
   // Trailing 12 months is the DEFAULT because it's the honest picture: a
   // single month is noisy (annual bills, holidays, a quiet fortnight) and
   // the year is what the retirement plan actually consumes. This/Last
@@ -241,6 +241,24 @@ function Overview({ categories, txns, month, setMonth, setSub, drillTo, incomeEn
         return (
           <div className="rounded-xl border border-[var(--border)] bg-[var(--panel2)] px-3 py-2 text-xs text-[var(--muted)]">
             Investment income received {view === "month" ? "this month" : "over the year"}: <strong className="text-[var(--gain)]">{gbp0(invIncome)}</strong> — covers <strong className="text-[var(--fg)]">{Math.round(covers)}%</strong> of your {gbp0(s.totalActual)} total spend{coversEssential != null && <>, and <strong className={coversEssential >= 100 ? "text-[var(--gain)]" : "text-[var(--fg)]"}>{Math.round(coversEssential)}%</strong> of the {gbp0(s.essentialActual)} essential</>}. <span className="text-[10px]">(dividends + interest from the Income tab; salary not included)</span>
+          </div>
+        );
+      })()}
+
+      {/* FORWARD companion to the line above — projected next-12m investment
+          income (income calendar: forecast dividends + interest + gilt coupons)
+          vs the PLANNED annual budget (both forward, so apples-to-apples).
+          Answers "will passive income cover the plan?" alongside the "did it?"
+          above. View-independent — it's always the next-12-months projection. */}
+      {(() => {
+        const projSpend = a.summary.totalLimit;      // full-year budgeted spend
+        const projEssential = a.summary.essentialLimit;
+        if (!(projectedIncome > 0) || !(projSpend > 0)) return null;
+        const covers = projectedIncome / projSpend * 100;
+        const coversEssential = projEssential > 0 ? projectedIncome / projEssential * 100 : null;
+        return (
+          <div className="rounded-xl border border-dashed border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-xs text-[var(--muted)]">
+            Projected investment income (next 12 months): <strong className="text-[var(--gain)]">{gbp0(projectedIncome)}</strong> — expected to cover <strong className="text-[var(--fg)]">{Math.round(covers)}%</strong> of your {gbp0(projSpend)} planned spend{coversEssential != null && <>, and <strong className={coversEssential >= 100 ? "text-[var(--gain)]" : "text-[var(--fg)]"}>{Math.round(coversEssential)}%</strong> of the {gbp0(projEssential)} essential</>}. <span className="text-[10px]">(forecast from current holdings vs your annual budget; a dashed box = estimate, not actuals)</span>
           </div>
         );
       })()}
