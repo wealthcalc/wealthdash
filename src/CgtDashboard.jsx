@@ -12,7 +12,7 @@ import { privateTotals } from "./core/private-investments.mjs";
 import { rsuTotals, vestingSchedule } from "./core/rsu.mjs";
 import { deferredCashTotals, deferredCashCalendar } from "./core/deferred-cash.mjs";
 import { effectiveCashByWrapper } from "./core/cash.mjs";
-import { buildIncomeCalendar } from "./core/income-calendar.mjs";
+import { buildIncomeCalendar, summariseBySource } from "./core/income-calendar.mjs";
 import { buildNetWorthSnapshot, upsertDailySnapshot } from "./core/net-worth-series.mjs";
 import { buildBackup, restorePlan } from "./core/backup.mjs";
 import { taxYearEndChecklist } from "./core/tax-year-end.mjs";
@@ -287,6 +287,17 @@ export default function App() {
     }),
     today: todayISO(), horizonDays: 365,
   }), [incomeEntries, txns, cashAccounts, giltData, deferredCashAwards, deferredCashVests, rsuGrants, rsuEvents, prices]);
+
+  // Forward investment income over the next 12 months for the Budget tab's
+  // projected-coverage line: recurring INVESTMENT income only — forecast
+  // dividends + interest + gilt coupons. Deliberately excludes gilt
+  // redemptions (return of capital), RSU vests and deferred-cash tranches
+  // (employment/equity comp, not investment income), to stay apples-to-apples
+  // with the actuals line that sums the dividend/interest ledger.
+  const projectedInvestmentIncome = useMemo(() => {
+    const by = summariseBySource(incomeCalendar);
+    return ["dividend", "interest", "gilt-coupon"].reduce((s, k) => s + (by[k]?.total || 0), 0);
+  }, [incomeCalendar]);
 
   // Individual gilts are CGT-exempt (TCGA 1992 s115), but `matched` (the raw
   // matching engine output) doesn't know about instrument type — it'll happily
@@ -656,7 +667,7 @@ export default function App() {
               }} />}
               {tab === "allowances" && <AllowancesTab eriTxns={eriTxns} taxableDisposals={taxableDisposals} />}
               {tab === "income" && <IncomeTab {...{ eriTxns, incomeByYear, incomeAllWrappers, txns: giaTxns, incomeCalendar }} />}
-              {tab === "budget" && <BudgetTab setTab={setTab} />}
+              {tab === "budget" && <BudgetTab setTab={setTab} projectedIncome={projectedInvestmentIncome} />}
               {tab === "holdings" && <HoldingsTab positions={wealthModel ? wealthModel.positions : []} model={wealthModel} concentration={exposureConcentration} aiSnapshot={aiSnapshot} />}
               {tab === "property" && <PropertyTab />}
               {tab === "private" && <PrivateTab />}
