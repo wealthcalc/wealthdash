@@ -86,6 +86,22 @@ test("buildIncomeCalendar: a fully sold holding gets no forecast dividends", () 
   assert.equal(events.filter((e) => e.source === "dividend").length, 0);
 });
 
+test("buildIncomeCalendar: a gilt's imported coupons don't double-count against the scheduled gilt forecast", () => {
+  // TN28 coupons land in the ledger as "interest" (broker import) AND are
+  // forecast forward from the holding as scheduled gilt cashflows. Only the
+  // scheduled forecast should count — the backward interest projection is
+  // disapplied for any ticker with a gilt schedule.
+  const giltCashflows = [{ date: "2026-08-01", type: "coupon", amount: 62.5, ticker: "TN28" }];
+  const txns = [{ date: "2020-01-01", ticker: "TN28", side: "BUY", quantity: 10000 }];
+  const incomeEntries = [
+    { date: "2025-08-01", ticker: "TN28", kind: "interest", amount: 62.5, wrapper: "GIA" },
+    { date: "2026-02-01", ticker: "TN28", kind: "interest", amount: 62.5, wrapper: "GIA" },
+  ];
+  const events = buildIncomeCalendar({ giltCashflows, incomeEntries, txns, today: TODAY, horizonDays: 365 });
+  assert.equal(events.filter((e) => e.source === "interest").length, 0, "no backward interest projection for the gilt");
+  assert.equal(events.filter((e) => e.source === "gilt-coupon").length, 1, "the scheduled gilt coupon is the single source");
+});
+
 test("buildIncomeCalendar: blank-ticker interest is forecast regardless of holdings", () => {
   const incomeEntries = [
     { date: "2026-01-01", ticker: "", kind: "interest", amount: 20 },

@@ -120,7 +120,9 @@ export function buildIncomeCalendar({
   }
 
   // 1. Gilts — contractually scheduled, not estimated.
+  const giltTickers = new Set();
   for (const cf of giltCashflows) {
+    if (cf.ticker) giltTickers.add(cf.ticker);
     if (cf.date > today && cf.date <= horizonISO) {
       events.push({
         date: cf.date, source: cf.type === "redemption" ? "gilt-redemption" : "gilt-coupon",
@@ -150,6 +152,14 @@ export function buildIncomeCalendar({
     const amounts = order.map((i) => s.amounts[i]);
     const wrappers = order.map((i) => s.wrappers[i]);
     if (dates.length < 2) continue;
+    // A gilt's coupons arrive from the SCHEDULED gilt cashflows (section 1),
+    // computed forward from the current holding. Brokers/banks import those
+    // same coupons into the ledger as "interest", which would otherwise get a
+    // second, backward-looking projection here — double-counting the gilt in
+    // the next-12-months total, and mis-forecasting whenever the holding has
+    // changed. Suppress the backward projection for any ticker that already
+    // has a forward gilt schedule.
+    if (s.ticker && giltTickers.has(s.ticker)) continue;
     if (s.ticker && unitsHeldAt(txns, today, s.ticker) <= 1e-9) continue; // fully sold — no future income
     const cadence = detectCadence(dates);
     // FALLBACK for irregular-but-established payers — the VCT case. VCTs
