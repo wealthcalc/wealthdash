@@ -273,6 +273,25 @@ test("averageAnnualBudget normalises ALL history to a representative year", asyn
   assert.equal(empty.summary.essentialPct, null);
 });
 
+test("forecastAnnualSpend: representative annual actuals uplifted by inflation", async () => {
+  const { forecastAnnualSpend } = await import("../core/budget.mjs");
+  const txns = [];
+  for (let i = 0; i < 18; i++) {
+    const y = 2025 + Math.floor(i / 12), mo = (i % 12) + 1;
+    txns.push({ id: `g${i}`, date: `${y}-${String(mo).padStart(2, "0")}-05`, amount: 600, categoryId: "gro" });
+  }
+  txns.push({ id: "spike", date: "2025-03-11", amount: 3600, categoryId: "fun" }); // one-off, diluted by averaging
+  const f = forecastAnnualSpend({ categories: CATS, txns, toMonth: "2026-06", inflationPct: 3 });
+  assert.equal(f.monthsWithData, 18);
+  assert.equal(f.baseTotal, 9600);      // 7200 groceries + 2400 eating out (representative year)
+  assert.equal(f.baseEssential, 7200);  // groceries only
+  assert.equal(f.total, 9888);          // ×1.03
+  assert.equal(f.essential, 7416);      // 7200 ×1.03
+  // zero inflation equals the base; empty history is a safe zero
+  assert.equal(forecastAnnualSpend({ categories: CATS, txns, toMonth: "2026-06", inflationPct: 0 }).total, 9600);
+  assert.equal(forecastAnnualSpend({ categories: CATS, txns: [], toMonth: "2026-06", inflationPct: 3 }).total, 0);
+});
+
 test("annualBudget pro-rates annual-only limits to the window (the YTD fix)", () => {
   const txns = [{ id: 1, date: "2026-03-11", amount: 300, categoryId: "ins" }]; // annual insurance, part paid
   // Full 12-month window: annual limit is the whole £720 (unchanged).

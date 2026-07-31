@@ -1,7 +1,8 @@
 import React, { useState, useMemo, useRef } from "react";
 import { Plus, Trash2, Upload, Check, AlertTriangle, Wand2 } from "lucide-react";
 import { ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, PieChart, Pie, Cell, Sector } from "recharts";
-import { monthlyBudget, annualBudget, averageAnnualBudget, spendByMonth, trailing12, mergedSpend, spendByCategory, withComparison, monthRange, yearOverlay, discretionaryRunway } from "../core/budget.mjs";
+import { monthlyBudget, annualBudget, averageAnnualBudget, forecastAnnualSpend, spendByMonth, trailing12, mergedSpend, spendByCategory, withComparison, monthRange, yearOverlay, discretionaryRunway } from "../core/budget.mjs";
+import { effInflation } from "../core/drawdown.mjs";
 import { uncategorisedGroups, suggestRule, normaliseMerchant } from "../core/categorise.mjs";
 import { detectRecurring, topMerchants } from "../core/detect-recurring.mjs";
 import { parseStatement, dedupeStatement, PROFILES } from "../core/statement-import.mjs";
@@ -129,6 +130,16 @@ function Overview({ categories, txns, month, setMonth, setSub, drillTo, incomeEn
   // month are one tap away for "did I overspend recently?".
   const [view, setView] = useState(() => store.get("cgt.budget.view", "year"));
   React.useEffect(() => store.set("cgt.budget.view", view), [view]);
+  // Basis for the FORWARD spend estimate on the projected-coverage line:
+  // "budget" = the planned annual budget; "forecast" = representative annual
+  // actual spend (all history, averaged) uprated by the plan's inflation.
+  const [spendBasis, setSpendBasis] = useState(() => store.get("cgt.budget.spendbasis", "budget"));
+  React.useEffect(() => store.set("cgt.budget.spendbasis", spendBasis), [spendBasis]);
+  const planInputs = useAppStore((st) => st.planInputs) || {};
+  const inflPct = Number.isFinite(+planInputs.inflation)
+    ? effInflation({ inflation: +planInputs.inflation, inflMode: planInputs.inflMode || "cpi", rpiWedge: +planInputs.rpiWedge || 0 })
+    : 3; // sensible default when the plan hasn't been set up yet
+  const forecast = useMemo(() => forecastAnnualSpend({ categories, txns, toMonth: month, inflationPct: inflPct }), [categories, txns, month, inflPct]);
   const m = useMemo(() => monthlyBudget({ categories, txns, month }), [categories, txns, month]);
   const a = useMemo(() => annualBudget({ categories, txns, month }), [categories, txns, month]);
   // "avg" view: representative 12 months from ALL history (dilutes one-off
@@ -247,18 +258,41 @@ function Overview({ categories, txns, month, setMonth, setSub, drillTo, incomeEn
 
       {/* FORWARD companion to the line above — projected next-12m investment
           income (income calendar: forecast dividends + interest + gilt coupons)
-          vs the PLANNED annual budget (both forward, so apples-to-apples).
-          Answers "will passive income cover the plan?" alongside the "did it?"
-          above. View-independent — it's always the next-12-months projection. */}
+          vs projected annual spend (both forward, so apples-to-apples). Spend
+          basis is switchable: the planned budget, or a data-driven forecast
+          (representative annual actual spend × the plan's inflation). Answers
+          "will passive income cover it?" alongside the "did it?" above.
+          View-independent — always the next-12-months projection. */}
       {(() => {
-        const projSpend = a.summary.totalLimit;      // full-year budgeted spend
-        const projEssential = a.summary.essentialLimit;
-        if (!(projectedIncome > 0) || !(projSpend > 0)) return null;
+        if (!(projectedIncome > 0)) return null;
+        const enoughHistory = forecast.monthsWithData >= 3;
+        const useForecast = spendBasis === "forecast" && enoughHistory;
+        const projSpend = useForecast ? forecast.total : a.summary.totalLimit;
+        const projEssential = useForecast ? forecast.essential : a.summary.essentialLimit;
+        if (!(projSpend > 0)) return null;
         const covers = projectedIncome / projSpend * 100;
         const coversEssential = projEssential > 0 ? projectedIncome / projEssential * 100 : null;
+        const effBasis = useForecast ? "forecast" : "budget";
         return (
-          <div className="rounded-xl border border-dashed border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-xs text-[var(--muted)]">
-            Projected investment income (next 12 months): <strong className="text-[var(--gain)]">{gbp0(projectedIncome)}</strong> — expected to cover <strong className="text-[var(--fg)]">{Math.round(covers)}%</strong> of your {gbp0(projSpend)} planned spend{coversEssential != null && <>, and <strong className={coversEssential >= 100 ? "text-[var(--gain)]" : "text-[var(--fg)]"}>{Math.round(coversEssential)}%</strong> of the {gbp0(projEssential)} essential</>}. <span className="text-[10px]">(forecast from current holdings vs your annual budget; a dashed box = estimate, not actuals)</span>
+          <div className="rounded-xl border border-dashed border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-xs text-[var(--muted)] space-y-1.5">
+            <div className="flex items-start justify-between gap-3 flex-wrap">
+              <span>Projected investment income (next 12 months): <strong className="text-[var(--gain)]">{gbp0(projectedIncome)}</strong> — expected to cover <strong className="text-[var(--fg)]">{Math.round(covers)}%</strong> of your {gbp0(projSpend)} projected spend{coversEssential != null && <>, and <strong className={coversEssential >= 100 ? "text-[var(--gain)]" : "text-[var(--fg)]"}>{Math.round(coversEssential)}%</strong> of the {gbp0(projEssential)} essential</>}.</span>
+              <span className="flex gap-1 shrink-0">
+                {[["budget", "Planned budget"], ["forecast", "History + inflation"]].map(([k, l]) => {
+                  const disabled = k === "forecast" && !enoughHistory;
+                  return (
+                    <button key={k} onClick={() => setSpendBasis(k)} disabled={disabled}
+                      title={disabled ? "Needs at least 3 months of spending history to average" : ""}
+                      className={"text-[10px] px-2 py-0.5 rounded-md border transition " + (effBasis === k
+                        ? "border-[var(--accent)] bg-[color:color-mix(in_srgb,var(--accent)_15%,transparent)] text-[var(--fg)]"
+                        : disabled ? "border-[var(--border)] opacity-40 cursor-not-allowed" : "border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)]")}>{l}</button>
+                  );
+                })}
+              </span>
+            </div>
+            <div className="text-[10px] leading-relaxed">{useForecast
+              ? <>Spend = your representative annual spend of {gbp0(forecast.baseTotal)} (averaged across {forecast.monthsWithData} months of history) uprated {forecast.inflationPct}% for inflation (from your plan). Income forecast from current holdings. Dashed box = estimate, not actuals.</>
+              : <>Spend = your planned annual budget. Income forecast from current holdings. {enoughHistory ? "Switch to “History + inflation” for a data-driven spend estimate. " : ""}Dashed box = estimate, not actuals.</>}</div>
           </div>
         );
       })()}

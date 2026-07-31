@@ -328,6 +328,28 @@ export function averageAnnualBudget({ categories = [], txns = [], toMonth } = {}
   };
 }
 
+// Forward annual spend FORECAST — a data-driven alternative to the planned
+// budget for "what will I actually spend over the next 12 months". Takes the
+// representative annual ACTUAL spend (averaged across all history via
+// averageAnnualBudget, so a single expensive year doesn't dominate) and uprates
+// it by one year of general inflation. A blanket uplift, not per-category:
+// simple and honest, and the inflation % is the plan's own assumption so the
+// app carries one number. `monthsWithData` lets the caller warn when there's
+// too little history to trust the average. Pure, node-tested.
+export function forecastAnnualSpend({ categories = [], txns = [], toMonth, inflationPct = 0 } = {}) {
+  const avg = averageAnnualBudget({ categories, txns, toMonth });
+  const infl = Math.max(0, +inflationPct || 0);
+  const f = 1 + infl / 100;
+  return {
+    total: r2(avg.summary.totalActual * f),
+    essential: r2(avg.summary.essentialActual * f),
+    baseTotal: r2(avg.summary.totalActual),
+    baseEssential: r2(avg.summary.essentialActual),
+    monthsWithData: avg.summary.monthsWithData,
+    inflationPct: r2(infl),
+  };
+}
+
 // Year-overlay data: each calendar year's spend accumulated month by
 // month (Jan..Dec), so the years can be drawn on top of one another and
 // the current year's running total read against prior years — the "am I
