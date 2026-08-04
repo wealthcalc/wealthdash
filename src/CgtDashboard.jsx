@@ -525,15 +525,53 @@ export default function App() {
           --m-same:#38bdf8;--m-bb:#fbbf24;--m-pool:#a5b4fc;--chip:#1a2230;
         }
         .num{font-variant-numeric:tabular-nums;font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;}
+        /* ---- PRINT ----------------------------------------------------
+           Two modes. A screen that nominates a .print-area (the CGT report)
+           prints ONLY that, as before. Every other screen used to print a
+           blank page, because the old rule hid everything and nothing else
+           opts in — so there's now a fallback that prints the main content
+           with the app chrome stripped. Paper is always light-on-white
+           regardless of the on-screen theme: printing a dark UI wastes ink
+           and is unreadable. */
+        @page { margin: 14mm; }
         @media print {
-          body * { visibility: hidden !important; }
-          .print-area, .print-area * { visibility: visible !important; }
-          .print-area { position: absolute; left: 0; top: 0; width: 100%; padding: 24px;
+          .print-only { display: block !important; }
+          /* Light palette on paper, whichever theme is on screen. */
+          .root, .print-area {
             --bg:#fff; --panel:#fff; --panel2:#f6f7f9; --fg:#000; --muted:#444; --border:#ccc;
-            --gain:#065f46; --loss:#9f1239; --accent:#1e293b; }
+            --gain:#065f46; --loss:#9f1239; --accent:#1e293b; --accent-fg:#fff; --chip:#f1f3f6;
+          }
+          body { background:#fff !important; }
+          * { box-shadow: none !important; text-shadow: none !important; }
+
+          /* Focused mode: a screen nominated a region to print. */
+          body:has(.print-area) * { visibility: hidden !important; }
+          body:has(.print-area) .print-area,
+          body:has(.print-area) .print-area * { visibility: visible !important; }
+          body:has(.print-area) .print-area { position:absolute; left:0; top:0; width:100%; padding:0; border:none !important; }
+
+          /* Fallback: no nominated region — print the main content, minus chrome. */
+          body:not(:has(.print-area)) aside,
+          body:not(:has(.print-area)) nav,
+          body:not(:has(.print-area)) header button,
           .no-print { display: none !important; }
-          table { page-break-inside: auto; } tr { page-break-inside: avoid; }
+          main { padding: 0 !important; }
+
+          /* Keep tables and cards readable across page boundaries. */
+          table { page-break-inside: auto; border-collapse: collapse; }
+          tr, img, svg { page-break-inside: avoid; }
+          thead { display: table-header-group; }   /* repeat headers on each page */
+          tfoot { display: table-footer-group; }
+          h1, h2, h3 { page-break-after: avoid; break-after: avoid-page; }
+          .rounded-xl, .rounded-lg { page-break-inside: avoid; }
+          /* Collapsed disclosure content is still content when on paper. */
+          details { display: block !important; }
+          details > summary { display: none !important; }
+          details > *:not(summary) { display: revert !important; }
+          /* Long links/URLs shouldn't run off the page. */
+          a[href]::after { content: ""; }
         }
+        .print-only { display: none; }
       `}</style>
       <a href="#main-content" className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[100] focus:px-3 focus:py-2 focus:rounded-lg focus:bg-[var(--accent)] focus:text-[var(--accent-fg)] focus:text-sm focus:font-medium">
         Skip to main content
@@ -546,6 +584,11 @@ export default function App() {
         {/* One host for the whole app — deletes anywhere surface here. */}
         <UndoToast />
         <main id="main-content" tabIndex={-1} className="flex-1 min-w-0">
+          {/* Paper needs to say what it is and when it was run — a printout
+              handed to an accountant is otherwise an undated anonymous table. */}
+          <div className="print-only" style={{ marginBottom: 12, paddingBottom: 8, borderBottom: "1px solid #ccc", fontSize: 12, color: "#444" }}>
+            <strong style={{ color: "#000" }}>Wealth Dashboard</strong> — {LEAF_LABELS[tab] || ""} · printed {todayISO()}
+          </div>
           <div className="max-w-5xl mx-auto px-4 sm:px-6 py-6">
             {/* header */}
             <div className="flex items-center justify-between gap-3 flex-wrap">
