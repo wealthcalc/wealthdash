@@ -133,10 +133,25 @@ test("dedupe makes overlapping re-downloads safe", () => {
     statementKey({ ...a, description: "tesco   stores 3155" }),
     statementKey(a)
   );
-  // but a different amount is a different transaction (two identical-looking
-  // coffees on the same day are genuinely two transactions... this is the
-  // known limit: same-day, same-merchant, same-amount pairs collapse.)
+  // a different amount is a different transaction
   assert.notEqual(statementKey({ ...a, amount: 42.11 }), statementKey(a));
+});
+
+test("dedupe counts occurrences, so genuine same-day repeats survive", () => {
+  // Two identical coffees on one day are real spending. This used to collapse
+  // to one (set-based dedupe), quietly understating the budget.
+  const c = { date: "2026-03-04", description: "COSTA", amount: 3.2, account: "Amex" };
+  assert.equal(dedupeStatement([c, c], []).rows.length, 2, "both survive a first import");
+
+  // Re-importing that same window still adds nothing.
+  const second = dedupeStatement([c, c], [c, c]);
+  assert.equal(second.rows.length, 0);
+  assert.equal(second.duplicates.length, 2);
+
+  // A third genuine coffee against two already held adds exactly one.
+  const third = dedupeStatement([c, c, c], [c, c]);
+  assert.equal(third.rows.length, 1);
+  assert.equal(third.duplicates.length, 2);
 });
 
 test("Revolut: COMPLETED-only, skips exchanges, converts foreign currency, adds fees", () => {

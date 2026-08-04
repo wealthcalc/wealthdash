@@ -35,6 +35,16 @@ function clear() {
   _emit();
 }
 
+// Read the pending offer, and subscribe to changes. UndoToast reads the
+// module state directly (it's in the same file); these exist so anything
+// OUTSIDE this file — notably the interaction tests — can observe the queue
+// without reaching into private module state.
+export const currentUndo = () => _current;
+export function subscribeUndo(fn) {
+  _subs.add(fn);
+  return () => { _subs.delete(fn); };
+}
+
 // Show an undo offer. Any pending offer is committed (dropped) first.
 export function showUndo({ message, onUndo, ms = DEFAULT_MS }) {
   if (_timer) clearTimeout(_timer);
