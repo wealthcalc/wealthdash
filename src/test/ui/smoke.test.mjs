@@ -31,6 +31,7 @@ import PensionTab from "../../features/PensionTab.jsx";
 import AllowancesTab from "../../features/AllowancesTab.jsx";
 import ReturnsTab from "../../features/ReturnsTab.jsx";
 import ErrorBoundary from "../../ui/ErrorBoundary.jsx";
+import AssumptionsTab from "../../features/AssumptionsTab.jsx";
 
 // Minimal but real derived model — two priced holdings across wrappers.
 const TXNS = [
@@ -54,6 +55,17 @@ test("sidebar renders every screen and every leaf has a label + screen", () => {
     }
   }
   assert.ok(html.includes("⌘K"));
+});
+
+test("assumptions tab lists every registry entry with what it drives", async () => {
+  const { ASSUMPTIONS } = await import("../../core/assumptions.mjs");
+  const html = renderToString(React.createElement(AssumptionsTab, { setTab: () => {} }))
+    .replaceAll("&amp;", "&").replaceAll("&#x27;", "'").replaceAll("&quot;", '"');
+  for (const a of ASSUMPTIONS) {
+    assert.ok(html.includes(a.label), `missing row: ${a.label}`);
+  }
+  assert.ok(html.includes("Drives:"), "each row explains its effect");
+  assert.ok(html.includes("set in Plan"), "plan-owned rows are marked read-only");
 });
 
 test("error boundary: passes children through, and its fallback reassures + offers a backup", () => {

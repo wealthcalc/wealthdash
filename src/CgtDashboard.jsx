@@ -50,6 +50,7 @@ const RsuTab = lazy(() => import("./features/RsuTab.jsx"));
 const SyncTab = lazy(() => import("./features/SyncTab.jsx"));
 const DeferredCashTab = lazy(() => import("./features/DeferredCashTab.jsx"));
 const BudgetTab = lazy(() => import("./features/BudgetTab.jsx"));
+const AssumptionsTab = lazy(() => import("./features/AssumptionsTab.jsx"));
 
 /* ============================== app =================================== */
 export default function App() {
@@ -683,6 +684,7 @@ export default function App() {
               {tab === "ledger" && <LedgerTab />}
               {tab === "sync" && <SyncTab />}
               {tab === "import" && <ImportTab setTab={setTab} recomputeProviderCost={recomputeProviderCost} />}
+              {tab === "assumptions" && <AssumptionsTab setTab={setTab} />}
             </Suspense>
             </ErrorBoundary>
             </div>

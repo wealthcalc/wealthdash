@@ -40,6 +40,7 @@ export const PERSIST_KEYS = {
   otherLiabilities: "cgt.otherliabilities",
   cashAccounts: "cgt.cashaccounts",
   allowanceOverrides: "cgt.allowanceoverrides",
+  assumptionOverrides: "cgt.assumptionoverrides",
   planInputs: "cgt.planinputs",
   privateHoldings: "cgt.privateholdings",
   privateEvents: "cgt.privateevents",

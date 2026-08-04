@@ -4,6 +4,7 @@ import { ukTaxYear } from "../core/cgt-engine.mjs";
 import { cfgFor, aeaForYear, paFor, liabilityForYear, sharesForTargetGain, nextTaxYear, optimiseDisposals } from "../core/uk-tax.mjs";
 import { buildTaxPack, renderTaxPackHTML } from "../core/tax-pack.mjs";
 import { locationPlan } from "../core/asset-location.mjs";
+import { resolveAssumptions, kindAssumptionsFrom } from "../core/assumptions.mjs";
 import { ISA_LIMIT, isaSubscriptionsByYear, realisedForYear, bedAndIsaPlan, lossHarvest } from "../core/allowances.mjs";
 import { rebalancePlan, BUCKETS, BUCKET_LABEL } from "../core/rebalancing.mjs";
 import { KIND_LABEL, store, fmtRate, gbp, gbp0, WrapperChip, SubTabs, num, uid, todayISO, METHOD, CurrencyInput, NumberInput, Field, Stat, Row, MethodChip, Empty } from "../ui/shared.jsx";
@@ -21,6 +22,7 @@ function CgtSection(props) {
   const prices = useAppStore((s) => s.prices), setPrices = useAppStore((s) => s.setPrices);
   const secMeta = useAppStore((s) => s.secMeta);
   const incomeEntries = useAppStore((s) => s.incomeEntries);
+  const assumptionOverrides = useAppStore((s) => s.assumptionOverrides);
   const allTxns = useAppStore((s) => s.txns), setTxns = useAppStore((s) => s.setTxns);
   const [sub, setSub] = useState(() => store.get("cgt.cgtsubtab", "summary"));
   React.useEffect(() => store.set("cgt.cgtsubtab", sub), [sub]);
@@ -31,7 +33,7 @@ function CgtSection(props) {
         active={sub} onChange={setSub}
       />
       {sub === "summary" && <CgtTab {...{ taxYears, activeYear, setYear, yearDisposals, liab, income, setIncome, carried, setCarried, carryForward, exemptGiltDisposalCount }} />}
-      {sub === "location" && <LocationTab {...{ positions: positions || [], secMeta, income, incomeEntries }} />}
+      {sub === "location" && <LocationTab {...{ positions: positions || [], secMeta, income, incomeEntries, assumptionOverrides }} />}
       {sub === "planning" && <PlanningTab {...{ pools, prices, setPrices, disposals, txns, income }} />}
       {sub === "bedisa" && <BedIsaTab {...{ pools, prices, disposals, income, allTxns, secMeta, setTxns }} />}
       {sub === "rebalance" && <RebalanceTab {...{ positions: positions || [], disposals, income }} />}
@@ -46,8 +48,15 @@ function CgtSection(props) {
 // estimated annual tax drag of each holding if held in the GIA, the
 // minimum drag achievable given current shelter capacity, and the moves
 // that close the gap. The Bed & ISA tab prices any actual move.
-function LocationTab({ positions = [], secMeta = {}, income = 0, incomeEntries = [] }) {
-  const plan = useMemo(() => locationPlan({ positions, secMeta, income, incomeEntries, today: todayISO() }), [positions, secMeta, income, incomeEntries]);
+function LocationTab({ positions = [], secMeta = {}, income = 0, incomeEntries = [], assumptionOverrides = {} }) {
+  // Yields/growth/realisation discount come from the Assumptions screen
+  // (core/assumptions.mjs) so this tab reflects the user's own estimates.
+  const resolvedA = useMemo(() => resolveAssumptions(assumptionOverrides || {}), [assumptionOverrides]);
+  const kindAssumptions = useMemo(() => kindAssumptionsFrom(resolvedA), [resolvedA]);
+  const plan = useMemo(() => locationPlan({
+    positions, secMeta, income, incomeEntries, today: todayISO(),
+    kindAssumptions, realisationFactor: resolvedA.realisationFactor,
+  }), [positions, secMeta, income, incomeEntries, kindAssumptions, resolvedA.realisationFactor]);
   const vctValue = useMemo(() => positions
     .filter((p) => p.priced && p.marketValue > 0 && String(p.wrapper).toUpperCase() === "VCT")
     .reduce((s, p) => s + p.marketValue, 0), [positions]);
@@ -100,7 +109,7 @@ function LocationTab({ positions = [], secMeta = {}, income = 0, incomeEntries =
         </table>
       </div>
       <p className="text-xs text-[var(--muted)] leading-relaxed">
-        Drag = income yield × your marginal rate ({(plan.rates.dividend * 100).toFixed(2)}% dividends / {(plan.rates.interest * 100).toFixed(0)}% interest at your income) + expected growth × {(plan.rates.cgt * 100).toFixed(0)}% CGT × 0.5 realisation discount. Income yield uses each holding's actual trailing-12-month dividends/interest where a payment history exists; <span className="whitespace-nowrap">† = a kind-based assumption</span> (no payments yet, so same-type holdings share a figure), <span className="whitespace-nowrap">◊ = a manual override</span>. Growth is always a kind assumption. Individual gilts are CGT-exempt, which is why low-coupon gilts belong OUTSIDE the shelter. Dividend allowance and PSA aren't netted per holding — the drag is slightly overstated, uniformly. Estimates to guide placement, not tax advice.
+        Drag = income yield × your marginal rate ({(plan.rates.dividend * 100).toFixed(2)}% dividends / {(plan.rates.interest * 100).toFixed(0)}% interest at your income) + expected growth × {(plan.rates.cgt * 100).toFixed(0)}% CGT × {resolvedA.realisationFactor} realisation discount (all editable under Data → Assumptions). Income yield uses each holding's actual trailing-12-month dividends/interest where a payment history exists; <span className="whitespace-nowrap">† = a kind-based assumption</span> (no payments yet, so same-type holdings share a figure), <span className="whitespace-nowrap">◊ = a manual override</span>. Growth is always a kind assumption. Individual gilts are CGT-exempt, which is why low-coupon gilts belong OUTSIDE the shelter. Dividend allowance and PSA aren't netted per holding — the drag is slightly overstated, uniformly. Estimates to guide placement, not tax advice.
       </p>
       <p className="text-xs text-[var(--muted)] leading-relaxed">
         Rows marked <span className="whitespace-nowrap">(sheltered)</span> — ISA, SIPP, LISA — pay <span className="font-medium">£0 of this drag now</span> and are excluded from "Annual tax drag now"; the percentage shows only what they'd cost if moved to a GIA, used to rank which holdings most deserve the limited shelter. A SIPP defers annual drag exactly like an ISA, but its withdrawals are later taxed as income — so where you have a choice, put your highest-growth holdings in the ISA and use SIPP room for lower-growth or income assets.

@@ -74,6 +74,10 @@ const useAppStore = create((set) => {
     // back to the old mixed-case key once, for anyone with overrides saved there.
     allowanceOverrides: ls.get("cgt.allowanceoverrides", ls.get("cgt.allowanceOverrides", {})),
     setAllowanceOverrides: upd("allowanceOverrides"),
+    // Sparse map of user-overridden modelling assumptions (core/assumptions.mjs)
+    // — only what was actually changed, so defaults can improve over time.
+    assumptionOverrides: ls.get("cgt.assumptionoverrides", {}),
+    setAssumptionOverrides: upd("assumptionOverrides"),
     // UK retirement planner inputs (Plan tab). Previously lived entirely
     // OUTSIDE this store — component-local state backed by its own
     // `localStorage.setItem("uk-retirement-planner:inputs", JSON.stringify(p))`
