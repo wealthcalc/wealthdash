@@ -32,6 +32,7 @@ import AllowancesTab from "../../features/AllowancesTab.jsx";
 import ReturnsTab from "../../features/ReturnsTab.jsx";
 import ErrorBoundary from "../../ui/ErrorBoundary.jsx";
 import AssumptionsTab from "../../features/AssumptionsTab.jsx";
+import PlanTab from "../../features/PlanTab.jsx";
 
 // Minimal but real derived model — two priced holdings across wrappers.
 const TXNS = [
@@ -55,6 +56,18 @@ test("sidebar renders every screen and every leaf has a label + screen", () => {
     }
   }
   assert.ok(html.includes("⌘K"));
+});
+
+test("plan tab renders after the plan/* file split — every sub-module resolves", () => {
+  // The split moved ~2,400 lines into plan/theme, plan/controls, plan/scenarios
+  // and the three sub-tab modules. A missing export or a circular import would
+  // throw here rather than at runtime in the browser.
+  const html = renderToString(React.createElement(PlanTab, {
+    dark: true, planInputs: null, setPlanInputs: () => {},
+    livePots: null, liveSalary: null, liveOtherNetWorth: null, liveEstate: null,
+    giltCashflows: [], forwardDividends: 0,
+  }));
+  assert.ok(html.length > 500, "renders substantive markup");
 });
 
 test("assumptions tab lists every registry entry with what it drives", async () => {
