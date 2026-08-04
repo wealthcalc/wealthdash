@@ -7,7 +7,7 @@ import { locationPlan } from "../core/asset-location.mjs";
 import { resolveAssumptions, kindAssumptionsFrom } from "../core/assumptions.mjs";
 import { ISA_LIMIT, isaSubscriptionsByYear, realisedForYear, bedAndIsaPlan, lossHarvest } from "../core/allowances.mjs";
 import { rebalancePlan, BUCKETS, BUCKET_LABEL } from "../core/rebalancing.mjs";
-import { KIND_LABEL, store, fmtRate, gbp, gbp0, WrapperChip, SubTabs, num, uid, todayISO, METHOD, CurrencyInput, NumberInput, Field, Stat, Row, MethodChip, Empty } from "../ui/shared.jsx";
+import { KIND_LABEL, store, fmtRate, gbp, gbp0, WrapperChip, SubTabs, SegmentedControl, num, uid, todayISO, METHOD, CurrencyInput, NumberInput, Field, Stat, Row, MethodChip, Empty } from "../ui/shared.jsx";
 import useAppStore from "../state/appStore.js";
 
 function CgtSection(props) {
@@ -693,12 +693,8 @@ function MultiYearOptimiser({ pools, prices, income }) {
       </p>
 
       <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3 space-y-3">
-        <div className="flex flex-wrap gap-1">
-          {MYO_STRATEGIES.map((s) => (
-            <button key={s.key} onClick={() => setStrategyKey(s.key)}
-              className={"text-xs px-3 py-1.5 rounded-lg border " + (strategyKey === s.key ? "border-[var(--accent)] bg-[color:color-mix(in_srgb,var(--accent)_15%,transparent)] text-[var(--fg)]" : "border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)]")}>{s.label}</button>
-          ))}
-        </div>
+        <SegmentedControl ariaLabel="Disposal strategy" value={strategyKey} onChange={setStrategyKey}
+          options={MYO_STRATEGIES.map((s) => [s.key, s.label])} />
         <p className="text-xs text-[var(--muted)]">{strategy.blurb}</p>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 items-end">
           <Field label="Start tax year"><select value={startYear} onChange={(e) => setStartYear(e.target.value)} className="input w-full">{startOpts.map((y) => <option key={y}>{y}</option>)}</select></Field>

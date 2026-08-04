@@ -110,7 +110,7 @@ function ImportTab({ setTab, recomputeProviderCost }) {
 
   // ---- IBKR ----
   const parseIb = (text) => { const t = (text ?? raw).trim(); if (!t) return; setIb(parseIBKR(t, { defaultWrapper: wrapper, seedByIsin })); };
-  React.useEffect(() => { if (ib) setIb((r) => ({ ...r, trades: r.trades.map((t) => ({ ...t, wrapper })), income: r.income.map((t) => ({ ...t, wrapper })) })); }, [wrapper]); // eslint-disable-line
+  React.useEffect(() => { if (ib) setIb((r) => ({ ...r, trades: r.trades.map((t) => ({ ...t, wrapper })), income: r.income.map((t) => ({ ...t, wrapper })) })); }, [wrapper]);  
 
   // ---- IBKR: live pull via the Flex Web Service (api/ibkr-flex.mjs proxies
   // the SendRequest -> GetStatement flow — IBKR has no CORS for browsers).
@@ -306,7 +306,7 @@ function ImportTab({ setTab, recomputeProviderCost }) {
   const rows = useMemo(() => onlyHeld ? allRows.filter((r) => heldIsins.has(r.isin)) : allRows, [allRows, onlyHeld, heldIsins]);
   React.useEffect(() => {
     const c = {}; rows.forEach((r) => { c[r.isin] = true; }); setChecked(c);
-  }, [sheet, onlyHeld]); // eslint-disable-line
+  }, [sheet, onlyHeld]);  
   const toggleAll = (v) => { const c = {}; rows.forEach((r) => { c[r.isin] = v; }); setChecked(c); };
   const selectedCount = rows.filter((r) => checked[r.isin]).length;
 
