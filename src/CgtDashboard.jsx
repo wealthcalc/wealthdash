@@ -23,7 +23,8 @@ import { portfolioExposure } from "./core/lookthrough.mjs";
 import { pensionXirrByWrapper } from "./core/returns.mjs";
 import { renderAiSnapshot } from "./core/ai-snapshot.mjs";
 import { unitsHeldAt, uid, todayISO, IconBtn, store as lsStore } from "./ui/shared.jsx";
-import { DesktopSidebar, MobileDrawer, SubTabBar, SCREENS } from "./ui/Sidebar.jsx";
+import { DesktopSidebar, MobileDrawer, SubTabBar, SCREENS, LEAF_LABELS } from "./ui/Sidebar.jsx";
+import ErrorBoundary from "./ui/ErrorBoundary.jsx";
 import CommandPalette from "./ui/CommandPalette.jsx";
 import { UndoToast } from "./ui/undo.jsx";
 import { useIsMobile } from "./ui/useIsMobile.js";
@@ -49,6 +50,7 @@ const RsuTab = lazy(() => import("./features/RsuTab.jsx"));
 const SyncTab = lazy(() => import("./features/SyncTab.jsx"));
 const DeferredCashTab = lazy(() => import("./features/DeferredCashTab.jsx"));
 const BudgetTab = lazy(() => import("./features/BudgetTab.jsx"));
+const AssumptionsTab = lazy(() => import("./features/AssumptionsTab.jsx"));
 
 /* ============================== app =================================== */
 export default function App() {
@@ -597,12 +599,14 @@ export default function App() {
 
             {mobileSummaryMode ? (
               <div className="mt-5 space-y-4">
+                <ErrorBoundary resetKey="mobile-summary" label="The summary" onBackup={exportJSON}>
                 <Suspense fallback={<div className="text-sm text-[var(--muted)] py-6">Loading…</div>}>
                   {/* PlanHealthCard now renders INSIDE HomeTab (it's on the
                       desktop Home too since the redesign) — no separate copy
                       here or the summary would show it twice. */}
                   <HomeTab {...homeTabProps} />
                 </Suspense>
+                </ErrorBoundary>
                 <button onClick={() => setMobileFullApp(true)}
                   className="w-full inline-flex items-center justify-center gap-2 text-sm font-medium px-4 h-11 rounded-lg border border-[var(--border)] bg-[var(--panel)] hover:bg-[var(--panel2)] text-[var(--fg)]">
                   <LayoutGrid size={16} aria-hidden="true" /> Open full app — add, edit, and explore every tab
@@ -614,6 +618,10 @@ export default function App() {
             ) : (
             <div className="mt-5">
             <SubTabBar tab={tab} setTab={setTab} />
+            {/* One boundary around the active tab: a throw in any screen shows
+                a recoverable panel there instead of blanking the whole app.
+                `resetKey={tab}` clears it as soon as the user navigates away. */}
+            <ErrorBoundary resetKey={tab} label={LEAF_LABELS[tab] || "This screen"} onBackup={exportJSON}>
             <Suspense fallback={<div className="text-sm text-[var(--muted)] py-6">Loading…</div>}>
               {tab === "home" && <HomeTab {...homeTabProps} />}
               {tab === "plan" && <PlanTab {...{
@@ -676,7 +684,9 @@ export default function App() {
               {tab === "ledger" && <LedgerTab />}
               {tab === "sync" && <SyncTab />}
               {tab === "import" && <ImportTab setTab={setTab} recomputeProviderCost={recomputeProviderCost} />}
+              {tab === "assumptions" && <AssumptionsTab setTab={setTab} />}
             </Suspense>
+            </ErrorBoundary>
             </div>
             )}
 

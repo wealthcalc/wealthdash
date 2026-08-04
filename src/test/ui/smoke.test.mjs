@@ -30,6 +30,9 @@ import DeferredCashTab from "../../features/DeferredCashTab.jsx";
 import PensionTab from "../../features/PensionTab.jsx";
 import AllowancesTab from "../../features/AllowancesTab.jsx";
 import ReturnsTab from "../../features/ReturnsTab.jsx";
+import ErrorBoundary from "../../ui/ErrorBoundary.jsx";
+import AssumptionsTab from "../../features/AssumptionsTab.jsx";
+import PlanTab from "../../features/PlanTab.jsx";
 
 // Minimal but real derived model — two priced holdings across wrappers.
 const TXNS = [
@@ -53,6 +56,50 @@ test("sidebar renders every screen and every leaf has a label + screen", () => {
     }
   }
   assert.ok(html.includes("⌘K"));
+});
+
+test("plan tab renders after the plan/* file split — every sub-module resolves", () => {
+  // The split moved ~2,400 lines into plan/theme, plan/controls, plan/scenarios
+  // and the three sub-tab modules. A missing export or a circular import would
+  // throw here rather than at runtime in the browser.
+  const html = renderToString(React.createElement(PlanTab, {
+    dark: true, planInputs: null, setPlanInputs: () => {},
+    livePots: null, liveSalary: null, liveOtherNetWorth: null, liveEstate: null,
+    giltCashflows: [], forwardDividends: 0,
+  }));
+  assert.ok(html.length > 500, "renders substantive markup");
+});
+
+test("assumptions tab lists every registry entry with what it drives", async () => {
+  const { ASSUMPTIONS } = await import("../../core/assumptions.mjs");
+  const html = renderToString(React.createElement(AssumptionsTab, { setTab: () => {} }))
+    .replaceAll("&amp;", "&").replaceAll("&#x27;", "'").replaceAll("&quot;", '"');
+  for (const a of ASSUMPTIONS) {
+    assert.ok(html.includes(a.label), `missing row: ${a.label}`);
+  }
+  assert.ok(html.includes("Drives:"), "each row explains its effect");
+  assert.ok(html.includes("set in Plan"), "plan-owned rows are marked read-only");
+});
+
+test("error boundary: passes children through, and its fallback reassures + offers a backup", () => {
+  // Happy path — the boundary is invisible when nothing throws.
+  const ok = renderToString(React.createElement(ErrorBoundary, { resetKey: "home" },
+    React.createElement("p", null, "tab content")));
+  assert.ok(ok.includes("tab content"));
+
+  // getDerivedStateFromError is the contract React uses to trip the boundary.
+  const err = new Error("boom");
+  assert.deepEqual(ErrorBoundary.getDerivedStateFromError(err), { error: err });
+
+  // Fallback markup: renderToString doesn't run componentDidCatch, so drive
+  // the tripped state directly through the class's own render().
+  const inst = new ErrorBoundary({ label: "Capital gains", onBackup: () => {} });
+  inst.state = { error: err };
+  const fallback = renderToString(inst.render()).replaceAll("&#x27;", "'").replaceAll("&amp;", "&");
+  assert.ok(fallback.includes("Capital gains"), "names the failing screen");
+  assert.ok(fallback.includes("Your data is safe"), "reassures — a blank page reads as data loss");
+  assert.ok(fallback.includes("Download a backup"), "offers an escape hatch");
+  assert.ok(fallback.includes("boom"), "surfaces the technical detail");
 });
 
 test("sub-tab bar renders siblings for multi-leaf screens, nothing for single", () => {

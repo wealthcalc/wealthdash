@@ -93,11 +93,14 @@ export function yieldsByTicker({ incomeEntries = [], positions = [], today, wind
 // Annual GIA tax drag, as a FRACTION of value, for one holding.
 // Yield priority: an explicit secMeta.yieldPct (manual override) beats a real
 // ledger-derived yield, which beats the kind default.
-export function giaDragPct(position, secMeta = {}, rates, { realisationFactor = REALISATION_FACTOR, realYields = {} } = {}) {
+export function giaDragPct(position, secMeta = {}, rates, { realisationFactor = REALISATION_FACTOR, realYields = {}, kindAssumptions = null } = {}) {
   const meta = secMeta[position.ticker] || {};
   const real = realYields[position.ticker];
   const kind = position.kind || "fund";
-  const a = KIND_ASSUMPTIONS[kind] || KIND_ASSUMPTIONS.fund;
+  // The caller can supply user-overridden kind assumptions (core/assumptions.mjs);
+  // otherwise the built-in defaults apply.
+  const KA = kindAssumptions || KIND_ASSUMPTIONS;
+  const a = KA[kind] || KA.fund || KIND_ASSUMPTIONS.fund;
   let yieldPct = Number.isFinite(+meta.yieldPct) ? +meta.yieldPct
     : (real && Number.isFinite(+real.yieldPct)) ? +real.yieldPct
     : a.incomeYield;
@@ -117,7 +120,7 @@ export function giaDragPct(position, secMeta = {}, rates, { realisationFactor = 
   return (yieldPct / 100) * incomeRate + capitalDrag;
 }
 
-export function locationPlan({ positions = [], secMeta = {}, income = 0, incomeEntries = [], today } = {}) {
+export function locationPlan({ positions = [], secMeta = {}, income = 0, incomeEntries = [], today, kindAssumptions = null, realisationFactor = REALISATION_FACTOR } = {}) {
   const rates = marginalRates(income);
   const realYields = today ? yieldsByTicker({ incomeEntries, positions, today }) : {};
   const rows = [];
@@ -129,7 +132,7 @@ export function locationPlan({ positions = [], secMeta = {}, income = 0, incomeE
     // suggest sheltering something that's already tax-exempt.
     if (String(p.wrapper).toUpperCase() === "VCT") continue;
     const wrapper = p.wrapper;
-    const dragPct = giaDragPct(p, secMeta, rates, { realYields });
+    const dragPct = giaDragPct(p, secMeta, rates, { realYields, kindAssumptions, realisationFactor });
     const yieldSource = Number.isFinite(+(secMeta[p.ticker] || {}).yieldPct) ? "override"
       : realYields[p.ticker] ? "actual" : "assumed";
     rows.push({

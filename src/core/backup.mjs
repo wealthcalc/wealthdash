@@ -61,7 +61,7 @@ const TYPES = {
   budgetCategories: "array", budgetRules: "array", spendTxns: "array",
   recurringExpenses: "array",
   cash: "object", prices: "object", priceMeta: "object", avMeta: "object",
-  secMeta: "object", allowanceOverrides: "object", planInputs: "object",
+  secMeta: "object", allowanceOverrides: "object", assumptionOverrides: "object", planInputs: "object",
   income: "number", carried: "number",
   ibkrQueryId: "string", avKey: "string", ibkrToken: "string",
 };
