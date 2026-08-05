@@ -4,6 +4,75 @@ Client-side React (Vite) CGT tracker + wealth dashboard, with a Yahoo Finance
 price proxy running as a Vercel serverless function. All personal data stays in
 the browser's localStorage; the deployment ships only code.
 
+## Resilience, assumptions, and a PlanTab split
+
+A pass over the whole dashboard rather than one feature — the items a review
+surfaced as structural rather than cosmetic.
+
+- **Error boundary per tab** (`ui/ErrorBoundary.jsx`). Every tab is a lazy
+  chunk rendered into one shell, so a single throw — a NaN reaching a chart, an
+  undefined field on a half-imported row — used to unmount the *whole app* to a
+  blank page, which reads as data loss even though localStorage is untouched.
+  A boundary now contains the failure to one screen, leads with "your data is
+  safe", offers an immediate backup download, and clears itself on navigation
+  (`resetKey={tab}`). The app's only class component, deliberately: there is no
+  hook equivalent for `componentDidCatch`.
+- **Assumptions screen** (`core/assumptions.mjs`, Data → Assumptions). The app
+  makes ~15 estimates on the user's behalf (kind yields and growth, the CGT
+  realisation discount, the gilt-coupon fallback, benchmark symbol, plan
+  inflation/growth/fees/vol). Each was disclosed where it was used — honest but
+  scattered, with no way to answer "what is this assuming, and what changes if
+  I disagree?". One registry now drives a table that states **what each
+  assumption drives**, with inline overrides stored *sparsely* (only what was
+  actually changed, so improving a default later never silently overwrites a
+  real choice). Plan-owned values appear read-only with a jump to the Plan tab
+  — two editors on one number is how tabs start disagreeing. Overrides ride in
+  the backup and feed the Location tab live.
+- **`PlanTab.jsx` split** — 2,911 lines (a quarter of the UI, and the one file
+  where a change felt risky) became a 734-line shell plus `plan/theme`,
+  `plan/controls`, `plan/scenarios`, and three sub-tab modules. Presentational
+  only: all 28 components verified present, no duplicates, built chunk
+  byte-identical at 160.72 kB, plus a new `renderToString` test so a missing
+  export or circular import fails in CI rather than in the browser.
+- **Statement dedupe was destroying real spending.** `dedupeStatement` used
+  set-membership on (date + description + amount + account), so two genuine
+  £3.20 coffees on one day collapsed to one — quietly understating the budget.
+  Now counts occurrences and imports `(incoming − already held)` of each key:
+  re-importing an overlapping window still adds nothing, while a third real
+  coffee against two on file correctly adds one. This is the same multiset
+  lesson `reconcileImportRows` already learned for private-investment imports
+  (see below) — the two import paths now agree.
+- **Interaction tests** (`test/ui/flows.test.mjs`) for the three flows where a
+  bug costs real data rather than a wrong number: import dedupe, delete-with-
+  undo (restores to the *original index*, survives a later delete), and the
+  backup round-trip (secrets excluded, `secMeta` merged not replaced, malformed
+  files reported rather than half-applied). These sit between the pure-engine
+  tests, which can't see the wiring, and the render smoke tests, which don't
+  exercise behaviour.
+- **Print actually works now.** The old rule hid everything and revealed only a
+  `.print-area`, which only the CGT report declares — so every other tab
+  printed a blank page. There's now a fallback that prints main content with
+  the chrome stripped, a forced light palette (printing a dark UI is unreadable
+  and wastes ink), repeated table headers across pages, and a dated header so a
+  printout handed to an accountant isn't an anonymous undated table.
+- **Consistency rules, written down** rather than churned: `SegmentedControl`
+  in `ui/shared.jsx` replaces four hand-rolled near-identical toggles (proper
+  radiogroup + arrow keys); `gbp` vs `gbp0` now carries the rule in a comment —
+  **ledger figures show pennies, modelled figures round**, because false
+  precision on an estimate implies certainty the number doesn't have. Applying
+  that rule removed pennies from 12 Plan projection tooltips.
+- **Plan accessibility.** Its segmented pickers rendered as unnamed, stateless
+  buttons and its toggles as bare buttons inside labels that didn't associate.
+  Now `role="radiogroup"`/`radio` and `role="switch"` with `aria-checked`, every
+  group named, and sliders carry `aria-valuetext` so "6" doesn't read the same
+  for 6% growth and £6. Asserted in the smoke tests.
+
+**Charting: two idioms, one rule.** Recharts stays for composed/stacked charts
+(Budget, Income, Plan); simple donuts and sparklines are hand-rolled SVG (Home
+trend, income distribution). The two existing Income stacked bars were left on
+Recharts deliberately — rewriting working charts to shed a shared 360 kB chunk
+that Budget and Plan still load is risk without payoff.
+
 ## Private-investment import: transactions CSV + distribution-receipt paste
 
 Two paste-to-import paths on each **Private investments** holding card, for the
