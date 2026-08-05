@@ -92,7 +92,7 @@ function BtlTab({ p, det, set }) {
             <XAxis dataKey="age" tick={{ fontSize: 11, fill: T.muted }} tickLine={false} axisLine={{ stroke: T.line }} interval={3} />
             <YAxis yAxisId="l" tickFormatter={gbpK} tick={{ fontSize: 11, fill: T.muted }} tickLine={false} axisLine={false} width={48} />
             <YAxis yAxisId="r" orientation="right" tickFormatter={(v) => pct(v, 0)} tick={{ fontSize: 11, fill: T.muted }} tickLine={false} axisLine={false} width={40} domain={[0, 0.5]} />
-            <Tooltip contentStyle={tooltipStyle()} formatter={(v, n) => [n === "marginal" ? pct(v, 0) : gbp(v), n === "marginal" ? "Marginal rate" : "Net income"]} labelFormatter={(a) => `Age ${a}`} />
+            <Tooltip contentStyle={tooltipStyle()} formatter={(v, n) => [n === "marginal" ? pct(v, 0) : gbpK(v), n === "marginal" ? "Marginal rate" : "Net income"]} labelFormatter={(a) => `Age ${a}`} />
             <Bar yAxisId="l" dataKey="net" fill="#7A5C9E" name="net" radius={[3, 3, 0, 0]} />
             <Line yAxisId="r" type="stepAfter" dataKey="marginal" stroke={T.amber} strokeWidth={2} dot={false} name="marginal" />
           </ComposedChart>
@@ -110,7 +110,7 @@ function BtlTab({ p, det, set }) {
             <CartesianGrid stroke={T.lineSoft} vertical={false} />
             <XAxis dataKey="age" tick={{ fontSize: 11, fill: T.muted }} tickLine={false} axisLine={{ stroke: T.line }} interval={4} />
             <YAxis tickFormatter={gbpK} tick={{ fontSize: 11, fill: T.muted }} tickLine={false} axisLine={false} width={52} />
-            <Tooltip contentStyle={tooltipStyle()} formatter={(v, n) => [gbp(v), n === "value" ? "Property value" : "Your equity"]} labelFormatter={(a) => `Age ${a}`} />
+            <Tooltip contentStyle={tooltipStyle()} formatter={(v, n) => [gbpK(v), n === "value" ? "Property value" : "Your equity"]} labelFormatter={(a) => `Age ${a}`} />
             <ReferenceLine x={p.retireAge} stroke={T.amber} strokeDasharray="4 3" label={{ value: "Retire", position: "top", fontSize: 10, fill: T.amber }} />
             {det.btlSaleAge && <ReferenceLine x={det.btlSaleAge} stroke={T.red} strokeDasharray="4 3" label={{ value: "Sell", position: "top", fontSize: 10, fill: T.red }} />}
             <Area type="monotone" dataKey="value" stroke={T.blue} strokeWidth={1.6} fill={T.blueSoft} name="value" />

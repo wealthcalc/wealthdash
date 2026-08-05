@@ -75,6 +75,21 @@ const SECURITY_SEED = {
 
 
 /* ----------------------------- helpers ------------------------------ */
+/* Two money formatters, and the rule for choosing between them — previously
+   implicit, which is why usage looked arbitrary from the outside:
+
+   gbp()  — pennies. Use where the exact figure IS the point and someone might
+            reconcile it against a statement or a tax return: CGT gains and
+            disposals, gilt coupons and accrued interest, dividends received,
+            per-transaction amounts, realised returns.
+   gbp0() — rounded. Use where magnitude is the point and pennies are noise:
+            net worth and wrapper totals, budget limits vs spend, allowances,
+            projections and any modelled/estimated figure (false precision on
+            an estimate reads as more certainty than the number deserves).
+
+   Rule of thumb: if the number came from the LEDGER, show pennies; if it came
+   from a MODEL or is a headline total, round. Both render a real minus sign
+   (−) rather than a hyphen, so negatives line up in tabular-nums columns. */
 const gbp = (x) => (x < 0 ? "−£" : "£") + Math.abs(x).toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const gbp0 = (x) => (x < 0 ? "−£" : "£") + Math.round(Math.abs(x)).toLocaleString("en-GB");
 // One chip style per wrapper, used everywhere a wrapper tag is shown, so
@@ -117,6 +132,48 @@ function SubTabs({ tabs, active, onChange }) {
           {label}
         </button>
       ))}
+    </div>
+  );
+}
+
+/* Segmented control — one styling for the "pick one view of this data"
+   choice that had drifted into four near-identical hand-rolled versions
+   (optimiser strategy, snapshot series, income breakdown, budget spend
+   basis), each with slightly different padding, radius and active colour.
+
+   Semantics are a radiogroup rather than tabs: these switch what a panel
+   COMPUTES, they don't reveal separate tab panels. Arrow keys move between
+   options with a roving tabindex, so a keyboard user enters the group once.
+   `options` is [key, label] or [key, label, {title, disabled}]. */
+function SegmentedControl({ options, value, onChange, size = "sm", ariaLabel }) {
+  const pad = size === "xs" ? "text-[10px] px-2 py-0.5" : size === "md" ? "text-sm px-3 py-1.5" : "text-xs px-2.5 py-1";
+  const enabled = options.filter(([, , o]) => !(o && o.disabled)).map(([k]) => k);
+  const onKey = (e) => {
+    const dir = e.key === "ArrowRight" || e.key === "ArrowDown" ? 1
+      : e.key === "ArrowLeft" || e.key === "ArrowUp" ? -1 : 0;
+    if (!dir || !enabled.length) return;
+    e.preventDefault();
+    const i = enabled.indexOf(value);
+    onChange(enabled[(i + dir + enabled.length) % enabled.length]);
+  };
+  return (
+    <div role="radiogroup" aria-label={ariaLabel} className="flex flex-wrap gap-1" onKeyDown={onKey}>
+      {options.map(([k, label, opt]) => {
+        const disabled = !!(opt && opt.disabled);
+        const active = value === k;
+        return (
+          <button key={k} type="button" role="radio" aria-checked={active} disabled={disabled}
+            tabIndex={active ? 0 : -1} title={(opt && opt.title) || ""}
+            onClick={() => !disabled && onChange(k)}
+            className={`${pad} font-medium rounded-lg border transition ` + (active
+              ? "border-[var(--accent)] bg-[color:color-mix(in_srgb,var(--accent)_15%,transparent)] text-[var(--fg)]"
+              : disabled
+                ? "border-[var(--border)] text-[var(--muted)] opacity-40 cursor-not-allowed"
+                : "border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)] hover:bg-[var(--panel2)]")}>
+            {label}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -519,7 +576,7 @@ if (_style && !document.getElementById("cgt-util")) { _style.id = "cgt-util"; do
 
 export {
   store, downloadText, fmtRate, unitsHeldAt, SECURITY_SEED, gbp, gbp0,
-  WRAPPER_CHIP_CLASS, wrapperChipClass, WrapperChip, SubTabs,
+  WRAPPER_CHIP_CLASS, wrapperChipClass, WrapperChip, SubTabs, SegmentedControl,
   dmoDateToIso, fetchDmoGiltPrices, num, round2, CurrencyInput, NumberInput,
   uid, todayISO, SAMPLE, METHOD,
   AV_URL, avQuote, fxViaFrankfurter, fxViaYahoo, fxViaAlphaVantage, fxHistorical, fxToGBP, toGBP, avBudget, avBump, sleep,

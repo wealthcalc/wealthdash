@@ -12,7 +12,7 @@ import { savingsRate } from "../core/savings-rate.mjs";
 import { dataHealth } from "../core/data-health.mjs";
 import PlanHealthCard from "../ui/PlanHealthCard.jsx";
 import {
-  store, gbp0, num, pct, WrapperChip, AllocBar, KIND_LABEL, RateCell, Empty, todayISO,
+  store, gbp0, num, pct, WrapperChip, AllocBar, KIND_LABEL, RateCell, Empty, todayISO, SegmentedControl,
 } from "../ui/shared.jsx";
 import { refreshAllPrices } from "../ui/priceRefresh.js";
 import { getSyncConfig } from "../state/sync.js";
@@ -291,12 +291,11 @@ function SnapshotManager() {
       </button>
       {open && (
         <div className="mt-2 space-y-2">
-          <div className="flex gap-1">
-            {[["networth", `Net worth (${netWorthSnapshots.length})`], ["invested", `Invested (${valuations.length})`]].map(([k, lbl]) => (
-              <button key={k} onClick={() => switchSeries(k)}
-                className={"text-xs px-2.5 py-1 rounded-lg border " + (series === k ? "border-[var(--accent)] bg-[color:color-mix(in_srgb,var(--accent)_15%,transparent)] text-[var(--fg)]" : "border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)]")}>{lbl}</button>
-            ))}
-          </div>
+          <SegmentedControl ariaLabel="Snapshot series" value={series} onChange={switchSeries}
+            options={[
+              ["networth", `Net worth (${netWorthSnapshots.length})`],
+              ["invested", `Invested (${valuations.length})`],
+            ]} />
           <p className="text-xs text-[var(--muted)] leading-relaxed">
             The {active.label} history is recorded automatically{series === "networth" ? " once a day you open the app" : " whenever prices move"}. If a bad price or feed glitch left a spike that skews the trend or the benchmark overlay, tick it and remove it. Removal is permanent — a past point can't be recreated (fresh ones are recorded going forward).
           </p>

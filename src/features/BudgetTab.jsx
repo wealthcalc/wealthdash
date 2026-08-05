@@ -7,7 +7,7 @@ import { uncategorisedGroups, suggestRule, normaliseMerchant } from "../core/cat
 import { detectRecurring, topMerchants } from "../core/detect-recurring.mjs";
 import { parseStatement, dedupeStatement, PROFILES } from "../core/statement-import.mjs";
 import { expandRecurring, statementCoverage, annualCommitment, FREQUENCIES } from "../core/recurring.mjs";
-import { store, gbp, gbp0, SubTabs, uid, todayISO, Field, Empty, Stat, useSort, sortRows, SortTh } from "../ui/shared.jsx";
+import { store, gbp, gbp0, SubTabs, SegmentedControl, uid, todayISO, Field, Empty, Stat, useSort, sortRows, SortTh } from "../ui/shared.jsx";
 import useAppStore from "../state/appStore.js";
 import { removeWithUndo } from "../ui/undo.jsx";
 
@@ -277,17 +277,12 @@ function Overview({ categories, txns, month, setMonth, setSub, drillTo, incomeEn
           <div className="rounded-xl border border-dashed border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-xs text-[var(--muted)] space-y-1.5">
             <div className="flex items-start justify-between gap-3 flex-wrap">
               <span>Projected investment income (next 12 months): <strong className="text-[var(--gain)]">{gbp0(projectedIncome)}</strong> — expected to cover <strong className="text-[var(--fg)]">{Math.round(covers)}%</strong> of your {gbp0(projSpend)} projected spend{coversEssential != null && <>, and <strong className={coversEssential >= 100 ? "text-[var(--gain)]" : "text-[var(--fg)]"}>{Math.round(coversEssential)}%</strong> of the {gbp0(projEssential)} essential</>}.</span>
-              <span className="flex gap-1 shrink-0">
-                {[["budget", "Planned budget"], ["forecast", "History + inflation"]].map(([k, l]) => {
-                  const disabled = k === "forecast" && !enoughHistory;
-                  return (
-                    <button key={k} onClick={() => setSpendBasis(k)} disabled={disabled}
-                      title={disabled ? "Needs at least 3 months of spending history to average" : ""}
-                      className={"text-[10px] px-2 py-0.5 rounded-md border transition " + (effBasis === k
-                        ? "border-[var(--accent)] bg-[color:color-mix(in_srgb,var(--accent)_15%,transparent)] text-[var(--fg)]"
-                        : disabled ? "border-[var(--border)] opacity-40 cursor-not-allowed" : "border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)]")}>{l}</button>
-                  );
-                })}
+              <span className="shrink-0">
+                <SegmentedControl size="xs" ariaLabel="Projected spend basis" value={effBasis} onChange={setSpendBasis}
+                  options={[
+                    ["budget", "Planned budget"],
+                    ["forecast", "History + inflation", { disabled: !enoughHistory, title: enoughHistory ? "" : "Needs at least 3 months of spending history to average" }],
+                  ]} />
               </span>
             </div>
             <div className="text-[10px] leading-relaxed">{useForecast

@@ -8,7 +8,7 @@ import { addMonthsISO } from "../core/ishares-eri.mjs";
 import { summariseBySource } from "../core/income-calendar.mjs";
 import { dividendChanges, incomeConcentration, incomeByGroup } from "../core/income-analysis.mjs";
 import { vctHoldings } from "../core/vct.mjs";
-import { store, unitsHeldAt, gbp, gbp0, SubTabs, num, uid, todayISO, fxToGBP, Field, Empty, useSort, sortRows, SortTh, CurrencyInput, downloadText } from "../ui/shared.jsx";
+import { store, unitsHeldAt, gbp, gbp0, SubTabs, SegmentedControl, num, uid, todayISO, fxToGBP, Field, Empty, useSort, sortRows, SortTh, CurrencyInput, downloadText } from "../ui/shared.jsx";
 import { taxSummaryText } from "../core/export-csv.mjs";
 import useAppStore from "../state/appStore.js";
 import { removeWithUndo } from "../ui/undo.jsx";
@@ -486,12 +486,8 @@ function IncomeBreakdownPanel({ incomeEntries, today, sourceConc }) {
   const cur = VIEWS[view];
   return (
     <div className="space-y-2">
-      <div className="flex gap-1">
-        {[["source", "By source"], ["wrapper", "By wrapper"], ["kind", "By type"]].map(([k, l]) => (
-          <button key={k} onClick={() => setView(k)}
-            className={"text-xs px-2.5 py-1 rounded-lg border " + (view === k ? "border-[var(--accent)] bg-[color:color-mix(in_srgb,var(--accent)_15%,transparent)] text-[var(--fg)]" : "border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)]")}>{l}</button>
-        ))}
-      </div>
+      <SegmentedControl ariaLabel="Income breakdown view" value={view} onChange={setView}
+        options={[["source", "By source"], ["wrapper", "By wrapper"], ["kind", "By type"]]} />
       <IncomePie rows={cur.data.rows} total={cur.data.total} title={cur.title} groupTop={cur.groupTop} />
       {view === "wrapper" && byWrapper.total > 0 && (
         <p className="text-xs text-[var(--muted)]"><span className="font-medium text-[var(--fg)]">{Math.round(byWrapper.shelteredPct)}%</span> of your trailing-12m income sits in tax-sheltered wrappers (ISA/SIPP/LISA/VCT); the rest is taxable in a GIA. VCT dividends are tax-free even though VCT isn't an ISA/SIPP.</p>

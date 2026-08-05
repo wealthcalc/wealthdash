@@ -144,13 +144,28 @@ export function statementKey(t) {
   return [t.date, String(t.description || "").trim().toUpperCase().replace(/\s+/g, " "), (+t.amount).toFixed(2), t.account || ""].join("|");
 }
 
+// Dedupe by OCCURRENCE COUNT, not set membership. Bank CSVs carry no stable
+// per-row id, so the key (date + description + amount + account) is all we
+// have — and a set-based check silently destroyed genuine repeats: two
+// identical £3.20 coffees on one day are real spending, but the second was
+// dropped as a "duplicate", quietly understating the budget.
+//
+// Counting fixes both cases with one rule: import (incoming count − already
+// held count) of each key. Re-importing an overlapping window still adds
+// nothing (counts match), while a third genuine coffee against two on file
+// correctly adds one.
 export function dedupeStatement(incoming, existing = []) {
-  const seen = new Set(existing.map(statementKey));
+  const held = new Map();
+  for (const t of existing) {
+    const k = statementKey(t);
+    held.set(k, (held.get(k) || 0) + 1);
+  }
   const rows = [], duplicates = [];
   for (const t of incoming) {
     const k = statementKey(t);
-    if (seen.has(k)) { duplicates.push(t); continue; }
-    seen.add(k); rows.push(t);
+    const remaining = held.get(k) || 0;
+    if (remaining > 0) { held.set(k, remaining - 1); duplicates.push(t); continue; }
+    rows.push(t);
   }
   return { rows, duplicates };
 }

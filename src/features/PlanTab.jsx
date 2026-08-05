@@ -241,6 +241,7 @@ export default function PlanTab({
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           <Segmented
+            ariaLabel="Tax region"
             value={p.region}
             onChange={(v) => set("region", v)}
             options={[
@@ -290,7 +291,7 @@ export default function PlanTab({
               <Field label="Plan to age" value={p.planAge} min={80} max={105} onChange={(v) => set("planAge", v)} hint="Longevity horizon for adequacy" />
               <div style={{ marginBottom: 12 }}>
                 <div style={{ fontSize: 12.5, color: T.ink2, fontWeight: 600, marginBottom: 6 }}>Sex (for ONS life expectancy)</div>
-                <Segmented value={p.sex} onChange={(v) => set("sex", v)} options={[{ value: "male", label: "Male" }, { value: "female", label: "Female" }]} />
+                <Segmented ariaLabel="Sex (for ONS life expectancy)" value={p.sex} onChange={(v) => set("sex", v)} options={[{ value: "male", label: "Male" }, { value: "female", label: "Female" }]} />
               </div>
               <Toggle label="Non-smoker / active / affluent" checked={p.healthy} onChange={(v) => set("healthy", v)} />
             </PanelSection>
@@ -324,6 +325,7 @@ export default function PlanTab({
               <div style={{ marginBottom: 10 }}>
                 <div style={{ fontSize: 12.5, color: T.ink2, fontWeight: 600, marginBottom: 6 }}>Inflation basis</div>
                 <Segmented
+                  ariaLabel="Inflation basis"
                   value={p.inflMode}
                   onChange={(v) => set("inflMode", v)}
                   options={[
@@ -343,6 +345,7 @@ export default function PlanTab({
             <PanelSection title="Retirement income">
               <div style={{ marginBottom: 12 }}>
                 <Segmented
+                  ariaLabel="Retirement income target basis"
                   value={p.targetMode}
                   onChange={(v) => set("targetMode", v)}
                   accent={T.green}
@@ -373,7 +376,7 @@ export default function PlanTab({
                   <Field label="DB pension (today's £)" value={p.dbPension} min={0} max={80000} step={500} prefix="£" onChange={(v) => set("dbPension", v)} hint="Annual amount from retirement" />
                   <div style={{ marginBottom: 10 }}>
                     <div style={{ fontSize: 12.5, color: T.ink2, fontWeight: 600, marginBottom: 6 }}>DB indexation</div>
-                    <Segmented value={p.dbIndex} onChange={(v) => set("dbIndex", v)} options={[{ value: "cpi", label: "CPI" }, { value: "rpi", label: "RPI" }, { value: "fixed", label: "Fixed %" }]} />
+                    <Segmented ariaLabel="DB indexation" value={p.dbIndex} onChange={(v) => set("dbIndex", v)} options={[{ value: "cpi", label: "CPI" }, { value: "rpi", label: "RPI" }, { value: "fixed", label: "Fixed %" }]} />
                   </div>
                   {p.dbIndex === "fixed" && (
                     <Field label="Fixed escalation" value={p.dbFixedRate} min={0} max={8} step={0.25} suffix="%" onChange={(v) => set("dbFixedRate", v)} />
@@ -384,6 +387,7 @@ export default function PlanTab({
 
             <PanelSection title="Tax-free cash (25%)">
               <Segmented
+                ariaLabel="Tax-free cash mode"
                 value={p.tfcMode}
                 onChange={(v) => set("tfcMode", v)}
                 accent={T.green}
@@ -413,7 +417,7 @@ export default function PlanTab({
             </PanelSection>
 
             <PanelSection title="Drawdown order">
-              <Segmented value={p.drawStrategy} onChange={(v) => set("drawStrategy", v)} accent={T.green}
+              <Segmented ariaLabel="Drawdown order" value={p.drawStrategy} onChange={(v) => set("drawStrategy", v)} accent={T.green}
                 options={[{ value: "taxopt", label: "Tax-opt" }, { value: "taxfree", label: "Tax-free 1st" }, { value: "pension", label: "Pension 1st" }, { value: "giafirst", label: "GIA 1st" }]} />
               <div style={{ fontSize: 11.5, color: T.muted, marginTop: 8 }}>
                 Order pots are tapped to fund income. The optimiser (Drawdown tab) compares all strategies.
@@ -421,7 +425,7 @@ export default function PlanTab({
             </PanelSection>
 
             <PanelSection title="Spending profile">
-              <Segmented value={p.spendProfile} onChange={(v) => set("spendProfile", v)} accent={T.green}
+              <Segmented ariaLabel="Spending profile" value={p.spendProfile} onChange={(v) => set("spendProfile", v)} accent={T.green}
                 options={[{ value: "flat", label: "Flat" }, { value: "smile", label: "Smile" }, { value: "decline", label: "Decline" }, { value: "custom", label: "Custom" }]} />
               <div style={{ fontSize: 11.5, color: T.muted, margin: "8px 0 4px", lineHeight: 1.5 }}>
                 {p.spendProfile === "flat" && "Constant real spending throughout."}
@@ -469,7 +473,7 @@ export default function PlanTab({
                   <Field label="Share of pension used" value={p.annuityPortion} min={5} max={100} step={5} suffix="%" onChange={(v) => set("annuityPortion", v)} hint={`≈ ${gbp((det.annuityIncome0 || 0))}/yr guaranteed`} />
                   <div style={{ marginBottom: 10 }}>
                     <div style={{ fontSize: 12.5, color: T.ink2, fontWeight: 600, marginBottom: 6 }}>Escalation</div>
-                    <Segmented value={p.annuityEscalation} onChange={(v) => set("annuityEscalation", v)} options={[{ value: "level", label: "Level" }, { value: "esc3", label: "3%/yr" }, { value: "rpi", label: "RPI" }]} />
+                    <Segmented ariaLabel="Annuity escalation" value={p.annuityEscalation} onChange={(v) => set("annuityEscalation", v)} options={[{ value: "level", label: "Level" }, { value: "esc3", label: "3%/yr" }, { value: "rpi", label: "RPI" }]} />
                   </div>
                 </>
               )}
@@ -640,7 +644,7 @@ export default function PlanTab({
                     <YAxis tickFormatter={gbpK} tick={{ fontSize: 11, fill: T.muted }} tickLine={false} axisLine={false} width={52} />
                     <Tooltip
                       contentStyle={tooltipStyle()}
-                      formatter={(v, n) => [gbp(v), n === "potNominal" ? "Nominal" : "Real (today's £)"]}
+                      formatter={(v, n) => [gbpK(v), n === "potNominal" ? "Nominal" : "Real (today's £)"]}
                       labelFormatter={(a) => `Age ${a}`}
                     />
                     <ReferenceArea x1={p.retireAge} x2={p.planAge} fill={T.amber} fillOpacity={0.04} />

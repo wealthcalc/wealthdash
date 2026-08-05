@@ -68,6 +68,22 @@ test("plan tab renders after the plan/* file split — every sub-module resolves
     giltCashflows: [], forwardDividends: 0,
   }));
   assert.ok(html.length > 500, "renders substantive markup");
+
+  // Accessibility contract for the Plan controls: its segmented pickers and
+  // switches used to render as unnamed, stateless buttons.
+  assert.ok(html.includes('role="radiogroup"'), "segmented pickers are radiogroups");
+  assert.ok(html.includes('role="radio"'), "their options are radios");
+  assert.ok(html.includes('role="switch"'), "toggles are switches, not bare buttons");
+  assert.ok(html.includes('aria-checked'), "and they expose their state");
+  // Every radiogroup must carry a name — an unnamed group tells a screen
+  // reader nothing about what is being chosen.
+  // Only the groups on the default sub-tab with panels open render here; the
+  // rest sit inside collapsed sections. Whatever renders must be named.
+  const groups = html.match(/<div[^>]*role="radiogroup"[^>]*>/g) || [];
+  assert.ok(groups.length >= 2, `expected segmented groups, saw ${groups.length}`);
+  for (const g of groups) assert.ok(g.includes("aria-label"), `unnamed radiogroup: ${g.slice(0, 120)}`);
+  // Sliders must carry their unit, or "6" reads the same for 6% and £6.
+  assert.ok(html.includes("aria-valuetext"), "sliders announce a formatted value");
 });
 
 test("assumptions tab lists every registry entry with what it drives", async () => {

@@ -54,7 +54,7 @@ function AccumulationTab({ p, det, feeFree, feeDrag }) {
             <CartesianGrid stroke={T.lineSoft} vertical={false} />
             <XAxis dataKey="age" tick={{ fontSize: 11, fill: T.muted }} tickLine={false} axisLine={{ stroke: T.line }} />
             <YAxis tickFormatter={gbpK} tick={{ fontSize: 11, fill: T.muted }} tickLine={false} axisLine={false} width={52} />
-            <Tooltip contentStyle={tooltipStyle()} formatter={(v, n) => [gbp(v), n === "pension" ? "Pension pot" : n === "bridge" ? "ISA/GIA bridge" : "Contributions paid in"]} labelFormatter={(a) => `Age ${a}`} />
+            <Tooltip contentStyle={tooltipStyle()} formatter={(v, n) => [gbpK(v), n === "pension" ? "Pension pot" : n === "bridge" ? "ISA/GIA bridge" : "Contributions paid in"]} labelFormatter={(a) => `Age ${a}`} />
             <Area type="monotone" dataKey="pension" stackId="w" stroke={T.green} strokeWidth={2} fill={T.greenSoft} name="pension" />
             <Area type="monotone" dataKey="bridge" stackId="w" stroke={T.gold} strokeWidth={2} fill={T.amberSoft} name="bridge" />
             <Area type="monotone" dataKey="contributions" stroke={T.blue} strokeWidth={1.4} fill="none" name="contributions" />
@@ -156,7 +156,7 @@ function DecumulationTab({ p, det, retireRow }) {
             <CartesianGrid stroke={T.lineSoft} vertical={false} />
             <XAxis dataKey="age" tick={{ fontSize: 11, fill: T.muted }} tickLine={false} axisLine={{ stroke: T.line }} interval={3} />
             <YAxis tickFormatter={gbpK} tick={{ fontSize: 11, fill: T.muted }} tickLine={false} axisLine={false} width={52} />
-            <Tooltip contentStyle={tooltipStyle()} formatter={(v, n) => [gbp(v), { pension: "Pension", bridge: "ISA/GIA/LISA", state: "State Pension", db: "DB pension", annuity: "Annuity", btl: "BTL net rent", spend: "Target spend" }[n]]} labelFormatter={(a) => `Age ${a}`} />
+            <Tooltip contentStyle={tooltipStyle()} formatter={(v, n) => [gbpK(v), { pension: "Pension", bridge: "ISA/GIA/LISA", state: "State Pension", db: "DB pension", annuity: "Annuity", btl: "BTL net rent", spend: "Target spend" }[n]]} labelFormatter={(a) => `Age ${a}`} />
             <Bar dataKey="bridge" stackId="a" fill={T.gold} name="bridge" />
             <Bar dataKey="pension" stackId="a" fill={T.green} name="pension" />
             {p.annuityEnabled && <Bar dataKey="annuity" stackId="a" fill="#7A5C9E" name="annuity" />}
@@ -179,7 +179,7 @@ function DecumulationTab({ p, det, retireRow }) {
             <CartesianGrid stroke={T.lineSoft} vertical={false} />
             <XAxis dataKey="age" tick={{ fontSize: 11, fill: T.muted }} tickLine={false} axisLine={{ stroke: T.line }} interval={3} />
             <YAxis tickFormatter={gbpK} tick={{ fontSize: 11, fill: T.muted }} tickLine={false} axisLine={false} width={52} />
-            <Tooltip contentStyle={tooltipStyle()} formatter={(v, n) => [gbp(v), n === "pensionPot" ? "Pension pot" : "ISA/bridge"]} labelFormatter={(a) => `Age ${a}`} />
+            <Tooltip contentStyle={tooltipStyle()} formatter={(v, n) => [gbpK(v), n === "pensionPot" ? "Pension pot" : "ISA/bridge"]} labelFormatter={(a) => `Age ${a}`} />
             {det.depletionAge && <ReferenceLine x={det.depletionAge} stroke={T.red} strokeDasharray="4 3" />}
             <Area type="monotone" dataKey="pensionPot" stackId="p" stroke={T.green} strokeWidth={2} fill={T.greenSoft} name="pensionPot" />
             <Area type="monotone" dataKey="bridgePot" stackId="p" stroke={T.gold} strokeWidth={2} fill={T.amberSoft} name="bridgePot" />
