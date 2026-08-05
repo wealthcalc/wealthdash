@@ -173,14 +173,39 @@ export async function pullAndApply({ id, passphrase, force = false }) {
   return { applied: true, keys: n, savedAt: envelope.savedAt };
 }
 
+/* Boot pulls are the other half of the operation budget. Reading the remote
+   envelope costs a billed operation server-side, and this runs on EVERY page
+   load — so a day of reloading a deployed build spends more than a month of
+   real edits. (See the BLOB OPERATION BUDGET note above for the push half.)
+
+   The check we can make locally: if this device's current state still matches
+   the fingerprint of what it last pushed, this device IS the last writer as
+   far as it knows, and a pull would almost always return its own envelope
+   back. Skipping that within a short window is free and safe — the window
+   bounds how stale another device's write can be, and any explicit action
+   (Pull now, connecting a device) still forces a real fetch. */
+const BOOT_PULL_MIN_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
+
 // Boot path (main.jsx, before the app module loads): if sync is enabled
 // and the server has a NEWER envelope than this device last saw, apply it
 // to localStorage so the store boots from it. Every failure degrades to
 // a normal local boot — sync must never be able to brick the app.
-export async function bootSyncPull() {
+export async function bootSyncPull({ force = false } = {}) {
   try {
     const cfg = getSyncConfig();
     if (!cfg.enabled || !isValidSyncId(cfg.id) || !cfg.passphrase) return { pulled: false, reason: "sync off" };
+
+    if (!force && cfg.lastPushHash && cfg.lastSyncedAt) {
+      const sinceMs = Date.now() - Date.parse(cfg.lastSyncedAt);
+      if (sinceMs >= 0 && sinceMs < BOOT_PULL_MIN_INTERVAL_MS) {
+        // Only skip if we're also still holding exactly what we last pushed —
+        // local edits since then mean we can't assume we're the last writer.
+        const fingerprint = await stateFingerprint(collectState());
+        if (fingerprint === cfg.lastPushHash) {
+          return { pulled: false, reason: "this device is the last writer; checked recently" };
+        }
+      }
+    }
     const envelope = await fetchRemote(cfg.id);
     if (!envelope) return { pulled: false, reason: "nothing remote" };
     if (!shouldApplyRemote(cfg.lastSyncedAt, envelope.savedAt)) return { pulled: false, reason: "local is current" };

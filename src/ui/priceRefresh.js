@@ -80,23 +80,24 @@ export async function refreshAllPrices({
     const by = await yahooFetch(otherTickers.map((tk) => meta(tk).yahoo));
     for (const tk of otherTickers) { const q = by[meta(tk).yahoo]; if (q && q.price != null) { const fx = await getFx(q.currency); if (applyQuote(tk, q.price, q.currency, fx, "Yahoo")) done[tk] = true; } }
   } catch { warn = "Yahoo function unreachable — trying Alpha Vantage fallback. "; }
-  // A handful of symbols missing a quote after the first batched call is
-  // usually transient contention on Yahoo's end (the exact reason "refresh
-  // all" used to leave a few tickers that then succeeded when refreshed
-  // individually one at a time) rather than those symbols being genuinely
-  // unpriceable — so retry just the stragglers, one request per symbol, the
-  // same way a manual per-ticker refresh does, before falling through to the
-  // far more rate-limited Alpha Vantage.
-  let stragglers = otherTickers.filter((tk) => !done[tk]);
+  // /api/quotes now batches all symbols into one upstream Yahoo request and
+  // does its own isolated retry server-side for anything the batch omitted,
+  // so the common "a few tickers came back empty" case is handled before the
+  // response even reaches us. This client-side pass is therefore a genuine
+  // last resort — it only fires when the whole endpoint was unreachable (a
+  // deploy, a cold start that timed out, no network) — and it re-asks in ONE
+  // batched call rather than one request per symbol, which is what used to
+  // turn a single failure into N sequential round-trips.
+  const stragglers = otherTickers.filter((tk) => !done[tk]);
   if (stragglers.length) {
-    onProgress(`Retrying ${stragglers.length} ticker${stragglers.length === 1 ? "" : "s"} individually…`);
-    for (const tk of stragglers) {
-      try {
-        const by1 = await yahooFetch([meta(tk).yahoo]);
-        const q = by1[meta(tk).yahoo];
+    onProgress(`Retrying ${stragglers.length} ticker${stragglers.length === 1 ? "" : "s"}…`);
+    try {
+      const by2 = await yahooFetch(stragglers.map((tk) => meta(tk).yahoo));
+      for (const tk of stragglers) {
+        const q = by2[meta(tk).yahoo];
         if (q && q.price != null) { const fx = await getFx(q.currency); if (applyQuote(tk, q.price, q.currency, fx, "Yahoo")) done[tk] = true; }
-      } catch { /* leave for the AV fallback below */ }
-    }
+      }
+    } catch { /* leave for the AV fallback below */ }
   }
   const rest = otherTickers.filter((tk) => !done[tk]);
   if (rest.length && avKey) {
