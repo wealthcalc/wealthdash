@@ -73,7 +73,7 @@ function FloorTab({ p, det, set, giltCashflows = [] }) {
             <CartesianGrid stroke={T.lineSoft} vertical={false} />
             <XAxis dataKey="age" tick={{ fontSize: 11, fill: T.muted }} tickLine={false} axisLine={{ stroke: T.line }} />
             <YAxis tickFormatter={gbpK} tick={{ fontSize: 11, fill: T.muted }} tickLine={false} axisLine={false} width={52} />
-            <Tooltip contentStyle={tooltipStyle()} formatter={(v, n) => [gbp(v), { state: "State Pension", db: "DB pension", annuity: "Annuity", gilt: "Gilt ladder cashflow", essential: "Essential spend", spend: "Target spend" }[n] || n]} labelFormatter={(a) => `Age ${a}`} />
+            <Tooltip contentStyle={tooltipStyle()} formatter={(v, n) => [gbpK(v), { state: "State Pension", db: "DB pension", annuity: "Annuity", gilt: "Gilt ladder cashflow", essential: "Essential spend", spend: "Target spend" }[n] || n]} labelFormatter={(a) => `Age ${a}`} />
             <Area type="stepAfter" dataKey="state" stackId="floor" stroke="none" fill={T.blue} fillOpacity={0.75} name="state" />
             <Area type="stepAfter" dataKey="db" stackId="floor" stroke="none" fill={T.green} fillOpacity={0.7} name="db" />
             <Area type="stepAfter" dataKey="annuity" stackId="floor" stroke="none" fill={T.gold} fillOpacity={0.7} name="annuity" />
@@ -265,7 +265,7 @@ function RunoffTab({ p, giltCashflows = [], forwardDividends = 0, budgetSpend = 
           <Field label="Horizon (years)" value={horizon} min={1} max={40} onChange={setHorizon} />
           <div>
             <div style={{ fontSize: 11.5, color: T.ink2, fontWeight: 600, marginBottom: 4 }}>Display</div>
-            <Segmented value={realTerms ? "real" : "nominal"} onChange={(v) => setRealTerms(v === "real")} accent={T.blue}
+            <Segmented ariaLabel="Money terms" value={realTerms ? "real" : "nominal"} onChange={(v) => setRealTerms(v === "real")} accent={T.blue}
               options={[{ value: "real", label: "Today's £" }, { value: "nominal", label: "Nominal £" }]} />
           </div>
           {/* Each option group is a self-contained column, so revealing the
@@ -314,7 +314,7 @@ function RunoffTab({ p, giltCashflows = [], forwardDividends = 0, budgetSpend = 
               <div style={{ fontSize: 13, fontWeight: 600, color: T.ink }}>
                 {chartView === "flow" ? "Cash flow — what arrives vs what you spend" : "Funding waterfall — what covers each year"} — {realTerms ? "today's £" : "nominal £"}
               </div>
-              <Segmented value={chartView} onChange={setChartView} accent={T.blue}
+              <Segmented ariaLabel="Chart view" value={chartView} onChange={setChartView} accent={T.blue}
                 options={[{ value: "flow", label: "Cash flow" }, { value: "src", label: "Funding waterfall" }]} />
             </div>
             {chartView === "flow" ? (
@@ -345,7 +345,7 @@ function RunoffTab({ p, giltCashflows = [], forwardDividends = 0, budgetSpend = 
                     <CartesianGrid stroke={T.lineSoft} vertical={false} />
                     <XAxis dataKey="year" tick={{ fontSize: 11, fill: T.muted }} tickLine={false} axisLine={{ stroke: T.line }} />
                     <YAxis tickFormatter={gbpK} tick={{ fontSize: 11, fill: T.muted }} tickLine={false} axisLine={false} width={52} />
-                    <Tooltip contentStyle={tooltipStyle()} formatter={(v, n) => [gbp(v), Object.fromEntries(SOURCES.map(([k, l]) => [k, l]))[n] || (n === "expense" ? "Spend" : n)]} labelFormatter={(y) => `Year ${y}`} />
+                    <Tooltip contentStyle={tooltipStyle()} formatter={(v, n) => [gbpK(v), Object.fromEntries(SOURCES.map(([k, l]) => [k, l]))[n] || (n === "expense" ? "Spend" : n)]} labelFormatter={(y) => `Year ${y}`} />
                     {SOURCES.map(([k, , c]) => (
                       <Area key={k} type="stepAfter" dataKey={k} stackId="src" stroke="none" fill={c} fillOpacity={k === "fromPortfolio" ? 0.8 : 0.65} name={k} />
                     ))}
@@ -574,7 +574,7 @@ function DrawdownTab({ p, det, set }) {
             <CartesianGrid stroke={T.lineSoft} vertical={false} />
             <XAxis dataKey="age" tick={{ fontSize: 11, fill: T.muted }} tickLine={false} axisLine={{ stroke: T.line }} interval={3} />
             <YAxis tickFormatter={gbpK} tick={{ fontSize: 11, fill: T.muted }} tickLine={false} axisLine={false} width={52} />
-            <Tooltip contentStyle={tooltipStyle()} formatter={(v, n) => [gbp(v), { pension: "Pension", bridge: "ISA/GIA/LISA", state: "State Pension", db: "DB pension", annuity: "Annuity", btl: "BTL net rent" }[n]]} labelFormatter={(a) => `Age ${a}`} />
+            <Tooltip contentStyle={tooltipStyle()} formatter={(v, n) => [gbpK(v), { pension: "Pension", bridge: "ISA/GIA/LISA", state: "State Pension", db: "DB pension", annuity: "Annuity", btl: "BTL net rent" }[n]]} labelFormatter={(a) => `Age ${a}`} />
             <Bar dataKey="bridge" stackId="a" fill={T.gold} name="bridge" />
             <Bar dataKey="pension" stackId="a" fill={T.green} name="pension" />
             <Bar dataKey="annuity" stackId="a" fill="#7A5C9E" name="annuity" />
@@ -649,7 +649,7 @@ function StressTab({ p, det, results }) {
             <CartesianGrid stroke={T.lineSoft} vertical={false} />
             <XAxis dataKey="label" tick={{ fontSize: 10.5, fill: T.muted }} tickLine={false} axisLine={{ stroke: T.line }} interval={0} />
             <YAxis tickFormatter={gbpK} tick={{ fontSize: 11, fill: T.muted }} tickLine={false} axisLine={false} width={52} />
-            <Tooltip contentStyle={tooltipStyle()} formatter={(v) => [gbp(v), "Wealth at retirement (real)"]} />
+            <Tooltip contentStyle={tooltipStyle()} formatter={(v) => [gbpK(v), "Wealth at retirement (real)"]} />
             <Bar dataKey="potReal" radius={[5, 5, 0, 0]}>
               {results.map((r, i) => (
                 <Cell key={i} fill={r.lasts ? T.green : r.key === "base" ? T.ink : T.amber} />
@@ -741,6 +741,7 @@ function HistoricalReplay({ p, det }) {
 
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 14 }}>
         <Segmented
+          ariaLabel="Historical crash scenario"
           value={key}
           onChange={setKey}
           accent={T.red}
@@ -751,6 +752,7 @@ function HistoricalReplay({ p, det }) {
           ]}
         />
         <Segmented
+          ariaLabel="When the crash hits"
           value={String(offset)}
           onChange={(v) => setOffset(parseInt(v))}
           options={[
@@ -770,7 +772,7 @@ function HistoricalReplay({ p, det }) {
           <CartesianGrid stroke={T.lineSoft} vertical={false} />
           <XAxis dataKey="age" tick={{ fontSize: 11, fill: T.muted }} tickLine={false} axisLine={{ stroke: T.line }} interval={3} />
           <YAxis tickFormatter={gbpK} tick={{ fontSize: 11, fill: T.muted }} tickLine={false} axisLine={false} width={52} />
-          <Tooltip contentStyle={tooltipStyle()} formatter={(v, n) => [gbp(v), n === "base" ? "Base plan" : "With crash"]} labelFormatter={(a) => `Age ${a}`} />
+          <Tooltip contentStyle={tooltipStyle()} formatter={(v, n) => [gbpK(v), n === "base" ? "Base plan" : "With crash"]} labelFormatter={(a) => `Age ${a}`} />
           {replay.depletion && <ReferenceLine x={replay.depletion} stroke={T.red} strokeDasharray="4 3" />}
           <Area type="monotone" dataKey="base" stroke={T.green} strokeWidth={1.6} fill={T.greenSoft} name="base" />
           <Line type="monotone" dataKey="replay" stroke={T.red} strokeWidth={2.2} dot={false} name="replay" />
@@ -895,7 +897,7 @@ function AdequacyTab({ p, mc, mcB, progress = 0, compareKey = "none", setCompare
         {/* Return model (Phase 2.7) */}
         <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px solid ${T.line}` }}>
           <div style={{ fontSize: 12.5, color: T.ink2, fontWeight: 600, marginBottom: 6 }}>Return model</div>
-          <Segmented value={p.mcModel || "single"} onChange={(v) => set("mcModel", v)} accent={T.green}
+          <Segmented ariaLabel="Return model" value={p.mcModel || "single"} onChange={(v) => set("mcModel", v)} accent={T.green}
             options={[
               { value: "single", label: "Simple" },
               { value: "twoAsset", label: "Equity + bonds" },
@@ -921,7 +923,7 @@ function AdequacyTab({ p, mc, mcB, progress = 0, compareKey = "none", setCompare
 
         <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px solid ${T.line}` }}>
           <div style={{ fontSize: 12.5, color: T.ink2, fontWeight: 600, marginBottom: 6 }}>Compare against (Scenario A/B)</div>
-          <Segmented value={compareKey} onChange={setCompareKey} options={compareOptions} accent={T.blue} />
+          <Segmented ariaLabel="Compare against scenario" value={compareKey} onChange={setCompareKey} options={compareOptions} accent={T.blue} />
           <p style={{ margin: "6px 0 0", fontSize: 11.5, color: T.muted }}>
             {compareKey === "none"
               ? "Runs your base plan alone. Pick a scenario to run it alongside your base plan, on the SAME random market paths, so any difference in outcome reflects the parameter change, not luck."
@@ -979,7 +981,7 @@ function AdequacyTab({ p, mc, mcB, progress = 0, compareKey = "none", setCompare
                 <CartesianGrid stroke={T.lineSoft} vertical={false} />
                 <XAxis dataKey="age" tick={{ fontSize: 11, fill: T.muted }} tickLine={false} axisLine={{ stroke: T.line }} interval={4} />
                 <YAxis tickFormatter={gbpK} tick={{ fontSize: 11, fill: T.muted }} tickLine={false} axisLine={false} width={52} />
-                <Tooltip contentStyle={tooltipStyle()} formatter={(v, n) => [gbp(v), { aP90: "Lucky (90th, A)", aP50: "Median (A)", aP10: "Unlucky (10th, A)", bP90: "Lucky (90th, B)", bP50: "Median (B)", bP10: "Unlucky (10th, B)" }[n] || n]} labelFormatter={(a) => `Age ${a}`} />
+                <Tooltip contentStyle={tooltipStyle()} formatter={(v, n) => [gbpK(v), { aP90: "Lucky (90th, A)", aP50: "Median (A)", aP10: "Unlucky (10th, A)", bP90: "Lucky (90th, B)", bP50: "Median (B)", bP10: "Unlucky (10th, B)" }[n] || n]} labelFormatter={(a) => `Age ${a}`} />
                 <ReferenceLine x={p.retireAge} stroke={T.amber} strokeDasharray="4 3" />
                 <Area type="monotone" dataKey="aP90" stroke="none" fill="url(#fan)" />
                 <Area type="monotone" dataKey="aP10" stroke="none" fill={T.surface} />

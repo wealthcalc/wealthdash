@@ -75,6 +75,21 @@ const SECURITY_SEED = {
 
 
 /* ----------------------------- helpers ------------------------------ */
+/* Two money formatters, and the rule for choosing between them — previously
+   implicit, which is why usage looked arbitrary from the outside:
+
+   gbp()  — pennies. Use where the exact figure IS the point and someone might
+            reconcile it against a statement or a tax return: CGT gains and
+            disposals, gilt coupons and accrued interest, dividends received,
+            per-transaction amounts, realised returns.
+   gbp0() — rounded. Use where magnitude is the point and pennies are noise:
+            net worth and wrapper totals, budget limits vs spend, allowances,
+            projections and any modelled/estimated figure (false precision on
+            an estimate reads as more certainty than the number deserves).
+
+   Rule of thumb: if the number came from the LEDGER, show pennies; if it came
+   from a MODEL or is a headline total, round. Both render a real minus sign
+   (−) rather than a hyphen, so negatives line up in tabular-nums columns. */
 const gbp = (x) => (x < 0 ? "−£" : "£") + Math.abs(x).toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const gbp0 = (x) => (x < 0 ? "−£" : "£") + Math.round(Math.abs(x)).toLocaleString("en-GB");
 // One chip style per wrapper, used everywhere a wrapper tag is shown, so

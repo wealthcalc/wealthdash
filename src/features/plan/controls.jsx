@@ -91,6 +91,12 @@ function Field({ label, value, onChange, min, max, step = 1, prefix, suffix, hin
         step={step}
         value={value}
         onChange={(e) => onChange(parseFloat(e.target.value))}
+        // The visible label and the value sit in sibling spans, so the
+        // implicit <label> association produces a muddled name; state it.
+        // aria-valuetext carries the UNIT — a screen reader otherwise reads
+        // "6" for both "6%" growth and "£6", which are not the same thing.
+        aria-label={label}
+        aria-valuetext={`${prefix || ""}${typeof value === "number" ? value.toLocaleString("en-GB") : value}${suffix || ""}`}
         style={{ width: "100%", accentColor: T.green, cursor: "pointer" }}
       />
       {hint && (
@@ -100,9 +106,24 @@ function Field({ label, value, onChange, min, max, step = 1, prefix, suffix, hin
   );
 }
 
-function Segmented({ options, value, onChange, accent = T.ink }) {
+function Segmented({ options, value, onChange, accent = T.ink, ariaLabel }) {
+  // Radiogroup semantics + arrow-key traversal with a roving tabindex, so a
+  // keyboard user tabs into the group once rather than through every option.
+  // (Matches SegmentedControl in ui/shared.jsx; this one keeps the Plan tab's
+  // own inline-style look.)
+  const onKey = (e) => {
+    const dir = e.key === "ArrowRight" || e.key === "ArrowDown" ? 1
+      : e.key === "ArrowLeft" || e.key === "ArrowUp" ? -1 : 0;
+    if (!dir || !options.length) return;
+    e.preventDefault();
+    const i = options.findIndex((o) => o.value === value);
+    onChange(options[(i + dir + options.length) % options.length].value);
+  };
   return (
     <div
+      role="radiogroup"
+      aria-label={ariaLabel}
+      onKeyDown={onKey}
       style={{
         display: "inline-flex",
         background: T.lineSoft,
@@ -117,6 +138,10 @@ function Segmented({ options, value, onChange, accent = T.ink }) {
         return (
           <button
             key={o.value}
+            type="button"
+            role="radio"
+            aria-checked={active}
+            tabIndex={active ? 0 : -1}
             onClick={() => onChange(o.value)}
             style={{
               border: "none",
@@ -141,18 +166,24 @@ function Segmented({ options, value, onChange, accent = T.ink }) {
 }
 
 function Toggle({ label, checked, onChange }) {
+  // A <button> inside a <label> gets no implicit association, so this used to
+  // announce as an unnamed, stateless button. role="switch" + aria-checked +
+  // an explicit name fixes both halves.
   return (
-    <label
+    <div
       style={{
         display: "flex",
         alignItems: "center",
         justifyContent: "space-between",
         marginBottom: 14,
-        cursor: "pointer",
       }}
     >
       <span style={{ fontSize: 12.5, color: T.ink2, fontWeight: 600 }}>{label}</span>
       <button
+        type="button"
+        role="switch"
+        aria-checked={!!checked}
+        aria-label={label}
         onClick={() => onChange(!checked)}
         style={{
           width: 42,
@@ -179,7 +210,7 @@ function Toggle({ label, checked, onChange }) {
           }}
         />
       </button>
-    </label>
+    </div>
   );
 }
 
