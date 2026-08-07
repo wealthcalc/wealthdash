@@ -93,9 +93,31 @@ export default function BudgetTab({ setTab, projectedIncome = 0 }) {
   const catById = useMemo(() => Object.fromEntries(categories.map((c) => [c.id, c])), [categories]);
   const seedStarter = () => setCategories(STARTER.map((c) => ({ id: uid(), name: c.name, monthly: c.monthly || 0, annual: c.annual || 0, essential: !!c.essential, transfer: !!c.transfer })));
 
+  // Categorising has to write to whichever source the row actually came from.
+  // `txns` is a MERGE of two very different things: imported statement rows
+  // (real, stored in spendTxns) and rows SYNTHESISED from recurring
+  // definitions (ids like "rec-<defId>-<date>", never stored anywhere). The
+  // old version mapped over spendTxns by id only, so choosing a category for
+  // a generated row matched nothing and silently did nothing — the row stayed
+  // uncategorised, the banner kept complaining, and the UI gave no hint why.
+  // A generated row's category belongs to its DEFINITION, so that's what gets
+  // written; every occurrence of that commitment re-categorises at once,
+  // which is the only coherent meaning for "this recurring payment is
+  // groceries".
   const setManual = (ids, categoryId) => {
-    const set = new Set(Array.isArray(ids) ? ids : [ids]);
-    setSpendTxns((p) => p.map((t) => (set.has(t.id) ? { ...t, manualCategoryId: categoryId || undefined } : t)));
+    const wanted = new Set(Array.isArray(ids) ? ids : [ids]);
+    const rows = txns.filter((t) => wanted.has(t.id));
+    const recDefIds = new Set(rows.filter((t) => t.recurringId).map((t) => t.recurringId));
+    // Anything not identified as generated is treated as a real stored row
+    // (including ids we couldn't find, so a stale list can't silently no-op).
+    const realIds = new Set([...wanted].filter((id) => !rows.some((t) => t.id === id && t.recurringId)));
+
+    if (realIds.size) {
+      setSpendTxns((p) => p.map((t) => (realIds.has(t.id) ? { ...t, manualCategoryId: categoryId || undefined } : t)));
+    }
+    if (recDefIds.size) {
+      setRecurring((p) => p.map((d) => (recDefIds.has(d.id) ? { ...d, categoryId: categoryId || "" } : d)));
+    }
   };
 
   return (
@@ -682,8 +704,11 @@ function Transactions({ categories, catById, txns, spendTxns, setManual, setSpen
                   <td className="py-2 px-3 text-[var(--muted)] whitespace-nowrap">{t.account || "—"}</td>
                   <td className={"py-2 px-3 text-right num " + (t.amount < 0 ? "text-[var(--gain)]" : "")}>{gbp(t.amount)}</td>
                   <td className="py-2 px-3">
-                    <select className="input text-xs" value={t.categoryId || ""} disabled={t.estimated}
-                      title={t.estimated ? "Set the category on the Recurring sub-tab" : undefined}
+                    {/* Generated rows are editable here too — setManual writes
+                        the choice to the recurring DEFINITION. Disabling them
+                        used to send people to another tab for no good reason. */}
+                    <select className="input text-xs" value={t.categoryId || ""}
+                      title={t.estimated ? "Generated from a recurring commitment — changing this sets the category for every occurrence of it" : undefined}
                       onChange={(e) => setManual(t.id, e.target.value)}>
                       <option value="">— none —</option>
                       {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}

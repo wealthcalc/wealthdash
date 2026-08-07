@@ -21,6 +21,7 @@ import assert from "node:assert/strict";
 import { dedupeStatement } from "../../core/statement-import.mjs";
 import { removeWithUndo, showUndo, subscribeUndo, currentUndo } from "../../ui/undo.jsx";
 import { buildBackup, restorePlan, exportedKeys, EXPORT_EXCLUDED, RESTORE_ONLY } from "../../core/backup.mjs";
+import { mergedSpend } from "../../core/budget.mjs";
 
 /* ---------------------------- 1. import dedupe ------------------------ */
 
@@ -113,6 +114,96 @@ test("delete-with-undo: subscribers are notified so the toast can render", () =>
   showUndo({ message: "Deleted thing", onUndo: () => {} });
   assert.ok(seen > 0, "the toast host is told there is something to show");
   unsub();
+});
+
+/* ---------------------------- 4. categorising ------------------------- */
+
+// The exact wiring from BudgetTab.setManual, driven against real engine
+// output. The bug this covers: `txns` merges STORED statement rows with rows
+// SYNTHESISED from recurring definitions, and writing a category by id to
+// spendTxns alone matched nothing for the synthesised ones — so the choice
+// silently vanished and the row stayed uncategorised forever.
+function makeSetManual(state) {
+  return (ids, categoryId) => {
+    const txns = mergedSpend({ spendTxns: state.spendTxns, rules: state.rules, recurring: state.recurring, month: "2026-08" });
+    const wanted = new Set(Array.isArray(ids) ? ids : [ids]);
+    const rows = txns.filter((t) => wanted.has(t.id));
+    const recDefIds = new Set(rows.filter((t) => t.recurringId).map((t) => t.recurringId));
+    const realIds = new Set([...wanted].filter((id) => !rows.some((t) => t.id === id && t.recurringId)));
+    if (realIds.size) {
+      state.spendTxns = state.spendTxns.map((t) => (realIds.has(t.id) ? { ...t, manualCategoryId: categoryId || undefined } : t));
+    }
+    if (recDefIds.size) {
+      state.recurring = state.recurring.map((d) => (recDefIds.has(d.id) ? { ...d, categoryId: categoryId || "" } : d));
+    }
+  };
+}
+const merge = (s) => mergedSpend({ spendTxns: s.spendTxns, rules: s.rules, recurring: s.recurring, month: "2026-08" });
+
+test("categorising an imported statement row sticks", () => {
+  const state = {
+    spendTxns: [{ id: "s1", date: "2026-08-03", description: "TESCO", amount: 40 }],
+    rules: [], recurring: [],
+  };
+  makeSetManual(state)("s1", "gro");
+  const row = merge(state).find((t) => t.id === "s1");
+  assert.equal(row.categoryId, "gro");
+  assert.equal(row.categorisedVia, "manual");
+});
+
+test("categorising a GENERATED recurring row sticks — it writes to the definition", () => {
+  // A recurring commitment saved without a category generates uncategorised
+  // rows that are not in spendTxns at all. This is the reported failure:
+  // pick a category, nothing happens.
+  const state = {
+    spendTxns: [],
+    rules: [],
+    recurring: [{ id: "d1", label: "Gym", amount: 40, frequency: "monthly", startDate: "2026-01-15", categoryId: "" }],
+  };
+  const before = merge(state).filter((t) => t.recurringId === "d1");
+  assert.ok(before.length > 0, "the definition generates rows");
+  assert.equal(before[0].categoryId, null, "and they start uncategorised");
+
+  makeSetManual(state)(before[0].id, "health");
+
+  const after = merge(state).filter((t) => t.recurringId === "d1");
+  assert.ok(after.length > 0);
+  for (const r of after) assert.equal(r.categoryId, "health", "every occurrence takes the category");
+  assert.equal(state.recurring[0].categoryId, "health", "written to the definition, the real source");
+  assert.equal(state.spendTxns.length, 0, "and no phantom statement row was invented");
+});
+
+test("a mixed selection updates both sources in one go", () => {
+  // uncategorisedGroups buckets by merchant, so one group can legitimately
+  // contain a real row AND a generated one.
+  const state = {
+    spendTxns: [{ id: "s1", date: "2026-08-03", description: "Gym", amount: 40 }],
+    rules: [],
+    recurring: [{ id: "d1", label: "Gym", amount: 40, frequency: "monthly", startDate: "2026-01-15", categoryId: "" }],
+  };
+  const rows = merge(state);
+  const ids = [rows.find((t) => t.id === "s1").id, rows.find((t) => t.recurringId === "d1").id];
+  makeSetManual(state)(ids, "health");
+
+  const after = merge(state);
+  assert.equal(after.find((t) => t.id === "s1").categoryId, "health");
+  assert.ok(after.filter((t) => t.recurringId === "d1").every((t) => t.categoryId === "health"));
+  assert.equal(after.filter((t) => !t.categoryId).length, 0, "nothing left uncategorised");
+});
+
+test("clearing a category back to none works for both kinds", () => {
+  const state = {
+    spendTxns: [{ id: "s1", date: "2026-08-03", description: "TESCO", amount: 40, manualCategoryId: "gro" }],
+    rules: [],
+    recurring: [{ id: "d1", label: "Gym", amount: 40, frequency: "monthly", startDate: "2026-01-15", categoryId: "health" }],
+  };
+  const setManual = makeSetManual(state);
+  const rows = merge(state);
+  setManual("s1", "");
+  setManual(rows.find((t) => t.recurringId === "d1").id, "");
+  const after = merge(state);
+  assert.equal(after.find((t) => t.id === "s1").categoryId, null);
+  assert.ok(after.filter((t) => t.recurringId === "d1").every((t) => t.categoryId == null));
 });
 
 /* ---------------------------- 3. backup round-trip -------------------- */
