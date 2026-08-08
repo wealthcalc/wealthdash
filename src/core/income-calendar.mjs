@@ -246,6 +246,38 @@ export function buildIncomeCalendar({
   return events;
 }
 
+/* How much of the forecast can actually be RELIED ON.
+
+   Every event already carries `certainty`, but only one place in the UI ever
+   read it, so a single "£X next 12 months" headline gave contractual gilt
+   coupons and a guess at next year's dividends exactly equal billing. They
+   are not equal: a gilt coupon and a maturity are fixed by the instrument,
+   while a dividend forecast is last year's payment projected forward and can
+   be cut at will.
+
+   That distinction is the whole point of an income floor, so it belongs in
+   the headline: "£18,400 expected — £6,200 contractual, £12,200 estimated"
+   tells you what your plan can lean on. */
+export function certaintySplit(events = []) {
+  let scheduled = 0, estimated = 0, scheduledCount = 0, estimatedCount = 0;
+  for (const e of events) {
+    const amt = +e.amount || 0;
+    if (e.certainty === "scheduled") { scheduled += amt; scheduledCount += 1; }
+    else { estimated += amt; estimatedCount += 1; }
+  }
+  const total = scheduled + estimated;
+  const r2 = (x) => Math.round(x * 100) / 100;
+  return {
+    scheduled: r2(scheduled),
+    estimated: r2(estimated),
+    total: r2(total),
+    scheduledCount,
+    estimatedCount,
+    // Share of forecast income that is contractual rather than projected.
+    scheduledPct: total > 0 ? r2((scheduled / total) * 100) : 0,
+  };
+}
+
 // Headline totals by source, over whatever horizon buildIncomeCalendar was
 // called with — for a "expected income next 12 months" summary strip.
 export function summariseBySource(events = []) {

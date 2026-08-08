@@ -229,3 +229,30 @@ test("VCT fallback needs real history — two close one-offs are NOT annualised"
   const ev = buildIncomeCalendar({ incomeEntries, txns, today, horizonDays: 365 });
   assert.equal(ev.filter((e) => e.label === "NEW").length, 0);
 });
+
+test("certaintySplit separates contractual income from projected income", async () => {
+  const { certaintySplit } = await import("../core/income-calendar.mjs");
+  const events = [
+    { source: "gilt-coupon", amount: 62.5, certainty: "scheduled" },
+    { source: "gilt-redemption", amount: 10000, certainty: "scheduled" },
+    { source: "dividend", amount: 300, certainty: "estimated" },
+    { source: "interest", amount: 100, certainty: "estimated" },
+  ];
+  const s = certaintySplit(events);
+  assert.equal(s.scheduled, 10062.5, "gilt coupons and maturities are fixed by the instrument");
+  assert.equal(s.estimated, 400, "dividends are last year's payment projected forward");
+  assert.equal(s.total, 10462.5);
+  assert.equal(s.scheduledCount, 2);
+  assert.equal(s.estimatedCount, 2);
+  assert.ok(Math.abs(s.scheduledPct - 96.18) < 0.01);
+
+  // Anything without an explicit "scheduled" is treated as an estimate — the
+  // cautious direction, since overstating certainty is the harmful error.
+  const unknown = certaintySplit([{ amount: 50 }]);
+  assert.equal(unknown.estimated, 50);
+  assert.equal(unknown.scheduled, 0);
+
+  const empty = certaintySplit([]);
+  assert.equal(empty.total, 0);
+  assert.equal(empty.scheduledPct, 0);
+});
