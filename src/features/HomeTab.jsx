@@ -10,6 +10,7 @@ import { buildActionQueue } from "../core/action-queue.mjs";
 import { monthlyBudget, annualBudget, planSpendFromBudget, mergedSpend } from "../core/budget.mjs";
 import { savingsRate } from "../core/savings-rate.mjs";
 import { dataHealth } from "../core/data-health.mjs";
+import { sinceLastVisit } from "../core/since-last-visit.mjs";
 import PlanHealthCard from "../ui/PlanHealthCard.jsx";
 import {
   store, gbp0, num, pct, WrapperChip, AllocBar, KIND_LABEL, RateCell, Empty, todayISO, SegmentedControl,
@@ -248,6 +249,47 @@ function TrendChart({ valuations, snapshots }) {
               ? <><span style={{ color: "var(--m-same)" }}>┄</span> {benchSymbol} rebased to {gbp0(overlay[0].value)} on {overlay[0].date} — index movement over this window, not a like-for-like performance comparison (your later contributions/withdrawals are ignored; the Returns tab's TWR comparison is the fair fight).</>
               : bench ? <>No {benchSymbol} data inside this window.</> : <>Loading {benchSymbol}…</>}
         </div>
+      )}
+    </div>
+  );
+}
+
+/* "Since you last opened" — the app already recorded a snapshot every day
+   you visited and logged every dividend; it just never told you what had
+   happened in between. One line, above everything else, because it's the
+   thing you actually came to find out. Renders nothing at all when there's
+   no honest comparison to make (first run, or you've already been in today)
+   rather than padding the page with a £0 non-event. */
+function SinceLastVisitCard({ summary, setTab }) {
+  if (!summary || !summary.available) return null;
+  const { change, changePct, direction, span, income, stalePrices, estimated, from } = summary;
+  const tone = direction === "up" ? "var(--gain)" : direction === "down" ? "var(--loss)" : "var(--muted)";
+  const flat = direction === "flat";
+
+  return (
+    <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-sm flex flex-wrap items-center gap-x-2 gap-y-1">
+      <span className="text-[var(--muted)]">Since you were last here ({from}):</span>
+      {flat ? (
+        <span className="text-[var(--muted)]">net worth is unchanged</span>
+      ) : (
+        <span>
+          net worth is <strong style={{ color: tone }}>{direction === "up" ? "up" : "down"} {gbp0(Math.abs(change))}</strong>
+          {changePct != null && <span className="text-[var(--muted)]"> ({changePct > 0 ? "+" : ""}{num(changePct, 2)}%)</span>}
+          <span className="text-[var(--muted)]"> {span}</span>
+        </span>
+      )}
+      {income.count > 0 && (
+        <span className="text-[var(--muted)]">
+          · <strong className="text-[var(--gain)]">{gbp0(income.total)}</strong> of income arrived ({income.count} payment{income.count === 1 ? "" : "s"})
+        </span>
+      )}
+      {estimated && (
+        <span className="text-[var(--m-bb)] text-xs" title="One of the two snapshots was recorded while a holding had no price">· approximate</span>
+      )}
+      {stalePrices.length > 0 && (
+        <button onClick={() => setTab && setTab("wealth")} className="text-xs text-[var(--muted)] underline underline-offset-2 hover:text-[var(--fg)]">
+          · {stalePrices.length} price{stalePrices.length === 1 ? "" : "s"} stale, so this may understate
+        </button>
       )}
     </div>
   );
@@ -546,6 +588,7 @@ export default function HomeTab({
   const valuations = useAppStore((s) => s.valuations);
   const netWorthSnapshots = useAppStore((s) => s.netWorthSnapshots);
   const priceMeta = useAppStore((s) => s.priceMeta), setPriceMeta = useAppStore((s) => s.setPriceMeta);
+  const incomeEntries = useAppStore((s) => s.incomeEntries);
   const mortgages = useAppStore((s) => s.mortgages);
   const cashAccounts = useAppStore((s) => s.cashAccounts);
   const planInputs = useAppStore((s) => s.planInputs);
@@ -590,6 +633,11 @@ export default function HomeTab({
   // Data health — the one place completeness issues live, instead of one
   // nag per tab. Inputs are already computed above / by the shell; this
   // only assembles them.
+  const sinceVisit = useMemo(
+    () => sinceLastVisit({ snapshots: netWorthSnapshots, incomeEntries, priceMeta, today: todayISO() }),
+    [netWorthSnapshots, incomeEntries, priceMeta]
+  );
+
   const health = useMemo(() => {
     const spendMonth = todayISO().slice(0, 7);
     let uncat = 0, spendTotal = 0;
@@ -759,6 +807,7 @@ export default function HomeTab({
   return (
     <div className="grid gap-4">
       <TaxYearEndBanner taxYearEnd={taxYearEnd} setTab={setTab} />
+      <SinceLastVisitCard summary={sinceVisit} setTab={setTab} />
 
       {/* headline + trend */}
       <div className="grid lg:grid-cols-3 gap-4">
