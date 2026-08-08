@@ -2,7 +2,7 @@ import React, { useState, useMemo, useCallback, useRef } from "react";
 import { Plus, Trash2, ClipboardPaste, Check } from "lucide-react";
 import { normWrapper } from "../core/portfolio.mjs";
 import { xirr } from "../core/returns.mjs";
-import { parseLgimPaste, matchLgimRows } from "../core/lgim-import.mjs";
+import { parseLgimPaste, parseLgimApi, matchLgimRows } from "../core/lgim-import.mjs";
 import { gbp, gbp0, WrapperChip, num, round2, CurrencyInput, NumberInput, uid, todayISO, rateIsDisplayable, Field, Stat, Empty } from "../ui/shared.jsx";
 import useAppStore from "../state/appStore.js";
 import { removeWithUndo } from "../ui/undo.jsx";
@@ -30,8 +30,30 @@ function LgimPastePanel({ rows: holdingRows, secMeta, setSecMeta, setPrices, set
   const [text, setText] = useState("");
   const [assign, setAssign] = useState({});   // fund name -> ticker chosen now
   const [done, setDone] = useState("");
+  const [fetched, setFetched] = useState(null); // rows from the live feed
+  const [busy, setBusy] = useState(false);
+  const [fetchErr, setFetchErr] = useState("");
 
-  const parsed = useMemo(() => (text.trim() ? parseLgimPaste(text) : { rows: [], warnings: [] }), [text]);
+  // The widget's own JSON feed, via /api/lgim-prices. Failure is never fatal:
+  // it just leaves the paste box as the way through, which always works.
+  const fetchLive = async () => {
+    setBusy(true); setFetchErr("");
+    try {
+      const r = await fetch("/api/lgim-prices?site=32");
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      const out = parseLgimApi(j.json);
+      if (!out.rows.length) throw new Error(out.warnings[0] || "No prices in the response.");
+      setFetched(out); setText("");
+    } catch (e) {
+      setFetchErr(`${e.message} — paste the table instead.`);
+    } finally { setBusy(false); }
+  };
+
+  const parsed = useMemo(() => {
+    if (text.trim()) return parseLgimPaste(text);   // a paste overrides a fetch
+    return fetched || { rows: [], warnings: [] };
+  }, [text, fetched]);
   const { matched, unmatched } = useMemo(() => matchLgimRows(parsed.rows, { secMeta }), [parsed.rows, secMeta]);
 
   // Pension-fund tickers that don't already have a price from this paste.
@@ -69,7 +91,7 @@ function LgimPastePanel({ rows: holdingRows, secMeta, setSecMeta, setPrices, set
       });
     }
     setDone(`Updated ${pending.length} fund price${pending.length === 1 ? "" : "s"} (priced ${pending[0].date}).`);
-    setText(""); setAssign({});
+    setText(""); setAssign({}); setFetched(null);
     setTimeout(() => setDone(""), 6000);
   };
 
@@ -83,8 +105,16 @@ function LgimPastePanel({ rows: holdingRows, secMeta, setSecMeta, setPrices, set
       {open && (
         <div className="space-y-2">
           <p className="text-xs text-[var(--muted)] leading-relaxed">
-            Workplace funds have no live price feed. Open your scheme&apos;s fund-price page, select the price table and copy it, then paste it here — the whole table at once is fine. Prices are read in pence and stamped with the date the provider struck them, not today.
+            Workplace funds aren&apos;t on Yahoo. Fetch pulls today&apos;s prices from your scheme&apos;s own fund centre; if that ever fails, copy the price table off the scheme page and paste it below instead. Either way prices are stamped with the date the provider struck them, not today.
           </p>
+          <div className="flex items-center gap-2 flex-wrap">
+            <button onClick={fetchLive} disabled={busy} className={busy ? "btn-accent opacity-60" : "btn-accent"}>
+              {busy ? "Fetching…" : "Fetch latest prices"}
+            </button>
+            {fetched && !text.trim() && <span className="text-xs text-[var(--gain)]">Live feed · {fetched.rows.length} funds</span>}
+          </div>
+          {fetchErr && <div className="text-xs text-[var(--m-bb)]">{fetchErr}</div>}
+
           <textarea value={text} onChange={(e) => setText(e.target.value)} rows={4}
             aria-label="Paste the fund price table"
             placeholder="Citi UK Plan Growth Fund0.4065%0.0161%0.4226%1,134.39p06/08/2026Download data"

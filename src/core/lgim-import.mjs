@@ -174,15 +174,96 @@ export function parseLgimPaste(text) {
   return { rows, warnings };
 }
 
-/* Map parsed rows onto the app's tickers.
-   A ticker claims a row when secMeta[ticker].lgimName matches (the mapping
-   the user confirms once), falling back to its display name. Everything else
-   is returned unmatched for the UI to ask about — guessing here would put a
-   wrong price on a pension holding, which is worse than asking. */
+/* ---------------------------------------------------------------------
+   The same table, straight from the widget's own JSON API.
+
+   The scheme page embeds a fund-centre widget which loads its data from
+   /srp/api/fund-centre/<site>/?audience=<n>&language=<n>. That endpoint is
+   public and unauthenticated, so the app can fetch it through a proxy and
+   skip the copy-paste entirely — parseLgimPaste stays as the fallback for
+   when the endpoint moves or a different provider is involved.
+
+   Two traps, both handled here:
+
+   1. FIELDS ARE POSITIONAL. Each fund's `data` is a bare array whose
+      meaning comes from metadata.fund_fields. Hard-coding indices would
+      break silently the day a column is added, so indices are resolved by
+      code_name every time. `midPrice` appears TWICE (once as a string
+      placeholder, once as the real currency value) — the currency one is
+      what's wanted.
+   2. THE PRICE IS ALREADY IN POUNDS. The JSON carries 5.10721 and the
+      metadata's format rule ("{:#,##0.00}p(*100)") is what turns it into
+      the 510.72p shown on screen. Dividing by 100 here — as the paste
+      parser correctly does for the rendered pence — would undervalue the
+      holding a hundredfold.
+   --------------------------------------------------------------------- */
+export function parseLgimApi(json) {
+  const warnings = [];
+  const fields = json?.metadata?.fund_fields;
+  const funds = json?.funds;
+  if (!Array.isArray(fields) || !Array.isArray(funds)) {
+    return { rows: [], warnings: ["That doesn't look like a fund-centre response."] };
+  }
+  // Resolve by name, preferring the typed entry where a code_name repeats.
+  const idxOf = (codeName, preferType) => {
+    let fallback = -1;
+    for (let i = 0; i < fields.length; i++) {
+      if (fields[i]?.code_name !== codeName) continue;
+      if (preferType && fields[i].type === preferType) return i;
+      fallback = i;
+    }
+    return fallback;
+  };
+  const iName = idxOf("name"), iCode = idxOf("code");
+  const iPrice = idxOf("midPrice", "currency"), iDate = idxOf("midPrice__date");
+  const iAmc = idxOf("amc"), iAe = idxOf("ae"), iTer = idxOf("ter");
+  if (iPrice < 0 || iDate < 0) return { rows: [], warnings: ["The response carried no price column."] };
+
+  const pctNum = (s) => {
+    const n = parseFloat(String(s ?? "").replace("%", ""));
+    return Number.isFinite(n) ? n : null;
+  };
+  const rows = [];
+  for (const f of funds) {
+    const d = f?.data;
+    if (!Array.isArray(d)) continue;
+    const name = clean(d[iName]);
+    const price = num(d[iPrice]);                    // already £/unit
+    const date = /^\d{4}-\d{2}-\d{2}$/.test(String(d[iDate] || "")) ? d[iDate] : ukDateToIso(d[iDate]);
+    if (!(price > 0) || !date) {
+      warnings.push(`Skipped "${name || "an unnamed fund"}" — no usable price or date.`);
+      continue;
+    }
+    if ((f.currency || "GBP") !== "GBP") {
+      warnings.push(`Skipped "${name}" — priced in ${f.currency}, not GBP.`);
+      continue;
+    }
+    rows.push({
+      name,
+      code: iCode >= 0 ? clean(d[iCode]) || null : null,
+      amc: pctNum(d[iAmc]), additionalExpenses: pctNum(d[iAe]), ter: pctNum(d[iTer]),
+      price: Math.round(price * 1e6) / 1e6,
+      pricePence: Math.round(price * 100 * 1e4) / 1e4,  // for display parity with the page
+      date,
+    });
+  }
+  if (!rows.length && !warnings.length) warnings.push("The response contained no funds.");
+  return { rows, warnings };
+}
+
+/* Map rows onto the app's tickers.
+
+   Priority is deliberate: the provider's own fund CODE ("DDES") first, since
+   it survives the marketing renames that fund names undergo; then the saved
+   name mapping; then the display name. Anything unrecognised is returned for
+   the UI to ask about — guessing would put a wrong price on a pension
+   holding, which is worse than asking once. */
 export function matchLgimRows(rows = [], { secMeta = {} } = {}) {
-  const byName = new Map();
+  const byCode = new Map(), byName = new Map();
   for (const [ticker, meta] of Object.entries(secMeta)) {
     if (!meta) continue;
+    const code = String(meta.lgimCode || "").trim().toUpperCase();
+    if (code && !byCode.has(code)) byCode.set(code, ticker);
     for (const candidate of [meta.lgimName, meta.name]) {
       const key = normaliseFundName(candidate);
       if (key && !byName.has(key)) byName.set(key, ticker);
@@ -191,7 +272,8 @@ export function matchLgimRows(rows = [], { secMeta = {} } = {}) {
   const matched = [], unmatched = [];
   const seen = new Set();
   for (const row of rows) {
-    const ticker = byName.get(normaliseFundName(row.name));
+    const code = String(row.code || "").trim().toUpperCase();
+    const ticker = (code && byCode.get(code)) || byName.get(normaliseFundName(row.name));
     if (ticker && !seen.has(ticker)) { seen.add(ticker); matched.push({ ticker, ...row }); }
     else unmatched.push(row);
   }
