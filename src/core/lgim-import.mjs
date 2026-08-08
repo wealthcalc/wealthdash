@@ -1,0 +1,199 @@
+/* ======================================================================
+   L&G WORKPLACE FUND PRICES — paste importer.
+
+   Why paste rather than fetch: the scheme's price table (e.g.
+   legalandgeneral.com/workplace/asset-management/citi-uk-plan/) is not on
+   the page it appears on. That page embeds a widget from a different host,
+   and the widget renders client-side — so a server-side fetch of either URL
+   returns markup with no prices in it. Rather than pretend otherwise, this
+   takes the text you copied (from the page or a print/PDF of it) and turns
+   it into prices. It's the same trade the private-investment importer makes:
+   a paste that always works beats a scrape that breaks silently.
+
+   The awkward part is that a copied table wraps fund names unpredictably.
+   A PDF print produces:
+
+       Citi UK Plan Annuity Targeting          <- name, first half
+          0.24%  0.00%  0.24%  510.72p  06/08/2026  Download data
+       Fund                                    <- name, second half
+
+   while a browser copy usually keeps each row on one line. Both are handled:
+   rows are found by their DATA signature (three percentages, a pence price
+   and a date), and any loose name fragments around them are stitched back
+   on, split at the scheme's own name prefix (auto-detected, so this isn't
+   hard-coded to one scheme).
+
+   Prices are quoted in PENCE ("510.72p") and dated with the day the price
+   was struck — usually a day or two back, because these funds price daily
+   in arrears. Both facts are preserved: the caller converts pence to pounds
+   and stamps the QUOTE date, not the import time, so staleness warnings
+   judge a fund against its own price date.
+   Pure and node-tested (lgim-import.test.mjs).
+   ====================================================================== */
+
+// A priced row: three percentages, then "1,134.39p", then "06/08/2026".
+// Separators are OPTIONAL: copying the live table out of the browser yields
+// no whitespace at all between cells —
+//   "Citi UK Plan Annuity Targeting Fund0.24%0.00%0.24%510.72p06/08/2026"
+// — whereas a PDF print pads them with spaces. The %, p and / characters are
+// unambiguous delimiters, so both parse with the same expression.
+// `p(?![A-Za-z])` rather than `p\b`: in the browser copy the date runs
+// straight into the price ("510.72p06/08/2026"), and there is no word
+// boundary between "p" and "0" — `\b` silently matched nothing at all.
+const DATA_RE = /([\d.]+)\s*%\s*([\d.]+)\s*%\s*([\d.]+)\s*%\s*([\d,]+\.?\d*)\s*p(?![A-Za-z])\s*(\d{2}\/\d{2}\/\d{4})/;
+// Lines that are page furniture rather than data. Deliberately NOT matching
+// a bare "Fund"/"Funds": the PDF layout wraps names so that "Fund" lands on
+// its own line as the tail of a real fund name, and filtering it here quietly
+// truncated every wrapped name. The header's stray "Funds" is harmless — it
+// gets trimmed by trimToPrefix below.
+const NOISE_RE = /^(https?:\/\/|page \d+ of \d+|download data$|price history$|annual$|management charge$|additional$|expenses$|total expense$|ratio$|price$|date$|navigation$)/i;
+// A trailing print timestamp like "08/08/2026, 10 42" or "10:42".
+const STAMP_RE = /^\d{2}\/\d{2}\/\d{4},?\s*\d{1,2}[:\s]\d{2}/;
+
+const clean = (s) => String(s || "").replace(/ /g, " ").replace(/\s+/g, " ").trim();
+
+// "1,134.39" -> 1134.39
+const num = (s) => {
+  const n = parseFloat(String(s).replace(/,/g, ""));
+  return Number.isFinite(n) ? n : null;
+};
+
+// "06/08/2026" (DD/MM/YYYY, UK) -> "2026-08-06"
+export function ukDateToIso(s) {
+  const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(String(s || "").trim());
+  if (!m) return null;
+  const [, d, mo, y] = m;
+  const dd = +d, mm = +mo;
+  if (mm < 1 || mm > 12 || dd < 1 || dd > 31) return null;
+  return `${y}-${mo}-${d}`;
+};
+
+// Comparable form of a fund name: case/punctuation/spacing insensitive, so
+// "Citi UK Plan Property Fund – Active" matches "...Fund - Active" (the page
+// mixes en-dashes and hyphens).
+export function normaliseFundName(s) {
+  return String(s || "")
+    .replace(/[‐-―]/g, "-")   // any dash -> hyphen
+    .replace(/[^a-z0-9]+/gi, " ")
+    .trim()
+    .toLowerCase();
+}
+
+// Most common opening two words across the candidate names — the scheme's
+// own prefix ("citi uk"). Used to decide where one wrapped name ends and the
+// next begins, without hard-coding a scheme.
+function detectPrefix(fragments) {
+  const counts = new Map();
+  for (const f of fragments) {
+    const words = clean(f).split(" ");
+    if (words.length < 2) continue;
+    const key = `${words[0]} ${words[1]}`.toLowerCase();
+    counts.set(key, (counts.get(key) || 0) + 1);
+  }
+  let best = null, bestN = 1; // needs to repeat to count as a prefix
+  for (const [k, n] of counts) if (n > bestN) { best = k; bestN = n; }
+  return best;
+}
+
+/* text: the copied table. Returns { rows, warnings }.
+   rows: [{ name, amc, additionalExpenses, ter, pricePence, price, date }]
+   `price` is GBP per unit (pence / 100); `date` is the ISO quote date. */
+export function parseLgimPaste(text) {
+  const warnings = [];
+  const lines = String(text || "")
+    .split(/\r?\n/)
+    .map(clean)
+    .filter((l) => l && !NOISE_RE.test(l) && !STAMP_RE.test(l));
+
+  // Pass 1: classify each line as a data row (with any inline name) or a
+  // loose name fragment.
+  const items = [];
+  for (const line of lines) {
+    const m = DATA_RE.exec(line);
+    if (m) {
+      items.push({
+        kind: "data",
+        inlineName: clean(line.slice(0, m.index)),
+        amc: num(m[1]), additionalExpenses: num(m[2]), ter: num(m[3]),
+        pricePence: num(m[4]), rawDate: m[5],
+      });
+    } else {
+      items.push({ kind: "text", text: line });
+    }
+  }
+
+  // Pass 2: stitch loose fragments onto the row they belong to. A fragment
+  // that starts with the scheme prefix begins a NEW name (so it belongs to
+  // the row that follows); anything before it completes the previous name.
+  const prefix = detectPrefix([
+    ...items.filter((i) => i.kind === "text").map((i) => i.text),
+    ...items.filter((i) => i.kind === "data" && i.inlineName).map((i) => i.inlineName),
+  ]);
+  const startsName = (s) => (prefix ? clean(s).toLowerCase().startsWith(prefix) : true);
+  // Trim anything before the scheme prefix. Two real cases: the run-together
+  // header row ("FundsAnnual management charge…") landing in front of the
+  // first fund, and prose pasted alongside the table ("here is the copy &
+  // paste from the website data: Citi UK Plan European…").
+  const trimToPrefix = (s) => {
+    if (!prefix) return clean(s);
+    const t = clean(s);
+    const i = t.toLowerCase().indexOf(prefix);
+    return i > 0 ? t.slice(i) : t;
+  };
+
+  const rows = [];
+  let pendingHead = "";   // name fragment(s) awaiting their data row
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i];
+    if (it.kind === "text") {
+      if (startsName(it.text) || !rows.length) pendingHead = pendingHead ? `${pendingHead} ${it.text}` : it.text;
+      else rows[rows.length - 1].name = clean(`${rows[rows.length - 1].name} ${it.text}`); // tail of the previous name
+      continue;
+    }
+    // An inline name is self-contained (browser copy), so it wins outright —
+    // prepending a pending fragment would glue the header row onto the first
+    // fund. A pending fragment is only the name when the row has none of its
+    // own (the PDF's wrapped layout).
+    const name = trimToPrefix(it.inlineName || pendingHead);
+    pendingHead = "";
+    const date = ukDateToIso(it.rawDate);
+    if (!date) { warnings.push(`Skipped a row with an unreadable date "${it.rawDate}".`); continue; }
+    if (!(it.pricePence > 0)) { warnings.push(`Skipped "${name || "a fund"}" — no usable price.`); continue; }
+    rows.push({
+      name,
+      amc: it.amc, additionalExpenses: it.additionalExpenses, ter: it.ter,
+      pricePence: it.pricePence,
+      price: Math.round((it.pricePence / 100) * 1e6) / 1e6, // pence -> £/unit
+      date,
+    });
+  }
+
+  const unnamed = rows.filter((r) => !r.name).length;
+  if (unnamed) warnings.push(`${unnamed} priced row${unnamed === 1 ? "" : "s"} had no readable fund name — match them by hand.`);
+  if (!rows.length) warnings.push("No fund prices found in that text. Copy the whole price table, including the Price and Date columns.");
+  return { rows, warnings };
+}
+
+/* Map parsed rows onto the app's tickers.
+   A ticker claims a row when secMeta[ticker].lgimName matches (the mapping
+   the user confirms once), falling back to its display name. Everything else
+   is returned unmatched for the UI to ask about — guessing here would put a
+   wrong price on a pension holding, which is worse than asking. */
+export function matchLgimRows(rows = [], { secMeta = {} } = {}) {
+  const byName = new Map();
+  for (const [ticker, meta] of Object.entries(secMeta)) {
+    if (!meta) continue;
+    for (const candidate of [meta.lgimName, meta.name]) {
+      const key = normaliseFundName(candidate);
+      if (key && !byName.has(key)) byName.set(key, ticker);
+    }
+  }
+  const matched = [], unmatched = [];
+  const seen = new Set();
+  for (const row of rows) {
+    const ticker = byName.get(normaliseFundName(row.name));
+    if (ticker && !seen.has(ticker)) { seen.add(ticker); matched.push({ ticker, ...row }); }
+    else unmatched.push(row);
+  }
+  return { matched, unmatched };
+}

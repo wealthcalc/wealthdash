@@ -112,7 +112,7 @@ export async function refreshAllPrices({
   }
   const total = otherTickers.length + giltTickers.length;
   const got = Object.keys(done).length;
-  const fundNote = pensionFundTickers.length ? ` ${pensionFundTickers.length} pension fund${pensionFundTickers.length === 1 ? "" : "s"} skipped — no live source, enter manually on the Pension & LISA tab.` : "";
+  const fundNote = pensionFundTickers.length ? ` ${pensionFundTickers.length} pension fund${pensionFundTickers.length === 1 ? "" : "s"} skipped — no live quote source; paste your scheme's price table on the Pension & LISA tab.` : "";
   onProgress("");
   return {
     updated: got, total,
