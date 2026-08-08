@@ -4,7 +4,8 @@ import { WRAPPERS } from "../core/portfolio.mjs";
 import { pensionXirrByWrapper } from "../core/returns.mjs";
 import { giltAnalytics } from "../core/gilts.mjs";
 import { growthIndex, maxDrawdown, volatility, benchmarkCumulativeReturn, feeDrag } from "../core/benchmark.mjs";
-import { gbp, WrapperChip, num, todayISO, pct, pctPlain, toneOf, SHORT_SPAN, RateCell, rateIsDisplayable, Stat, Empty, useSort, sortRows, SortTh, store, SubTabs, Field } from "../ui/shared.jsx";
+import { returnAttribution } from "../core/attribution.mjs";
+import { gbp, WrapperChip, num, todayISO, pct, pctPlain, toneOf, SHORT_SPAN, RateCell, rateIsDisplayable, Stat, Empty, useSort, sortRows, SortTh, store, SubTabs, SegmentedControl, Field } from "../ui/shared.jsx";
 import useAppStore from "../state/appStore.js";
 
 const BENCHMARK_SUGGESTIONS = [
@@ -70,7 +71,7 @@ function ReturnsTab({ returns }) {
 
   return (
     <div className="space-y-4">
-      <SubTabs tabs={[["performance", "Performance"], ["benchmark", "Benchmark & risk"]]} active={sub} onChange={setSub} />
+      <SubTabs tabs={[["performance", "Performance"], ["attribution", "Attribution"], ["benchmark", "Benchmark & risk"]]} active={sub} onChange={setSub} />
 
       {sub === "performance" && (
       <>
@@ -197,6 +198,8 @@ function ReturnsTab({ returns }) {
       </>
       )}
 
+      {sub === "attribution" && <AttributionView perHolding={perHolding} total={total} />}
+
       {sub === "benchmark" && (
         <BenchmarkRiskView portfolioTWR={portfolioTWR} perHolding={perHolding} secMeta={secMeta} setSecMeta={setSecMeta} />
       )}
@@ -209,6 +212,93 @@ function ReturnsTab({ returns }) {
 // built on core/benchmark.mjs (see that file's header for the modelling
 // choices, esp. why growth index/volatility/drawdown use TWR PERIOD FACTORS
 // rather than raw valuation snapshots).
+/* Attribution — which holdings produced the return, rather than which
+   holding had the best return. The distinction is the point: a 60% gain on
+   1% of the money is noise, and this is the only view that says so.
+
+   The bars encode CONTRIBUTION (size × performance), because that's the
+   quantity that adds up to the portfolio's own return. Each row also shows
+   the holding's own return and its share of invested money, so a big
+   contribution is always attributable to one or the other. */
+function AttributionView({ perHolding, total }) {
+  const [by, setBy] = useState("ticker");
+  const a = useMemo(() => returnAttribution({ perHolding, total, by }), [perHolding, total, by]);
+  const { rows, summary } = a;
+
+  if (!rows.length) {
+    return <Empty msg="Attribution needs at least one priced holding with a known profit or loss." />;
+  }
+  // Bars are scaled to the largest absolute contribution so the biggest
+  // mover fills the width and everything else is read against it.
+  const maxAbs = Math.max(...rows.map((r) => Math.abs(r.contribution)), 1e-9);
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <Stat label="Total profit" value={gbp(summary.totalProfit)} tone={toneOf(summary.totalProfit)} sub={`on ${gbp(summary.totalMoneyIn)} invested`} />
+        <Stat label="Portfolio return" value={summary.portfolioReturn != null ? pct(summary.portfolioReturn) : "n/a"} tone={toneOf(summary.portfolioReturn)} sub="money-weighted, simple" big />
+        <Stat label="Biggest contributor" value={rows[0]?.key || "—"} sub={rows[0] ? `${pct(rows[0].contribution)} of the return` : undefined} tone={toneOf(rows[0]?.contribution)} />
+        <Stat label="Top 3 share of profit" value={summary.top3Share != null ? pct(summary.top3Share) : "n/a"}
+          sub={summary.top3Share != null && summary.top3Share > 0.7 ? "your gain rests on very few names" : "spread across holdings"} />
+      </div>
+
+      <div className="flex items-center gap-2 flex-wrap">
+        <SegmentedControl ariaLabel="Group attribution by" value={by} onChange={setBy}
+          options={[["ticker", "By holding"], ["wrapper", "By wrapper"]]} />
+        {summary.excludedCount > 0 && (
+          <span className="text-xs text-[var(--m-bb)]">
+            {summary.excludedCount} unpriced holding{summary.excludedCount === 1 ? "" : "s"} excluded ({summary.excludedTickers.slice(0, 3).join(", ")}{summary.excludedCount > 3 ? "…" : ""}) — their profit isn&apos;t known, and counting it as zero would credit the rest of the portfolio with it.
+          </span>
+        )}
+      </div>
+
+      <div className="rounded-xl border border-[var(--border)] overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead className="bg-[var(--panel2)] text-[var(--muted)] text-xs uppercase tracking-wide">
+            <tr>{["", "Share of money", "Its own return", "Profit", "Contribution to return"].map((h, i) => (
+              <th key={i} className={"px-3 py-2 font-medium " + (i === 0 ? "text-left" : i === 4 ? "text-left" : "text-right")}>{h}</th>
+            ))}</tr>
+          </thead>
+          <tbody className="divide-y divide-[var(--border)] bg-[var(--panel)]">
+            {rows.map((r) => (
+              <tr key={r.key} className="hover:bg-[var(--panel2)]">
+                <td className="px-3 py-2 font-medium whitespace-nowrap">
+                  {by === "wrapper" ? <WrapperChip w={r.key} /> : r.key}
+                  {by === "ticker" && r.wrapper && <span className="ml-1.5 text-[10px] text-[var(--muted)]">{r.wrapper}</span>}
+                </td>
+                <td className="px-3 py-2 num text-right text-[var(--muted)]">{pct(r.weight, 1)}</td>
+                <td className={"px-3 py-2 num text-right " + (r.ownReturn == null ? "text-[var(--muted)]" : r.ownReturn >= 0 ? "text-[var(--gain)]" : "text-[var(--loss)]")}>
+                  {r.ownReturn != null ? pct(r.ownReturn) : "—"}
+                </td>
+                <td className={"px-3 py-2 num text-right " + (r.profit >= 0 ? "text-[var(--gain)]" : "text-[var(--loss)]")}>{gbp(r.profit)}</td>
+                <td className="px-3 py-2">
+                  <div className="flex items-center gap-2">
+                    <span className="num w-16 text-right shrink-0" style={{ color: r.contribution >= 0 ? "var(--gain)" : "var(--loss)" }}>{pct(r.contribution)}</span>
+                    <span className="flex-1 h-2 rounded-sm bg-[var(--panel2)] relative overflow-hidden min-w-[60px]">
+                      <span className="absolute top-0 bottom-0" style={{
+                        left: r.contribution >= 0 ? "50%" : undefined,
+                        right: r.contribution < 0 ? "50%" : undefined,
+                        width: `${(Math.abs(r.contribution) / maxAbs) * 50}%`,
+                        background: r.contribution >= 0 ? "var(--gain)" : "var(--loss)",
+                      }} />
+                      <span className="absolute top-0 bottom-0 left-1/2 w-px bg-[var(--border)]" />
+                    </span>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <p className="text-xs text-[var(--muted)] leading-relaxed">
+        Contribution = that holding&apos;s profit ÷ the whole portfolio&apos;s invested money, so the column adds up to the portfolio return ({summary.portfolioReturn != null ? pct(summary.portfolioReturn) : "n/a"}) rather than needing a reconciling adjustment. It answers &ldquo;what moved the number&rdquo;, which is a different question from &ldquo;what performed best&rdquo; — a large holding up modestly usually beats a tiny one that doubled.
+        This is a <span className="font-medium">money-weighted</span> decomposition, not Brinson attribution: proper allocation-vs-selection analysis needs each holding&apos;s value at every period boundary, and the app stores valuation history at portfolio level only. Profit includes income received and is measured against money actually put in.
+      </p>
+    </div>
+  );
+}
+
 function BenchmarkRiskView({ portfolioTWR, perHolding, secMeta, setSecMeta }) {
   const [symbol, setSymbol] = useState(() => store.get("cgt.benchmark.symbol", "VWRL.L"));
   useEffect(() => store.set("cgt.benchmark.symbol", symbol), [symbol]);
