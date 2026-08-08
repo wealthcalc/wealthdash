@@ -20,6 +20,7 @@
    sub-account of something else.
    ====================================================================== */
 import { ibTradeFromRow, ibCashFromRow, ibDate } from "./ibkr-import.mjs";
+import { shapeBrokerPositions } from "./position-reconcile.mjs";
 
 function getterFor(attrs) {
   return (...keys) => {
@@ -108,7 +109,13 @@ export function shapeFlexPull(raw = {}, { defaultWrapper = "GIA", baseCurrency =
     warnings.push("Your Flex Query has Interest Accruals but not Cash Transactions — interest is imported, but dividends won't come through until you add the Cash Transactions section too.");
   }
 
-  return { trades, income, warnings, baseCurrency, format: "flex" };
+  // The broker's own position report — ground truth for QUANTITY, and the
+  // only independent check on a ledger that otherwise derives every holding
+  // from transaction history. Previously extracted by the API and then
+  // dropped here; core/position-reconcile.mjs consumes it.
+  const brokerPositions = shapeBrokerPositions(raw.openPositions || [], { seedByIsin });
+
+  return { trades, income, warnings, baseCurrency, brokerPositions, format: "flex" };
 }
 
 // Cash Report balances by currency — a reconciliation aid ("IBKR reports

@@ -7,6 +7,8 @@ import { parseIBKR } from "../core/ibkr-import.mjs";
 import { parseFidelity } from "../core/fidelity-import.mjs";
 import useAppStore from "../state/appStore.js";
 import { shapeFlexPull, shapeCashReport } from "../core/ibkr-flex.mjs";
+import { reconcilePositions } from "../core/position-reconcile.mjs";
+import { buildPositions } from "../core/portfolio.mjs";
 import { parseISharesWorkbook } from "../core/ishares-eri.mjs";
 import { buildRsuImport, guessTickerFromFilename, detectRsuCsvFormat } from "../core/rsu-import.mjs";
 import { store, gbp, num, uid, todayISO, fxHistorical, Field, Empty, SubTabs, round2, dedupeAgainstExisting, SECURITY_SEED } from "../ui/shared.jsx";
@@ -65,11 +67,98 @@ const ibkrIdKey = (t) => (t.ibkrId ? `ibkr:${t.ibkrId}` : null);
 // Phase 2.8 de-drilling: raw state from the store; the shell keeps
 // providing setTab (navigation) and recomputeProviderCost (cross-slice
 // derived logic).
+/* Broker position reconciliation.
+
+   Everything the app knows about a holding — quantity, book cost, S104 pool,
+   unrealised gain, the CGT due on sale — is DERIVED from transaction history.
+   That makes a missing transaction invisible: it doesn't error, it produces a
+   confidently wrong number that flows into tax figures and net worth. The
+   broker's own position report is the only independent check, and it was
+   already being downloaded on every Flex pull and thrown away.
+
+   Quantity only, deliberately — see core/position-reconcile.mjs on why cost
+   basis is excluded. Nothing is auto-corrected: the app can tell you the
+   quantity is wrong, but not why, and inventing a date and price to "fix" it
+   would put fiction into a tax record. */
+function PositionReconcilePanel({ broker, positions = [], wrapper = "GIA" }) {
+  const result = useMemo(
+    () => (broker && broker.length ? reconcilePositions({ broker, positions, wrappers: [wrapper] }) : null),
+    [broker, positions, wrapper]
+  );
+  const [showAll, setShowAll] = useState(false);
+  if (!result) return null;
+  const { rows, summary } = result;
+  const shown = showAll ? rows : rows.filter((r) => r.status !== "match");
+
+  const LABEL = {
+    "missing-in-ledger": "broker holds more",
+    "extra-in-ledger": "ledger holds more",
+    "not-at-broker": "not in this statement",
+    match: "agrees",
+  };
+
+  return (
+    <div className="rounded-xl border p-3 space-y-2 text-xs"
+      style={summary.clean
+        ? { background: "color-mix(in srgb, var(--gain) 8%, transparent)", borderColor: "color-mix(in srgb, var(--gain) 30%, transparent)" }
+        : { background: "color-mix(in srgb, var(--loss) 8%, transparent)", borderColor: "color-mix(in srgb, var(--loss) 30%, transparent)" }}>
+      <div className="font-semibold text-sm" style={{ color: summary.clean ? "var(--gain)" : "var(--loss)" }}>
+        {summary.clean
+          ? `All ${summary.checked} ${wrapper} holdings match your broker's position report`
+          : `${summary.mismatched} of ${summary.checked} ${wrapper} holdings disagree with your broker`}
+      </div>
+
+      {!summary.clean && (
+        <p className="text-[var(--fg)] leading-relaxed">
+          {summary.missingInLedger > 0
+            ? <>The broker holds <strong>more</strong> than your transactions explain on {summary.missingInLedger} line{summary.missingInLedger === 1 ? "" : "s"} — so their cost base, unrealised gain and any CGT on sale are all understated until the missing entries are added.</>
+            : <>Your ledger holds more than the broker reports — a sale or transfer out may be missing.</>}
+        </p>
+      )}
+
+      {shown.length > 0 && (
+        <div className="rounded-lg border border-[var(--border)] overflow-x-auto bg-[var(--panel)]">
+          <table className="w-full">
+            <thead className="text-[var(--muted)] uppercase tracking-wide text-[10px]">
+              <tr>{["Holding", "Broker", "Ledger", "Difference", ""].map((h, i) => (
+                <th key={h} className={"px-2 py-1.5 font-medium " + (i === 0 || i === 4 ? "text-left" : "text-right")}>{h}</th>
+              ))}</tr>
+            </thead>
+            <tbody className="divide-y divide-[var(--border)]">
+              {shown.map((r) => (
+                <tr key={r.ticker}>
+                  <td className="px-2 py-1.5 font-medium">{r.ticker}</td>
+                  <td className="px-2 py-1.5 num text-right">{num(r.brokerQty, r.brokerQty % 1 ? 4 : 0)}</td>
+                  <td className="px-2 py-1.5 num text-right">{num(r.ledgerQty, r.ledgerQty % 1 ? 4 : 0)}</td>
+                  <td className={"px-2 py-1.5 num text-right font-medium " + (r.status === "match" ? "text-[var(--muted)]" : "text-[var(--loss)]")}>
+                    {r.diff > 0 ? "+" : ""}{num(r.diff, r.diff % 1 ? 4 : 0)}
+                  </td>
+                  <td className="px-2 py-1.5 text-[var(--muted)]">{LABEL[r.status]}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <div className="flex items-center gap-2 flex-wrap text-[var(--muted)]">
+        <button onClick={() => setShowAll((v) => !v)} className="underline underline-offset-2 hover:text-[var(--fg)]">
+          {showAll ? "show only differences" : `show all ${rows.length} holdings`}
+        </button>
+        <span>· Quantities only — a broker&apos;s cost basis follows different conventions to a UK S104 pool, so comparing it would be noise. Fix differences by adding the missing transactions on the Transactions tab.</span>
+      </div>
+    </div>
+  );
+}
+
 function ImportTab({ setTab, recomputeProviderCost }) {
   const txns = useAppStore((s) => s.txns), setTxns = useAppStore((s) => s.setTxns);
   const incomeEntries = useAppStore((s) => s.incomeEntries), setIncomeEntries = useAppStore((s) => s.setIncomeEntries);
   const eriEntries = useAppStore((s) => s.eriEntries), setEriEntries = useAppStore((s) => s.setEriEntries);
   const secMeta = useAppStore((s) => s.secMeta);
+  // Current holdings as the app computes them — the ledger side of the
+  // broker reconciliation below.
+  const positions = useMemo(() => buildPositions({ txns, secMeta }), [txns, secMeta]);
   const pensionCashflows = useAppStore((s) => s.pensionCashflows), setPensionCashflows = useAppStore((s) => s.setPensionCashflows);
   const ibkrQueryId = useAppStore((s) => s.ibkrQueryId), setIbkrQueryId = useAppStore((s) => s.setIbkrQueryId);
   const ibkrToken = useAppStore((s) => s.ibkrToken), setIbkrToken = useAppStore((s) => s.setIbkrToken);
@@ -460,6 +549,7 @@ function ImportTab({ setTab, recomputeProviderCost }) {
                   IBKR cash balance{cashReport.length > 1 ? "s" : ""}: {cashReport.map((c) => `${num(c.endingCash, 2)} ${c.currency}`).join(", ")} — a reconciliation check against the Wealth tab, not imported automatically.
                 </div>
               )}
+              <PositionReconcilePanel broker={ib?.brokerPositions} positions={positions} wrapper={wrapper} />
             </div>
           )}
 
