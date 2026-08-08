@@ -78,6 +78,10 @@ const useAppStore = create((set) => {
     // — only what was actually changed, so defaults can improve over time.
     assumptionOverrides: ls.get("cgt.assumptionoverrides", {}),
     setAssumptionOverrides: upd("assumptionOverrides"),
+    // Scheme funds the user has said aren't theirs, so a price refresh stops
+    // re-proposing the same wrong matches every time (core/lgim-import.mjs).
+    lgimIgnored: ls.get("cgt.lgimignored", []),
+    setLgimIgnored: upd("lgimIgnored"),
     // UK retirement planner inputs (Plan tab). Previously lived entirely
     // OUTSIDE this store — component-local state backed by its own
     // `localStorage.setItem("uk-retirement-planner:inputs", JSON.stringify(p))`

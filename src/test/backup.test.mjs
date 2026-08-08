@@ -40,7 +40,11 @@ test("roundtrip: build -> restore reproduces every exported value (fees/account 
     const t = { array: [], object: { a: 1 }, number: 7, string: "x" };
     state[k] = Array.isArray([]) && ID_ARRAYS.includes(k)
       ? [{ id: "1", note: k }]
-      : ({ txns: [], valuations: [{ date: "2026-01-01", value: 1 }], netWorthSnapshots: [{ date: "2026-01-01", value: 1 }] }[k]
+      // Array-typed keys that hold plain values rather than {id,...} records
+      // need a realistic array here, or the generic object fallback below
+      // makes them fail type validation and get skipped.
+      : ({ txns: [], valuations: [{ date: "2026-01-01", value: 1 }], netWorthSnapshots: [{ date: "2026-01-01", value: 1 }],
+        lgimIgnored: ["code:DDES"] }[k]
         ?? ({ income: 100, carried: 5, ibkrQueryId: "q" }[k] ?? { a: 1 }));
   }
   state.txns = [{ id: "t1", side: "BUY", ticker: "ABC", quantity: 1, gbpAmount: 100, fees: 2.5, account: "HL ISA" }];
