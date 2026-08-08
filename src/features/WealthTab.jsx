@@ -1,13 +1,14 @@
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import { AlertCircle, Banknote, AlertTriangle, CreditCard, ArrowRight } from "lucide-react";
 import { WRAPPERS } from "../core/portfolio.mjs";
 import {
   cashAccountsByWrapper, totalCashAccounts, weightedAverageRate, accountsMaturingSoon,
 } from "../core/cash.mjs";
 import { totalCreditCardDebt } from "../core/credit-cards.mjs";
+import { currencyExposure } from "../core/currency-exposure.mjs";
 import LivePricesPanel from "../ui/LivePricesPanel.jsx";
 import {
-  gbp, gbp0, num, CurrencyInput, Stat, Empty,
+  gbp, gbp0, num, pct, CurrencyInput, Stat, Empty,
   uid, todayISO, Field, useSort, sortRows, SortTh, TwoStepDelete,
 } from "../ui/shared.jsx";
 import useAppStore from "../state/appStore.js";
@@ -28,6 +29,7 @@ function WealthTab({ model, netWorth = null, setTab }) {
   const cash = useAppStore((s) => s.cash), setCash = useAppStore((s) => s.setCash);
   const cashAccounts = useAppStore((s) => s.cashAccounts), setCashAccounts = useAppStore((s) => s.setCashAccounts);
   const creditCards = useAppStore((s) => s.creditCards), setCreditCards = useAppStore((s) => s.setCreditCards);
+  const secMeta = useAppStore((s) => s.secMeta);
   // Hooks must run in the same order every render regardless of whether
   // `model` is null this time round, so anything stateful lives above both
   // early-return guards below (this file previously had no hooks at all,
@@ -35,6 +37,17 @@ function WealthTab({ model, netWorth = null, setTab }) {
   const [acctForm, setAcctForm] = useState(ACCOUNT_BLANK());
   const [acctSort, toggleAcctSort] = useSort("wrapper", "asc");
   const [cardForm, setCardForm] = useState(CARD_BLANK());
+  // Whole-balance-sheet FX exposure. Must sit with the other hooks, ABOVE
+  // the early-return guards below — React requires the same hook order on
+  // every render, and `model` can be null on some of them.
+  const fx = useMemo(() => currencyExposure({
+    positions: model?.positions || [],
+    extras: [
+      ...Object.entries(cash || {}).map(([wrapper, value]) => ({ label: `Cash ${wrapper}`, value: +value || 0, currency: "GBP" })),
+      ...(cashAccounts || []).map((a) => ({ label: a.label, value: +a.balance || 0, currency: a.currency || "GBP" })),
+    ],
+    secMeta,
+  }), [model, cash, cashAccounts, secMeta]);
 
   if (!model) return <Empty msg="Couldn't build the portfolio model — check the Transactions tab for ledger errors." />;
   const { positions, byWrapper, total, income } = model;
@@ -184,6 +197,43 @@ function WealthTab({ model, netWorth = null, setTab }) {
           </tfoot>
         </table>
       </div>
+
+      {/* Currency exposure. The balance sheet reports everything in GBP,
+          which hides the fact that a dollar-heavy portfolio loses sterling
+          value on a good week for the pound with no holding having fallen. */}
+      {fx.total > 0 && fx.byQuote.length > 1 && (
+        <div className="space-y-2">
+          <h3 className="text-sm font-semibold flex items-center gap-2"><Banknote size={15} className="text-[var(--accent)]" /> Currency exposure</h3>
+          <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3 space-y-2">
+            <div className="text-sm">
+              <strong>{pct(fx.nonGbpQuoteShare, 0)}</strong> <span className="text-[var(--muted)]">of {gbp0(fx.total)} is held in a currency other than sterling</span>
+              {fx.lookThroughCoverage > 0 && fx.nonGbpUnderlyingShare !== fx.nonGbpQuoteShare && (
+                <span className="text-[var(--muted)]"> · <strong className="text-[var(--fg)]">{pct(fx.nonGbpUnderlyingShare, 0)}</strong> once fund holdings are looked through</span>
+              )}
+            </div>
+            <div className="h-2 rounded-full overflow-hidden flex bg-[var(--border)]">
+              {fx.byQuote.map((c, i) => (
+                <span key={c.currency} title={`${c.currency} ${gbp0(c.value)}`} style={{
+                  width: `${c.weight * 100}%`,
+                  background: c.currency === "GBP" ? "var(--gain)" : ["var(--m-same)", "var(--m-bb)", "var(--m-pool)", "var(--loss)"][i % 4],
+                }} />
+              ))}
+            </div>
+            <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
+              {fx.byQuote.map((c) => (
+                <span key={c.currency} className="text-[var(--muted)]">
+                  <span className="font-medium text-[var(--fg)]">{c.currency}</span> {pct(c.weight, 1)} · {gbp0(c.value)}
+                </span>
+              ))}
+            </div>
+            <p className="text-xs text-[var(--muted)] leading-relaxed">
+              By the currency each holding is QUOTED in, plus cash and property. A GBP-quoted global fund is mostly foreign exposure in reality — set <span className="italic">fxExposure</span> on a security to have it looked through here.
+              {fx.lookThroughCoverage < 1 && <> Currently {pct(fx.lookThroughCoverage, 0)} of value has look-through data, so the second figure is a floor, not a full picture.</>}
+              {fx.unpricedCount > 0 && <> {fx.unpricedCount} unpriced holding{fx.unpricedCount === 1 ? " is" : "s are"} excluded.</>}
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* cash accounts — named, with rate + maturity, additive on top of the manual/unallocated figures above */}
       <div className="space-y-2">
