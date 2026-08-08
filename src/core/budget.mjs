@@ -328,6 +328,51 @@ export function averageAnnualBudget({ categories = [], txns = [], toMonth } = {}
   };
 }
 
+/* Propose budget limits from what you ACTUALLY spend.
+
+   Setting a budget from scratch is the tedious part, and a budget invented
+   out of optimism is worse than none — every category reads as overspent,
+   so the whole view gets ignored. The app already knows the honest number:
+   the representative annual spend per category.
+
+   `uplift` defaults to 0 — the proposal is what you actually spend, not a
+   softened version. A caller wanting headroom can ask for it explicitly.
+   Categories with no history are returned with `suggested: null` rather
+   than zero, since "spend nothing on this" is a decision, not a default.
+   Nothing is applied: this returns a proposal for the user to accept. */
+export function suggestBudgetsFromHistory({ categories = [], txns = [], toMonth, uplift = 0 } = {}) {
+  const avg = averageAnnualBudget({ categories, txns, toMonth });
+  const byId = new Map(avg.rows.map((r) => [r.id, r]));
+  const f = 1 + (+uplift || 0) / 100;
+
+  const rows = categories.filter((c) => !c.transfer).map((c) => {
+    const actual = byId.get(c.id)?.actual ?? 0;
+    const annualOnly = c.annual > 0 && !(c.monthly > 0);
+    const currentAnnual = annualOnly ? +c.annual || 0 : (+c.monthly || 0) * 12;
+    const hasHistory = actual > 0;
+    const suggestedAnnual = hasHistory ? r2(actual * f) : null;
+    return {
+      id: c.id, name: c.name, essential: !!c.essential, annualOnly,
+      currentAnnual: r2(currentAnnual),
+      // Monthly categories are proposed as a monthly figure, matching how
+      // they're entered — a yearly number would have to be divided by hand.
+      suggested: suggestedAnnual == null ? null : (annualOnly ? suggestedAnnual : r2(suggestedAnnual / 12)),
+      suggestedAnnual,
+      delta: suggestedAnnual == null ? null : r2(suggestedAnnual - currentAnnual),
+      hasHistory,
+    };
+  }).sort((a, b) => (b.suggestedAnnual ?? -1) - (a.suggestedAnnual ?? -1));
+
+  return {
+    rows,
+    monthsOfHistory: avg.summary.monthsWithData,
+    // Below a few months, an average is noise rather than a pattern.
+    reliable: avg.summary.monthsWithData >= 3,
+    totalSuggestedAnnual: r2(rows.reduce((s, r) => s + (r.suggestedAnnual || 0), 0)),
+    totalCurrentAnnual: r2(rows.reduce((s, r) => s + r.currentAnnual, 0)),
+  };
+}
+
 // Forward annual spend FORECAST — a data-driven alternative to the planned
 // budget for "what will I actually spend over the next 12 months". Takes the
 // representative annual ACTUAL spend (averaged across all history via

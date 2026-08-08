@@ -118,6 +118,7 @@ function LivePricesPanel({ tickers }) {
   const fetchAll = async () => {
     setBusy(true); setMsg("");
     const res = await refreshAllPrices({
+      prices,   // baseline for the post-refresh sanity check
       tickers, txns, secMeta, avMeta, avKey, dmoReportDate,
       setPrices, setPriceMeta, setDmoReportDate, onProgress: setProg,
     });

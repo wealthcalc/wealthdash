@@ -8,6 +8,7 @@ import { parseFidelity } from "../core/fidelity-import.mjs";
 import useAppStore from "../state/appStore.js";
 import { shapeFlexPull, shapeCashReport } from "../core/ibkr-flex.mjs";
 import { reconcilePositions } from "../core/position-reconcile.mjs";
+import { detectCorporateActions } from "../core/price-sanity.mjs";
 import { buildPositions } from "../core/portfolio.mjs";
 import { parseISharesWorkbook } from "../core/ishares-eri.mjs";
 import { buildRsuImport, guessTickerFromFilename, detectRsuCsvFormat } from "../core/rsu-import.mjs";
@@ -86,6 +87,10 @@ function PositionReconcilePanel({ broker, positions = [], wrapper = "GIA" }) {
     [broker, positions, wrapper]
   );
   const [showAll, setShowAll] = useState(false);
+  const corporateActions = useMemo(
+    () => (result ? detectCorporateActions({ reconcileRows: result.rows }) : []),
+    [result]
+  );
   if (!result) return null;
   const { rows, summary } = result;
   const shown = showAll ? rows : rows.filter((r) => r.status !== "match");
@@ -114,6 +119,18 @@ function PositionReconcilePanel({ broker, positions = [], wrapper = "GIA" }) {
             ? <>The broker holds <strong>more</strong> than your transactions explain on {summary.missingInLedger} line{summary.missingInLedger === 1 ? "" : "s"} — so their cost base, unrealised gain and any CGT on sale are all understated until the missing entries are added.</>
             : <>Your ledger holds more than the broker reports — a sale or transfer out may be missing.</>}
         </p>
+      )}
+
+      {/* A quantity that changed by a clean MULTIPLE is a corporate action,
+          not a missing trade, and the fix is completely different: adjust the
+          quantity and per-share cost, leaving total cost alone. Naming it
+          stops a split being "fixed" with a fabricated purchase. */}
+      {corporateActions.length > 0 && (
+        <div className="rounded-lg border px-2.5 py-2 space-y-1"
+          style={{ background: "color-mix(in srgb, var(--m-bb) 10%, transparent)", borderColor: "color-mix(in srgb, var(--m-bb) 35%, transparent)" }}>
+          <div className="font-semibold" style={{ color: "var(--m-bb)" }}>Looks like a corporate action, not a missing transaction</div>
+          {corporateActions.map((a) => <div key={a.ticker} className="text-[var(--fg)]">{a.message}</div>)}
+        </div>
       )}
 
       {shown.length > 0 && (

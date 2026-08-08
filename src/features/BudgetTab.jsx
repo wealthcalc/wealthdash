@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useRef } from "react";
 import { Plus, Trash2, Upload, Check, AlertTriangle, Wand2 } from "lucide-react";
 import { ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, PieChart, Pie, Cell, Sector } from "recharts";
-import { monthlyBudget, annualBudget, averageAnnualBudget, forecastAnnualSpend, spendByMonth, trailing12, mergedSpend, spendByCategory, withComparison, monthRange, yearOverlay, discretionaryRunway } from "../core/budget.mjs";
+import { monthlyBudget, annualBudget, averageAnnualBudget, forecastAnnualSpend, spendByMonth, trailing12, mergedSpend, spendByCategory, withComparison, monthRange, yearOverlay, discretionaryRunway, suggestBudgetsFromHistory } from "../core/budget.mjs";
 import { effInflation } from "../core/drawdown.mjs";
 import { uncategorisedGroups, suggestRule, normaliseMerchant } from "../core/categorise.mjs";
 import { detectRecurring, topMerchants } from "../core/detect-recurring.mjs";
@@ -968,6 +968,79 @@ function Recurring({ recurring, setRecurring, categories, catById, suppressed, g
 }
 
 /* -------------------------- Categories & rules ------------------------ */
+/* Propose limits from actual spending.
+
+   Setting a budget by hand is the tedious part, and one set from optimism is
+   worse than none: every category reads as overspent, so the view stops
+   being consulted. The app already knows the honest figure. Nothing is
+   applied until the user presses Apply — a budget silently rewritten to
+   match spending would defeat the purpose of having one. */
+function SuggestBudgets({ categories, setCategories, txns }) {
+  const [open, setOpen] = useState(false);
+  const [uplift, setUplift] = useState(0);
+  const s = useMemo(
+    () => suggestBudgetsFromHistory({ categories, txns, toMonth: thisMonth(), uplift: +uplift || 0 }),
+    [categories, txns, uplift]
+  );
+  const usable = s.rows.filter((r) => r.hasHistory);
+  if (!categories.length) return null;
+
+  const apply = () => {
+    setCategories((prev) => prev.map((c) => {
+      const row = s.rows.find((r) => r.id === c.id);
+      if (!row || !row.hasHistory) return c;                 // never zero out an unused category
+      return row.annualOnly ? { ...c, annual: row.suggested } : { ...c, monthly: row.suggested };
+    }));
+    setOpen(false);
+  };
+
+  return (
+    <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3 space-y-2">
+      <button onClick={() => setOpen((o) => !o)} className="text-sm font-semibold flex items-center gap-1.5">
+        <Wand2 size={15} className="text-[var(--accent)]" aria-hidden="true" /> Set limits from what I actually spend {open ? "▾" : "▸"}
+      </button>
+      {open && (
+        <div className="space-y-2">
+          {!usable.length ? (
+            <p className="text-xs text-[var(--muted)]">No categorised spending yet — import statements and categorise a few months first.</p>
+          ) : (<>
+            <div className="flex items-center gap-2 flex-wrap text-xs">
+              <span className="text-[var(--muted)]">Based on {s.monthsOfHistory} month{s.monthsOfHistory === 1 ? "" : "s"} of history</span>
+              <label className="flex items-center gap-1.5">
+                <span className="text-[var(--muted)]">Headroom</span>
+                <input type="number" value={uplift} min={0} max={50} step={5} onChange={(e) => setUplift(e.target.value)}
+                  aria-label="Percentage headroom above actual spending" className="input num w-16 py-0.5" />
+                <span className="text-[var(--muted)]">%</span>
+              </label>
+              {!s.reliable && <span className="text-[var(--m-bb)]">Under three months — this is noise, not a pattern.</span>}
+            </div>
+            <div className="rounded-lg border border-[var(--border)] max-h-64 overflow-y-auto">
+              <table className="w-full text-xs">
+                <tbody className="divide-y divide-[var(--border)]">
+                  {usable.map((r) => (
+                    <tr key={r.id}>
+                      <td className="px-2 py-1.5">{r.name}{r.annualOnly && <span className="ml-1 text-[10px] text-[var(--muted)]">annual</span>}</td>
+                      <td className="px-2 py-1.5 num text-right text-[var(--muted)]">{gbp0(r.currentAnnual)}/yr now</td>
+                      <td className="px-2 py-1.5 num text-right font-medium">{gbp0(r.suggestedAnnual)}/yr</td>
+                      <td className={"px-2 py-1.5 num text-right " + (r.delta > 0 ? "text-[var(--loss)]" : r.delta < 0 ? "text-[var(--gain)]" : "text-[var(--muted)]")}>
+                        {r.delta > 0 ? "+" : ""}{gbp0(r.delta)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <button onClick={apply} className="btn-accent">Apply {usable.length} limit{usable.length === 1 ? "" : "s"}</button>
+            <p className="text-[11px] text-[var(--muted)]">
+              Categories with no spending history are left alone — &ldquo;no data&rdquo; isn&apos;t the same as &ldquo;budget nothing&rdquo;. This is a proposal: nothing changes until you press Apply.
+            </p>
+          </>)}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Categories({ categories, setCategories, rules, setRules, catById, txns }) {
   const [c, setC] = useState(CAT_BLANK());
   const [r, setR] = useState({ field: "description", op: "contains", value: "", categoryId: "" });
@@ -999,6 +1072,7 @@ function Categories({ categories, setCategories, rules, setRules, catById, txns 
     <div className="space-y-6">
       <div className="space-y-2">
         <h3 className="text-sm font-semibold">Categories</h3>
+        <SuggestBudgets categories={categories} setCategories={setCategories} txns={txns} />
         <p className="text-xs text-[var(--muted)] max-w-3xl">Give a category EITHER a monthly limit or an annual one. Annual-only categories (insurance, holidays, one big trip) are excluded from monthly budget comparisons and reconciled over the year instead — spreading them across 12 months would invent an overspend in the month they land and phantom headroom in the other eleven. "Essential" marks needs over wants: that split is what the retirement plan's income floor uses.</p>
         <div className="flex items-end gap-2 flex-wrap rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3">
           <Field label="Name"><input value={c.name} onChange={(e) => setC({ ...c, name: e.target.value })} className="input w-40" placeholder="e.g. Groceries" /></Field>

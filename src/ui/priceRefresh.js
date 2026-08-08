@@ -11,6 +11,7 @@
 import {
   dmoDateToIso, fetchDmoGiltPrices, avQuote, fxToGBP, toGBP, avBudget, avBump, sleep,
 } from "./shared.jsx";
+import { priceSanity } from "../core/price-sanity.mjs";
 
 // Yahoo/AV symbols + AV currency for a ticker: explicit avMeta wins, else
 // defaults derived from the ledger's native currency (LSE suffixes).
@@ -37,6 +38,9 @@ async function yahooFetch(syms) {
 // failure path degrades to "enter the rest manually", same as before.
 export async function refreshAllPrices({
   tickers = [], txns = [], secMeta = {}, avMeta = {}, avKey = "",
+  // The prices held BEFORE this refresh — the baseline the sanity check
+  // compares against. Optional: without it, jumps simply aren't detected.
+  prices: priorPrices = {},
   dmoReportDate = null, setPrices, setPriceMeta, setDmoReportDate,
   onProgress = () => {},
 } = {}) {
@@ -46,12 +50,18 @@ export async function refreshAllPrices({
   const meta = (tk) => tickerMeta(tk, { avMeta, txns });
 
   const done = {}; const fxCache = {};
+  // Mirror of what this run wrote, so the sanity check at the end can look at
+  // the batch as a whole rather than re-reading React state mid-flight.
+  const newPrices = {}, newMeta = {};
   const getFx = async (ccy) => { if (ccy === "GBP" || ccy === "GBp") return 1; if (!(ccy in fxCache)) fxCache[ccy] = await fxToGBP(ccy); return fxCache[ccy]; };
   const applyQuote = (tk, raw, ccy, fx, source) => {
     const g = toGBP(raw, ccy, fx);
     if (g == null) return false;
-    setPrices((p) => ({ ...p, [tk]: +g.toFixed(4) }));
-    setPriceMeta((p) => ({ ...p, [tk]: { asOf: new Date().toISOString(), raw, ccy, source } }));
+    const value = +g.toFixed(4);
+    const m = { asOf: new Date().toISOString(), raw, ccy, source };
+    newPrices[tk] = value; newMeta[tk] = m;
+    setPrices((p) => ({ ...p, [tk]: value }));
+    setPriceMeta((p) => ({ ...p, [tk]: m }));
     return true;
   };
 
@@ -110,12 +120,24 @@ export async function refreshAllPrices({
       if (i < rest.length - 1) { onProgress("Waiting (AV 5/min)…"); await sleep(13000); }
     }
   }
+  // Sanity-check what just arrived against what it replaced. A symbol
+  // collision or a bad tick produces a plausible-looking number, and once it
+  // reaches a daily snapshot it corrupts the trend and every performance
+  // figure derived from it — so the warning has to come at the point of
+  // arrival, not later. Detection only: a 30% fall might be a bad quote or a
+  // bad day, and this can't tell.
+  const sanity = priceSanity({ prices: newPrices, previous: priorPrices, priceMeta: newMeta, secMeta });
+
   const total = otherTickers.length + giltTickers.length;
   const got = Object.keys(done).length;
   const fundNote = pensionFundTickers.length ? ` ${pensionFundTickers.length} pension fund${pensionFundTickers.length === 1 ? "" : "s"} skipped — no live quote source; paste your scheme's price table on the Pension & LISA tab.` : "";
   onProgress("");
+  const sanityNote = sanity.issues.length
+    ? ` ⚠ ${sanity.issues.length} price${sanity.issues.length === 1 ? " looks" : "s look"} wrong — ${sanity.issues[0].message}${sanity.issues.length > 1 ? ` (+${sanity.issues.length - 1} more)` : ""}`
+    : "";
   return {
     updated: got, total,
-    message: `${warn}Updated ${got}/${total} prices${got < total ? " — enter the rest manually." : "."}${giltMsg ? ` (${giltMsg})` : ""}${fundNote}`,
+    sanity,
+    message: `${warn}Updated ${got}/${total} prices${got < total ? " — enter the rest manually." : "."}${giltMsg ? ` (${giltMsg})` : ""}${fundNote}${sanityNote}`,
   };
 }

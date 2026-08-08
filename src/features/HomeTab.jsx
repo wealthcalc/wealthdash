@@ -600,7 +600,7 @@ export default function HomeTab({
   const txns = useAppStore((s) => s.txns);
   const secMeta = useAppStore((s) => s.secMeta);
   const avKey = useAppStore((s) => s.avKey), avMeta = useAppStore((s) => s.avMeta);
-  const setPrices = useAppStore((s) => s.setPrices);
+  const prices = useAppStore((s) => s.prices), setPrices = useAppStore((s) => s.setPrices);
   const dmoReportDate = useAppStore((s) => s.dmoReportDate), setDmoReportDate = useAppStore((s) => s.setDmoReportDate);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshMsg, setRefreshMsg] = useState("");
@@ -777,6 +777,7 @@ export default function HomeTab({
     if (!canRefresh || refreshing) return;
     setRefreshing(true); setRefreshMsg("");
     const res = await refreshAllPrices({
+      prices,   // baseline for the post-refresh sanity check
       tickers: openTickers, txns, secMeta, avMeta, avKey, dmoReportDate,
       setPrices, setPriceMeta, setDmoReportDate, onProgress: setRefreshMsg,
     });

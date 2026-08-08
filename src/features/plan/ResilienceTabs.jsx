@@ -21,6 +21,7 @@ import { taxRUK, taxScot, employeeNI, netEmploymentIncome } from "../../core/uk-
 import { lifeExpectancy, effInflation, btlYearly, replayDecum, STRATEGY_LABELS, buildProjection, HIST } from "../../core/drawdown.mjs";
 import { bootstrapPairs, TWO_ASSET_DEFAULTS } from "../../core/monte-carlo.mjs";
 import { solveSWR } from "../../core/swr.mjs";
+import { goalSeekAll } from "../../core/goal-seek.mjs";
 import { runGuytonKlinger } from "../../core/guyton-klinger.mjs";
 import { rollingStressTest } from "../../core/sequence-risk.mjs";
 import { buildIncomeFloor } from "../../core/income-floor.mjs";
@@ -804,6 +805,70 @@ function mergeFans(fanA, fanB) {
 }
 
 
+/* Goal-seek — the planner run backwards.
+
+   Every other panel answers "given these inputs, what happens?". This one
+   answers the question people actually turn up with: "I want to retire at
+   58 — what would have to be true?" Solving that by hand means nudging a
+   slider and re-reading the depletion age until it flips, which is tedious
+   and easy to fool yourself with.
+
+   The four answers are ALTERNATIVES, not a combination: each assumes the
+   other three stay as they are. Presenting them together is the point —
+   "£8,400 a year more, or £5,100 a year less spending, or two more years of
+   work" is a real choice in a way that any single figure isn't. */
+function GoalSeekPanel({ p }) {
+  const results = useMemo(() => {
+    try { return goalSeekAll({ inputs: p, project: buildProjection }); }
+    catch { return []; }
+  }, [p]);
+  if (!results.length) return null;
+
+  const anyGap = results.some((r) => !r.alreadyOk);
+  const fmt = (r, v) => (v == null ? "—"
+    : r.unit === "£/yr" ? gbp(v)
+    : r.unit === "%/yr" ? `${v}%`
+    : `age ${v}`);
+
+  return (
+    <Card>
+      <div style={{ fontSize: 13.5, fontWeight: 700, color: T.ink, marginBottom: 4 }}>
+        What would have to be true?
+      </div>
+      <p style={{ fontSize: 11.5, color: T.muted, margin: "0 0 10px", lineHeight: 1.5 }}>
+        {anyGap
+          ? "Your plan currently runs out before plan age. Each row below fixes that ON ITS OWN, assuming the other three stay as they are — so they're alternatives to choose between, not a list to do all of."
+          : "Your plan already lasts to plan age. Each row shows how far that input could move before it stopped working — your margin of safety, not a requirement."}
+      </p>
+      <div style={{ display: "grid", gap: 6 }}>
+        {results.map((r) => (
+          <div key={r.lever} style={{
+            display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 10, flexWrap: "wrap",
+            border: `1px solid ${T.line}`, borderRadius: 9, padding: "8px 11px", background: T.surface,
+          }}>
+            <span style={{ fontSize: 12.5, color: T.ink2, fontWeight: 600 }}>{r.label}</span>
+            {r.reachable ? (
+              <span style={{ fontFamily: MONO, fontSize: 13, color: T.ink }}>
+                {fmt(r, r.solution)}
+                {r.delta != null && r.delta !== 0 && (
+                  <span style={{ color: r.alreadyOk ? T.green : T.amber, marginLeft: 6 }}>
+                    ({r.delta > 0 ? "+" : ""}{r.unit === "£/yr" ? gbp(r.delta) : r.unit === "%/yr" ? `${r.delta}%` : `${r.delta}y`})
+                  </span>
+                )}
+              </span>
+            ) : (
+              <span style={{ fontSize: 12, color: T.red }}>{r.message}</span>
+            )}
+          </div>
+        ))}
+      </div>
+      <p style={{ fontSize: 11, color: T.muted, margin: "10px 0 0", lineHeight: 1.5 }}>
+        Solved against the deterministic projection — the same engine as the chart above, not the Monte Carlo. A plan that only just survives the central case fails in roughly half of simulated ones, so treat these as the minimum, then check the success rate.
+      </p>
+    </Card>
+  );
+}
+
 function AdequacyTab({ p, mc, mcB, progress = 0, compareKey = "none", setCompareKey, running, runMC, det, life, set, savedScenarios = [] }) {
   const planShort = p.planAge < life.q25; // planning shorter than 1-in-4 longevity
   const compareOptions = [
@@ -843,6 +908,8 @@ function AdequacyTab({ p, mc, mcB, progress = 0, compareKey = "none", setCompare
   );
   return (
     <div>
+      <div style={{ marginBottom: 14 }}><GoalSeekPanel p={p} /></div>
+
       <Card style={{ marginBottom: 14 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 2 }}>
           <HeartPulse size={17} color={T.red} />
