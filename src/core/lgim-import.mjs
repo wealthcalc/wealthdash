@@ -251,6 +251,56 @@ export function parseLgimApi(json) {
   return { rows, warnings };
 }
 
+/* Suggest a holding for a fund the mapping doesn't yet know.
+
+   Real holdings are rarely named the way the provider names them — a fund
+   the scheme calls "Citi UK Plan Global Equity Fund - Passive" is quite
+   reasonably filed as "Citi SIPP — L&G Global Equity Fund (Passive)". Exact
+   matching gives up there, which would mean hand-mapping every fund on the
+   first run.
+
+   So: score candidates on shared words, weighting each word by how RARE it
+   is among the candidates. "citi", "fund" and "equity" appear everywhere and
+   say nothing; "global", "japan" and "shariah" are what actually identify a
+   fund. A suggestion is only offered when the best candidate clears a
+   threshold AND beats the runner-up by a clear margin — an ambiguous guess
+   is worse than none, because the user would rubber-stamp it.
+
+   This only PRE-SELECTS the dropdown. Nothing is applied without the user
+   confirming, because a wrong price on a pension holding is expensive. */
+const tokens = (s) => normaliseFundName(s).split(" ").filter((t) => t.length > 1);
+
+export function suggestLgimMatch(row, candidates = []) {
+  if (!candidates.length) return null;
+  // Inverse document frequency across the candidate names. A word the
+  // candidates never use ("uk", "plan" — the provider's own house style)
+  // scores ZERO rather than maximum: it says nothing about WHICH holding this
+  // is, and weighting it highly buried the real signal.
+  const df = new Map();
+  for (const c of candidates) for (const t of new Set(tokens(c.name))) df.set(t, (df.get(t) || 0) + 1);
+  const weight = (t) => (df.has(t) ? Math.log((candidates.length + 1) / (df.get(t) + 1)) + 0.01 : 0);
+
+  const rowTokens = new Set(tokens(row.name));
+  // Asymmetric on purpose: score how much of the FEED name this holding
+  // explains, not how similar the two strings are. A holding carrying extra
+  // detail the provider omits ("[L&G North America Equity Index Fund]")
+  // shouldn't be punished for it — that's exactly the note a user adds.
+  const denom = [...rowTokens].reduce((s, t) => s + weight(t), 0);
+  if (denom <= 0) return null;
+
+  const scored = candidates.map((c) => {
+    const cand = new Set(tokens(c.name));
+    let shared = 0;
+    for (const t of rowTokens) if (cand.has(t)) shared += weight(t);
+    return { ticker: c.ticker, score: shared / denom };
+  }).sort((a, b) => b.score - a.score);
+
+  const [best, next] = scored;
+  if (!best || best.score < 0.25) return null;
+  if (next && best.score - next.score < 0.08) return null; // too close to call
+  return { ticker: best.ticker, score: Math.round(best.score * 100) / 100 };
+}
+
 /* Map rows onto the app's tickers.
 
    Priority is deliberate: the provider's own fund CODE ("DDES") first, since

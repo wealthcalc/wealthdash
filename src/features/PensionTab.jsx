@@ -2,7 +2,7 @@ import React, { useState, useMemo, useCallback, useRef } from "react";
 import { Plus, Trash2, ClipboardPaste, Check } from "lucide-react";
 import { normWrapper } from "../core/portfolio.mjs";
 import { xirr } from "../core/returns.mjs";
-import { parseLgimPaste, parseLgimApi, matchLgimRows } from "../core/lgim-import.mjs";
+import { parseLgimPaste, parseLgimApi, matchLgimRows, suggestLgimMatch } from "../core/lgim-import.mjs";
 import { gbp, gbp0, WrapperChip, num, round2, CurrencyInput, NumberInput, uid, todayISO, rateIsDisplayable, Field, Stat, Empty } from "../ui/shared.jsx";
 import useAppStore from "../state/appStore.js";
 import { removeWithUndo } from "../ui/undo.jsx";
@@ -60,9 +60,27 @@ function LgimPastePanel({ rows: holdingRows, secMeta, setSecMeta, setPrices, set
   const claimed = new Set(matched.map((m) => m.ticker));
   const assignable = holdingRows.filter((r) => !claimed.has(r.ticker));
 
+  // Provider names and the names people actually file holdings under rarely
+  // agree ("Citi UK Plan Global Equity Fund - Passive" vs "Citi SIPP — L&G
+  // Global Equity Fund (Passive)"), so offer a best guess rather than making
+  // the user map every fund by hand. Suggestions only PRE-SELECT; nothing is
+  // applied until Apply is pressed.
+  const suggestions = useMemo(() => {
+    const cands = assignable.map((h) => ({ ticker: h.ticker, name: secMeta[h.ticker]?.name || h.ticker }));
+    const out = {};
+    for (const u of unmatched) {
+      const s = suggestLgimMatch(u, cands);
+      if (s) out[u.name] = s.ticker;
+    }
+    return out;
+  }, [unmatched, assignable, secMeta]);
+
+  // An explicit choice wins over a suggestion; "" means the user cleared it.
+  const chosenFor = (r) => (assign[r.name] !== undefined ? assign[r.name] : (suggestions[r.name] || ""));
+
   const pending = [
     ...matched.map((m) => ({ ...m, ticker: m.ticker, via: "saved" })),
-    ...unmatched.filter((u) => assign[u.name]).map((u) => ({ ...u, ticker: assign[u.name], via: "new" })),
+    ...unmatched.filter((u) => chosenFor(u)).map((u) => ({ ...u, ticker: chosenFor(u), via: "new" })),
   ];
 
   const apply = () => {
@@ -80,13 +98,18 @@ function LgimPastePanel({ rows: holdingRows, secMeta, setSecMeta, setPrices, set
       }
       return next;
     });
-    // Remember any newly confirmed name→ticker mappings so the next paste
-    // needs no clicks at all.
+    // Remember newly confirmed mappings so the next run needs no clicks.
+    // The provider's fund CODE is stored where available — it survives the
+    // renames that fund names go through, and is what matching prefers.
+    // Spreading the existing entry is deliberate: exposure/look-through data
+    // lives on the same object and must not be clobbered.
     const fresh = pending.filter((r) => r.via === "new");
     if (fresh.length) {
       setSecMeta((m) => {
         const next = { ...m };
-        for (const r of fresh) next[r.ticker] = { ...next[r.ticker], lgimName: r.name };
+        for (const r of fresh) {
+          next[r.ticker] = { ...next[r.ticker], lgimName: r.name, ...(r.code ? { lgimCode: r.code } : {}) };
+        }
         return next;
       });
     }
@@ -131,22 +154,27 @@ function LgimPastePanel({ rows: holdingRows, secMeta, setSecMeta, setPrices, set
                 <table className="w-full text-xs">
                   <tbody className="divide-y divide-[var(--border)]">
                     {[...matched, ...unmatched].map((r) => {
-                      const chosen = matched.includes(r) ? r.ticker : (assign[r.name] || "");
+                      const isMatched = matched.includes(r);
+                      const chosen = isMatched ? r.ticker : chosenFor(r);
+                      const isSuggested = !isMatched && chosen && assign[r.name] === undefined;
                       return (
                         <tr key={r.name} className={chosen ? "" : "opacity-70"}>
                           <td className="px-2 py-1.5">{r.name}</td>
                           <td className="px-2 py-1.5 num text-right whitespace-nowrap">{r.pricePence}p</td>
                           <td className="px-2 py-1.5 num text-right whitespace-nowrap text-[var(--muted)]">{gbp(r.price)}</td>
                           <td className="px-2 py-1.5">
-                            {matched.includes(r) ? (
+                            {isMatched ? (
                               <span className="text-[var(--gain)]">→ {r.ticker}</span>
                             ) : (
-                              <select value={chosen} aria-label={`Holding for ${r.name}`}
-                                onChange={(e) => setAssign((a) => ({ ...a, [r.name]: e.target.value }))}
-                                className="input text-xs py-0.5">
-                                <option value="">— skip —</option>
-                                {assignable.map((h) => <option key={h.ticker} value={h.ticker}>{h.ticker} · {secMeta[h.ticker]?.name || h.ticker}</option>)}
-                              </select>
+                              <span className="inline-flex items-center gap-1.5">
+                                <select value={chosen} aria-label={`Holding for ${r.name}`}
+                                  onChange={(e) => setAssign((a) => ({ ...a, [r.name]: e.target.value }))}
+                                  className="input text-xs py-0.5">
+                                  <option value="">— skip —</option>
+                                  {assignable.map((h) => <option key={h.ticker} value={h.ticker}>{h.ticker} · {secMeta[h.ticker]?.name || h.ticker}</option>)}
+                                </select>
+                                {isSuggested && <span className="text-[10px] text-[var(--m-bb)]" title="Best guess from the fund name — check it before applying">suggested</span>}
+                              </span>
                             )}
                           </td>
                         </tr>

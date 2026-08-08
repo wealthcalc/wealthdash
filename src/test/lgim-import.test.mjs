@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseLgimPaste, parseLgimApi, matchLgimRows, normaliseFundName, ukDateToIso } from "../core/lgim-import.mjs";
+import { parseLgimPaste, parseLgimApi, matchLgimRows, suggestLgimMatch, normaliseFundName, ukDateToIso } from "../core/lgim-import.mjs";
 
 /* Trimmed from the live widget feed at
    /srp/api/fund-centre/32/?audience=79&language=1 — field ORDER and the
@@ -204,6 +204,37 @@ test("matching prefers the provider's fund CODE over the name", () => {
   assert.equal(matched.length, 1);
   assert.equal(matched[0].ticker, "CITIGRW");
   assert.equal(matched[0].price, 11.3439, "matched on code despite the stale name");
+});
+
+test("suggestions bridge real-world naming — the user's names never match the provider's", () => {
+  // Verbatim from the dashboard: the scheme calls it "Citi UK Plan Global
+  // Equity Fund - Passive"; the holding is filed as "Citi SIPP — L&G Global
+  // Equity Fund (Passive)". Exact matching gives up, so this must not.
+  const holdings = [
+    { ticker: "CITIGL", name: "Citi SIPP — L&G Global Equity Fund (Passive)" },
+    { ticker: "CITIUS", name: "Citi SIPP — L&G US Equity Fund (Passive) [L&G North America Equity Index Fund]" },
+  ];
+  const feed = parseLgimApi(API_JSON).rows;
+  const global = feed.find((r) => r.name === "Citi UK Plan Global Equity Fund - Passive")
+    || { name: "Citi UK Plan Global Equity Fund - Passive" };
+  const us = feed.find((r) => r.name === "Citi UK Plan US Equity Fund - Passive");
+
+  assert.equal(suggestLgimMatch(global, holdings).ticker, "CITIGL");
+  assert.equal(suggestLgimMatch(us, holdings).ticker, "CITIUS");
+});
+
+test("suggestions stay silent when the choice is ambiguous or absent", () => {
+  const holdings = [
+    { ticker: "A", name: "Citi UK Plan Global Equity Fund - Passive" },
+    { ticker: "B", name: "Citi UK Plan Global Equity Fund - Active" },
+  ];
+  // "Passive" vs "Active" is one weak token apart across otherwise identical
+  // names — too close to guess, so no suggestion rather than a coin flip.
+  const ambiguous = suggestLgimMatch({ name: "Citi UK Plan Global Equity Fund" }, holdings);
+  assert.equal(ambiguous, null);
+  // Nothing remotely similar.
+  assert.equal(suggestLgimMatch({ name: "Citi UK Plan Shariah Fund - Passive" }, [{ ticker: "X", name: "Vanguard FTSE All-World" }]), null);
+  assert.equal(suggestLgimMatch({ name: "Anything" }, []), null);
 });
 
 test("empty and junk input degrade to a warning, not a crash or a bad price", () => {
