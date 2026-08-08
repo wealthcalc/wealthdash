@@ -61,7 +61,11 @@ export const LEVERS = {
     unit: "years",
     higherIsBetter: true,        // working longer helps
     apply: (p, v) => ({ ...p, retireAge: Math.round(v) }),
-    lo: 40, hi: 75, tol: 1,
+    // The floor is TODAY'S AGE, not a fixed 40: proposing "retire at 47" to
+    // a 52-year-old is arithmetically true of the model and useless as
+    // advice. Bounds are resolved per-run for this reason.
+    lo: (p) => Math.max(p?.currentAge ?? 40, 40),
+    hi: 75, tol: 1,
   },
   growth: {
     key: "growthPre",
@@ -94,13 +98,18 @@ export function goalSeek({
     catch { return false; }
   };
 
+  // Bounds may depend on the inputs (a retirement age can't be below the
+  // user's current age), so resolve them per run.
+  const bound = (b) => (typeof b === "function" ? b(inputs) : b);
+  const LO = bound(L.lo), HI = bound(L.hi);
+
   const current = inputs?.[L.key];
-  const alreadyOk = test(current ?? (L.higherIsBetter ? L.lo : L.hi));
+  const alreadyOk = test(current ?? (L.higherIsBetter ? LO : HI));
 
   // Orientation: `good` is the end of the range known to succeed, `bad` the
   // end known to fail. Bisection then closes the gap between them.
-  let good = L.higherIsBetter ? L.hi : L.lo;
-  let bad = L.higherIsBetter ? L.lo : L.hi;
+  let good = L.higherIsBetter ? HI : LO;
+  let bad = L.higherIsBetter ? LO : HI;
 
   if (!test(good)) {
     // Even the most favourable value in range doesn't rescue the plan. Say

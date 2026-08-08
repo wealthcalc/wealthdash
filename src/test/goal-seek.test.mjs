@@ -99,3 +99,17 @@ test("guards its inputs", () => {
   assert.throws(() => goalSeek({ inputs: BASE, project: toyProject, lever: "nonsense" }), /Unknown lever/);
   assert.throws(() => goalSeek({ inputs: BASE }), /project/);
 });
+
+test("retirement age is never proposed below the user's CURRENT age", () => {
+  // "Retire at 47" is arithmetically true of the model for a 52-year-old and
+  // useless as advice — the floor has to move with the person.
+  const older = { ...BASE, currentAge: 52, retireAge: 60, startPot: 5000000 };
+  const r = goalSeek({ inputs: older, project: toyProject, lever: "retireAge" });
+  assert.equal(r.reachable, true);
+  assert.ok(r.solution >= older.currentAge, `proposed age ${r.solution} is before today's age ${older.currentAge}`);
+
+  // And the floor tracks a different age.
+  const younger = { ...BASE, currentAge: 30, startPot: 5000000 };
+  const r2 = goalSeek({ inputs: younger, project: toyProject, lever: "retireAge" });
+  assert.ok(r2.solution >= younger.currentAge);
+});

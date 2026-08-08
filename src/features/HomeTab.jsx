@@ -10,6 +10,7 @@ import { buildActionQueue } from "../core/action-queue.mjs";
 import { monthlyBudget, annualBudget, planSpendFromBudget, mergedSpend } from "../core/budget.mjs";
 import { savingsRate } from "../core/savings-rate.mjs";
 import { dataHealth } from "../core/data-health.mjs";
+import { niceTicks } from "../core/chart-scale.mjs";
 import { sinceLastVisit } from "../core/since-last-visit.mjs";
 import PlanHealthCard from "../ui/PlanHealthCard.jsx";
 import {
@@ -116,7 +117,8 @@ const isoDaysAgo = (n) => new Date(Date.now() - n * DAY).toISOString().slice(0, 
 // "how did the index move over this window", deliberately ignoring later
 // contributions (see overlaySeries' honesty contract; money-vs-index
 // judgement lives in the Returns tab's TWR comparison, not here).
-const RANGES = [["3M", 92], ["1Y", 366], ["All", Infinity]];
+const RANGES = [["1M", 31], ["3M", 92], ["1Y", 366], ["All", Infinity]];
+
 
 function TrendChart({ valuations, snapshots }) {
   const canNetWorth = snapshots.length >= 2;
@@ -177,7 +179,8 @@ function TrendChart({ valuations, snapshots }) {
     );
   }
 
-  const W = 800, H = 220, PAD_L = 8, PAD_R = 8, PAD_T = 14, PAD_B = 18;
+  // Left padding now carries axis labels, so it's wide enough for "£1.2m".
+  const W = 800, H = 220, PAD_L = 62, PAD_R = 10, PAD_T = 14, PAD_B = 22;
   const t0 = +new Date(first.date), t1 = +new Date(last.date);
   const vs = [...series.map((s) => s.value), ...overlay.map((p) => p.value)];
   let lo = Math.min(...vs), hi = Math.max(...vs);
@@ -192,6 +195,24 @@ function TrendChart({ valuations, snapshots }) {
   const up = last.value >= first.value;
   const estimatedDays = mode === "networth" ? series.filter((s) => s.estimated).length : 0;
 
+  // The move over the VISIBLE window, in pounds. The chart could show a
+  // steep-looking line without ever saying what it was worth — and "up
+  // £48,200 (+4.1%)" is the thing you actually want from a range button.
+  const periodChange = last.value - first.value;
+  const periodPct = first.value ? (periodChange / Math.abs(first.value)) * 100 : null;
+  const ticks = niceTicks(lo, hi, 4);
+  // Compact axis labels: £1.2m / £840k / £900 — full precision belongs in
+  // the headline, not repeated four times down the side.
+  const axisLabel = (v) => {
+    const a = Math.abs(v);
+    if (a >= 1e6) return `£${(v / 1e6).toFixed(a >= 1e7 ? 0 : 1)}m`;
+    if (a >= 1e3) return `£${Math.round(v / 1e3)}k`;
+    return `£${Math.round(v)}`;
+  };
+  // A month/year label at each end of the x axis — enough to orient without
+  // crowding a chart this small.
+  const dateLabel = (d) => new Date(d).toLocaleDateString("en-GB", { month: "short", year: "2-digit" });
+
   const modeLabel = mode === "networth"
     ? "Net worth (all assets − liabilities)"
     : "Invested value (securities only — cash balances have no snapshot history)";
@@ -200,6 +221,12 @@ function TrendChart({ valuations, snapshots }) {
     <div>
       <div className="flex items-center justify-between gap-2 flex-wrap mb-1">
         <div className="text-xs text-[var(--muted)]">
+          <span className="text-sm font-semibold" style={{ color: periodChange >= 0 ? "var(--gain)" : "var(--loss)" }}>
+            {periodChange >= 0 ? "+" : "−"}{gbp0(Math.abs(periodChange))}
+          </span>
+          {periodPct != null && <span className="ml-1">({periodPct >= 0 ? "+" : ""}{num(periodPct, 1)}%)</span>}
+          <span className="ml-1">over {range === "All" ? "all time" : range}</span>
+          <span className="mx-1">·</span>
           {modeLabel} · {first.date} → {last.date}
           {estimatedDays > 0 && <span className="text-[var(--m-bb)]" title="Days where at least one holding had no price — the total carries the last known values and understates by the unpriced part."> · {estimatedDays} day{estimatedDays > 1 ? "s" : ""} estimated</span>}
         </div>
@@ -231,15 +258,29 @@ function TrendChart({ valuations, snapshots }) {
         </div>
       </div>
       <svg viewBox={`0 0 ${W} ${H}`} className="w-full" role="img"
-        aria-label={`${mode === "networth" ? "Net worth" : "Invested value"} from ${gbp0(first.value)} on ${first.date} to ${gbp0(last.value)} on ${last.date}${overlay.length ? `, with ${benchSymbol} overlay` : ""}`}>
+        aria-label={`${mode === "networth" ? "Net worth" : "Invested value"} from ${gbp0(first.value)} on ${first.date} to ${gbp0(last.value)} on ${last.date}, a change of ${gbp0(periodChange)}${overlay.length ? `, with ${benchSymbol} overlay` : ""}`}>
+        {/* Gridlines at round values, so the line can be read against a
+            scale rather than just admired for its shape. */}
+        {ticks.map((t) => (
+          <g key={t}>
+            <line x1={PAD_L} x2={W - PAD_R} y1={y(t)} y2={y(t)} stroke="var(--border)" strokeWidth="1" vectorEffect="non-scaling-stroke" opacity="0.55" />
+            <text x={PAD_L - 6} y={y(t) + 3.5} fontSize="10.5" textAnchor="end" fill="var(--muted)" className="num">{axisLabel(t)}</text>
+          </g>
+        ))}
+        {/* Where the window STARTED — the reference the £ change is measured
+            from, so a rise above it is visible rather than inferred. */}
+        <line x1={PAD_L} x2={W - PAD_R} y1={y(first.value)} y2={y(first.value)}
+          stroke="var(--muted)" strokeWidth="1" strokeDasharray="3 3" vectorEffect="non-scaling-stroke" opacity="0.5" />
+
         <path d={area} fill={up ? "var(--gain)" : "var(--loss)"} opacity="0.12" />
         <path d={line} fill="none" stroke={up ? "var(--gain)" : "var(--loss)"} strokeWidth="2" vectorEffect="non-scaling-stroke" />
         {overlay.length >= 2 && (
           <path d={pathOf(overlay)} fill="none" stroke="var(--m-same)" strokeWidth="1.5" strokeDasharray="5 4" vectorEffect="non-scaling-stroke" opacity="0.9" />
         )}
         <circle cx={x(last.date)} cy={y(last.value)} r="3.5" fill={up ? "var(--gain)" : "var(--loss)"} />
-        <text x={PAD_L} y={PAD_T - 3} fontSize="11" fill="var(--muted)" className="num">{gbp0(hi)}</text>
-        <text x={PAD_L} y={H - 4} fontSize="11" fill="var(--muted)" className="num">{gbp0(lo)}</text>
+
+        <text x={PAD_L} y={H - 5} fontSize="10.5" fill="var(--muted)">{dateLabel(first.date)}</text>
+        <text x={W - PAD_R} y={H - 5} fontSize="10.5" textAnchor="end" fill="var(--muted)">{dateLabel(last.date)}</text>
       </svg>
       {showBench && (
         <div className="text-xs text-[var(--muted)] mt-0.5">

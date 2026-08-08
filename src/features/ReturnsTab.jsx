@@ -263,7 +263,7 @@ function AttributionView({ perHolding, total }) {
             {rows.map((r) => (
               <tr key={r.key} className="hover:bg-[var(--panel2)]">
                 <td className="px-3 py-2 font-medium whitespace-nowrap">
-                  {by === "wrapper" ? <WrapperChip w={r.key} /> : r.key}
+                  {by === "wrapper" ? <WrapperChip wrapper={r.key} /> : r.key}
                   {by === "ticker" && r.wrapper && <span className="ml-1.5 text-[10px] text-[var(--muted)]">{r.wrapper}</span>}
                 </td>
                 <td className="px-3 py-2 num text-right text-[var(--muted)]">{pct(r.weight, 1)}</td>
