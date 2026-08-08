@@ -2,7 +2,7 @@ import React, { useState, useMemo, useCallback, useRef } from "react";
 import { Plus, Trash2, ClipboardPaste, Check } from "lucide-react";
 import { normWrapper } from "../core/portfolio.mjs";
 import { xirr } from "../core/returns.mjs";
-import { parseLgimPaste, matchLgimRows } from "../core/lgim-import.mjs";
+import { parseLgimPaste, parseLgimApi, matchLgimRows, suggestLgimMatch } from "../core/lgim-import.mjs";
 import { gbp, gbp0, WrapperChip, num, round2, CurrencyInput, NumberInput, uid, todayISO, rateIsDisplayable, Field, Stat, Empty } from "../ui/shared.jsx";
 import useAppStore from "../state/appStore.js";
 import { removeWithUndo } from "../ui/undo.jsx";
@@ -30,17 +30,57 @@ function LgimPastePanel({ rows: holdingRows, secMeta, setSecMeta, setPrices, set
   const [text, setText] = useState("");
   const [assign, setAssign] = useState({});   // fund name -> ticker chosen now
   const [done, setDone] = useState("");
+  const [fetched, setFetched] = useState(null); // rows from the live feed
+  const [busy, setBusy] = useState(false);
+  const [fetchErr, setFetchErr] = useState("");
 
-  const parsed = useMemo(() => (text.trim() ? parseLgimPaste(text) : { rows: [], warnings: [] }), [text]);
+  // The widget's own JSON feed, via /api/lgim-prices. Failure is never fatal:
+  // it just leaves the paste box as the way through, which always works.
+  const fetchLive = async () => {
+    setBusy(true); setFetchErr("");
+    try {
+      const r = await fetch("/api/lgim-prices?site=32");
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      const out = parseLgimApi(j.json);
+      if (!out.rows.length) throw new Error(out.warnings[0] || "No prices in the response.");
+      setFetched(out); setText("");
+    } catch (e) {
+      setFetchErr(`${e.message} — paste the table instead.`);
+    } finally { setBusy(false); }
+  };
+
+  const parsed = useMemo(() => {
+    if (text.trim()) return parseLgimPaste(text);   // a paste overrides a fetch
+    return fetched || { rows: [], warnings: [] };
+  }, [text, fetched]);
   const { matched, unmatched } = useMemo(() => matchLgimRows(parsed.rows, { secMeta }), [parsed.rows, secMeta]);
 
   // Pension-fund tickers that don't already have a price from this paste.
   const claimed = new Set(matched.map((m) => m.ticker));
   const assignable = holdingRows.filter((r) => !claimed.has(r.ticker));
 
+  // Provider names and the names people actually file holdings under rarely
+  // agree ("Citi UK Plan Global Equity Fund - Passive" vs "Citi SIPP — L&G
+  // Global Equity Fund (Passive)"), so offer a best guess rather than making
+  // the user map every fund by hand. Suggestions only PRE-SELECT; nothing is
+  // applied until Apply is pressed.
+  const suggestions = useMemo(() => {
+    const cands = assignable.map((h) => ({ ticker: h.ticker, name: secMeta[h.ticker]?.name || h.ticker }));
+    const out = {};
+    for (const u of unmatched) {
+      const s = suggestLgimMatch(u, cands);
+      if (s) out[u.name] = s.ticker;
+    }
+    return out;
+  }, [unmatched, assignable, secMeta]);
+
+  // An explicit choice wins over a suggestion; "" means the user cleared it.
+  const chosenFor = (r) => (assign[r.name] !== undefined ? assign[r.name] : (suggestions[r.name] || ""));
+
   const pending = [
     ...matched.map((m) => ({ ...m, ticker: m.ticker, via: "saved" })),
-    ...unmatched.filter((u) => assign[u.name]).map((u) => ({ ...u, ticker: assign[u.name], via: "new" })),
+    ...unmatched.filter((u) => chosenFor(u)).map((u) => ({ ...u, ticker: chosenFor(u), via: "new" })),
   ];
 
   const apply = () => {
@@ -58,18 +98,23 @@ function LgimPastePanel({ rows: holdingRows, secMeta, setSecMeta, setPrices, set
       }
       return next;
     });
-    // Remember any newly confirmed name→ticker mappings so the next paste
-    // needs no clicks at all.
+    // Remember newly confirmed mappings so the next run needs no clicks.
+    // The provider's fund CODE is stored where available — it survives the
+    // renames that fund names go through, and is what matching prefers.
+    // Spreading the existing entry is deliberate: exposure/look-through data
+    // lives on the same object and must not be clobbered.
     const fresh = pending.filter((r) => r.via === "new");
     if (fresh.length) {
       setSecMeta((m) => {
         const next = { ...m };
-        for (const r of fresh) next[r.ticker] = { ...next[r.ticker], lgimName: r.name };
+        for (const r of fresh) {
+          next[r.ticker] = { ...next[r.ticker], lgimName: r.name, ...(r.code ? { lgimCode: r.code } : {}) };
+        }
         return next;
       });
     }
     setDone(`Updated ${pending.length} fund price${pending.length === 1 ? "" : "s"} (priced ${pending[0].date}).`);
-    setText(""); setAssign({});
+    setText(""); setAssign({}); setFetched(null);
     setTimeout(() => setDone(""), 6000);
   };
 
@@ -83,8 +128,16 @@ function LgimPastePanel({ rows: holdingRows, secMeta, setSecMeta, setPrices, set
       {open && (
         <div className="space-y-2">
           <p className="text-xs text-[var(--muted)] leading-relaxed">
-            Workplace funds have no live price feed. Open your scheme&apos;s fund-price page, select the price table and copy it, then paste it here — the whole table at once is fine. Prices are read in pence and stamped with the date the provider struck them, not today.
+            Workplace funds aren&apos;t on Yahoo. Fetch pulls today&apos;s prices from your scheme&apos;s own fund centre; if that ever fails, copy the price table off the scheme page and paste it below instead. Either way prices are stamped with the date the provider struck them, not today.
           </p>
+          <div className="flex items-center gap-2 flex-wrap">
+            <button onClick={fetchLive} disabled={busy} className={busy ? "btn-accent opacity-60" : "btn-accent"}>
+              {busy ? "Fetching…" : "Fetch latest prices"}
+            </button>
+            {fetched && !text.trim() && <span className="text-xs text-[var(--gain)]">Live feed · {fetched.rows.length} funds</span>}
+          </div>
+          {fetchErr && <div className="text-xs text-[var(--m-bb)]">{fetchErr}</div>}
+
           <textarea value={text} onChange={(e) => setText(e.target.value)} rows={4}
             aria-label="Paste the fund price table"
             placeholder="Citi UK Plan Growth Fund0.4065%0.0161%0.4226%1,134.39p06/08/2026Download data"
@@ -101,22 +154,27 @@ function LgimPastePanel({ rows: holdingRows, secMeta, setSecMeta, setPrices, set
                 <table className="w-full text-xs">
                   <tbody className="divide-y divide-[var(--border)]">
                     {[...matched, ...unmatched].map((r) => {
-                      const chosen = matched.includes(r) ? r.ticker : (assign[r.name] || "");
+                      const isMatched = matched.includes(r);
+                      const chosen = isMatched ? r.ticker : chosenFor(r);
+                      const isSuggested = !isMatched && chosen && assign[r.name] === undefined;
                       return (
                         <tr key={r.name} className={chosen ? "" : "opacity-70"}>
                           <td className="px-2 py-1.5">{r.name}</td>
                           <td className="px-2 py-1.5 num text-right whitespace-nowrap">{r.pricePence}p</td>
                           <td className="px-2 py-1.5 num text-right whitespace-nowrap text-[var(--muted)]">{gbp(r.price)}</td>
                           <td className="px-2 py-1.5">
-                            {matched.includes(r) ? (
+                            {isMatched ? (
                               <span className="text-[var(--gain)]">→ {r.ticker}</span>
                             ) : (
-                              <select value={chosen} aria-label={`Holding for ${r.name}`}
-                                onChange={(e) => setAssign((a) => ({ ...a, [r.name]: e.target.value }))}
-                                className="input text-xs py-0.5">
-                                <option value="">— skip —</option>
-                                {assignable.map((h) => <option key={h.ticker} value={h.ticker}>{h.ticker} · {secMeta[h.ticker]?.name || h.ticker}</option>)}
-                              </select>
+                              <span className="inline-flex items-center gap-1.5">
+                                <select value={chosen} aria-label={`Holding for ${r.name}`}
+                                  onChange={(e) => setAssign((a) => ({ ...a, [r.name]: e.target.value }))}
+                                  className="input text-xs py-0.5">
+                                  <option value="">— skip —</option>
+                                  {assignable.map((h) => <option key={h.ticker} value={h.ticker}>{h.ticker} · {secMeta[h.ticker]?.name || h.ticker}</option>)}
+                                </select>
+                                {isSuggested && <span className="text-[10px] text-[var(--m-bb)]" title="Best guess from the fund name — check it before applying">suggested</span>}
+                              </span>
                             )}
                           </td>
                         </tr>
