@@ -11,6 +11,7 @@ import { monthlyBudget, annualBudget, planSpendFromBudget, mergedSpend } from ".
 import { savingsRate } from "../core/savings-rate.mjs";
 import { dataHealth } from "../core/data-health.mjs";
 import { niceTicks } from "../core/chart-scale.mjs";
+import { useIsMobile } from "../ui/useIsMobile.js";
 import { sinceLastVisit } from "../core/since-last-visit.mjs";
 import PlanHealthCard from "../ui/PlanHealthCard.jsx";
 import {
@@ -121,6 +122,12 @@ const RANGES = [["1M", 31], ["3M", 92], ["1Y", 366], ["All", Infinity]];
 
 
 function TrendChart({ valuations, snapshots }) {
+  // The SVG scales to its container, so every dimension inside it — including
+  // font size — shrinks with the viewport. At 360px wide an 800-unit viewBox
+  // renders 10.5-unit text at under 5px, i.e. unreadable. Narrowing the
+  // coordinate space on a phone keeps the type proportionally larger, and
+  // fewer gridlines stops the axis crowding a short chart.
+  const compact = useIsMobile();
   const canNetWorth = snapshots.length >= 2;
   const [range, setRange] = useState(() => store.get("cgt.home.range", "All"));
   React.useEffect(() => store.set("cgt.home.range", range), [range]);
@@ -180,7 +187,10 @@ function TrendChart({ valuations, snapshots }) {
   }
 
   // Left padding now carries axis labels, so it's wide enough for "£1.2m".
-  const W = 800, H = 220, PAD_L = 62, PAD_R = 10, PAD_T = 14, PAD_B = 22;
+  const W = compact ? 380 : 800;
+  const H = compact ? 165 : 220;
+  const PAD_L = compact ? 44 : 62, PAD_R = 10, PAD_T = 14, PAD_B = compact ? 18 : 22;
+  const FS = compact ? 9 : 10.5;   // font units inside the viewBox
   const t0 = +new Date(first.date), t1 = +new Date(last.date);
   const vs = [...series.map((s) => s.value), ...overlay.map((p) => p.value)];
   let lo = Math.min(...vs), hi = Math.max(...vs);
@@ -200,7 +210,7 @@ function TrendChart({ valuations, snapshots }) {
   // £48,200 (+4.1%)" is the thing you actually want from a range button.
   const periodChange = last.value - first.value;
   const periodPct = first.value ? (periodChange / Math.abs(first.value)) * 100 : null;
-  const ticks = niceTicks(lo, hi, 4);
+  const ticks = niceTicks(lo, hi, compact ? 3 : 4);
   // Compact axis labels: £1.2m / £840k / £900 — full precision belongs in
   // the headline, not repeated four times down the side.
   const axisLabel = (v) => {
@@ -242,15 +252,17 @@ function TrendChart({ valuations, snapshots }) {
               ))}
             </div>
           )}
+          {/* Benchmark is a secondary comparison — on a phone it drops below
+              the range buttons rather than competing with them for the row. */}
           <button onClick={() => setShowBench((b) => !b)} aria-pressed={showBench}
             title={`Overlay ${benchSymbol}, rebased to the first day shown — index movement over the same window, NOT a performance comparison (contributions are ignored; see the Returns tab for TWR vs benchmark). Change the symbol on the Returns tab.`}
-            className={"px-2 py-0.5 text-xs rounded border mr-2 " +
+            className={"order-last sm:order-none px-2 py-1 sm:py-0.5 text-xs rounded border sm:mr-2 " +
               (showBench ? "border-[var(--m-same)] text-[var(--fg)]" : "border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)]")}>
             vs {benchSymbol}
           </button>
           {RANGES.map(([k]) => (
-            <button key={k} onClick={() => setRange(k)}
-              className={"px-2 py-0.5 text-xs rounded border " +
+            <button key={k} onClick={() => setRange(k)} aria-pressed={range === k}
+              className={"px-2.5 py-1 sm:py-0.5 text-xs rounded border " +
                 (range === k ? "border-[var(--accent)] text-[var(--fg)]" : "border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)]")}>
               {k}
             </button>
@@ -264,7 +276,7 @@ function TrendChart({ valuations, snapshots }) {
         {ticks.map((t) => (
           <g key={t}>
             <line x1={PAD_L} x2={W - PAD_R} y1={y(t)} y2={y(t)} stroke="var(--border)" strokeWidth="1" vectorEffect="non-scaling-stroke" opacity="0.55" />
-            <text x={PAD_L - 6} y={y(t) + 3.5} fontSize="10.5" textAnchor="end" fill="var(--muted)" className="num">{axisLabel(t)}</text>
+            <text x={PAD_L - 6} y={y(t) + 3.5} fontSize={FS} textAnchor="end" fill="var(--muted)" className="num">{axisLabel(t)}</text>
           </g>
         ))}
         {/* Where the window STARTED — the reference the £ change is measured
@@ -279,8 +291,8 @@ function TrendChart({ valuations, snapshots }) {
         )}
         <circle cx={x(last.date)} cy={y(last.value)} r="3.5" fill={up ? "var(--gain)" : "var(--loss)"} />
 
-        <text x={PAD_L} y={H - 5} fontSize="10.5" fill="var(--muted)">{dateLabel(first.date)}</text>
-        <text x={W - PAD_R} y={H - 5} fontSize="10.5" textAnchor="end" fill="var(--muted)">{dateLabel(last.date)}</text>
+        <text x={PAD_L} y={H - 5} fontSize={FS} fill="var(--muted)">{dateLabel(first.date)}</text>
+        <text x={W - PAD_R} y={H - 5} fontSize={FS} textAnchor="end" fill="var(--muted)">{dateLabel(last.date)}</text>
       </svg>
       {showBench && (
         <div className="text-xs text-[var(--muted)] mt-0.5">
@@ -887,7 +899,11 @@ export default function HomeTab({
           )}
           <div className="mt-3">
             <TrendChart valuations={valuations} snapshots={netWorthSnapshots} />
-            <SnapshotManager />
+            {/* Desktop only. The phone view of Home is presented as a
+                READ-ONLY summary, and this can permanently delete snapshots
+                — pruning history is a considered, desktop-sized task, not
+                something to offer next to a thumb on a train. */}
+            <div className="hidden sm:block"><SnapshotManager /></div>
           </div>
         </div>
 

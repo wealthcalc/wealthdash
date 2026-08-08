@@ -650,12 +650,28 @@ export default function App() {
                   <HomeTab {...homeTabProps} />
                 </Suspense>
                 </ErrorBoundary>
+                {/* Jump straight to what people actually open a phone for,
+                    rather than making them find the menu first. */}
+                <div className="grid grid-cols-2 gap-2">
+                  {[
+                    ["budget", "Budget", "spending this month"],
+                    ["income", "Income", "what's coming in"],
+                    ["cgt", "Tax", "gains & allowances"],
+                    ["plan", "Plan", "retirement outlook"],
+                  ].map(([leaf, label, sub]) => (
+                    <button key={leaf} onClick={() => { setTab(leaf); setMobileFullApp(true); }}
+                      className="text-left rounded-xl border border-[var(--border)] bg-[var(--panel)] px-3 py-2.5 active:bg-[var(--panel2)]">
+                      <div className="text-sm font-semibold">{label}</div>
+                      <div className="text-[11px] text-[var(--muted)] leading-tight mt-0.5">{sub}</div>
+                    </button>
+                  ))}
+                </div>
                 <button onClick={() => setMobileFullApp(true)}
-                  className="w-full inline-flex items-center justify-center gap-2 text-sm font-medium px-4 h-11 rounded-lg border border-[var(--border)] bg-[var(--panel)] hover:bg-[var(--panel2)] text-[var(--fg)]">
-                  <LayoutGrid size={16} aria-hidden="true" /> Open full app — add, edit, and explore every tab
+                  className="w-full inline-flex items-center justify-center gap-2 text-sm font-medium px-4 h-11 rounded-lg border border-[var(--border)] bg-[var(--panel)] active:bg-[var(--panel2)] text-[var(--fg)]">
+                  <LayoutGrid size={16} aria-hidden="true" /> Open full app — every tab, editable
                 </button>
                 <p className="text-xs text-[var(--muted)] leading-relaxed">
-                  This summary is read-only by design — nothing here can change your data. Tap "Open full app" any time to reach every tab (imports, ledger edits, tax tools, retirement planner) exactly as on desktop.
+                  This summary is read-only by design — nothing on it can change your data, so it&apos;s safe to check anywhere. Editing, imports and the tax tools all live in the full app.
                 </p>
               </div>
             ) : (
