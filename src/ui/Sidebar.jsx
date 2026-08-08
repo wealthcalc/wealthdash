@@ -11,7 +11,7 @@
 import React, { useEffect, useRef } from "react";
 import {
   Wallet, PoundSterling, PieChart, PiggyBank, TrendingUp, Gauge,
-  TableProperties, Receipt, X, Building2, Database, Search,
+  TableProperties, Receipt, X, Building2, Database, Search, SlidersHorizontal,
 } from "lucide-react";
 
 // screen key -> { label, icon, leaves: [leaf tab keys] }. Leaf order = sub-tab order.
@@ -25,7 +25,11 @@ export const SCREENS = [
   { key: "pension", label: "Pensions", icon: PiggyBank, leaves: ["pension"] },
   { key: "other", label: "Other assets", icon: Building2, leaves: ["private", "rsu", "deferredcash"] },
   { key: "tax", label: "Tax", icon: TableProperties, leaves: ["cgt", "allowances"] },
-  { key: "data", label: "Data", icon: Database, leaves: ["ledger", "import", "sync", "assumptions"] },
+  // Assumptions is top-level rather than a leaf under Data: it drives figures
+  // across Plan, Tax and Budget, so filing it with the ledger and import tools
+  // both buried it and implied it was plumbing rather than an input you own.
+  { key: "assumptions", label: "Assumptions", icon: SlidersHorizontal, leaves: ["assumptions"] },
+  { key: "data", label: "Data", icon: Database, leaves: ["ledger", "import", "sync"] },
 ];
 
 // Leaf labels as shown in the sub-tab bar and the command palette.
@@ -42,11 +46,13 @@ export const LEAF_LABELS = {
 export const screenOf = (leaf) => SCREENS.find((s) => s.leaves.includes(leaf)) || SCREENS[0];
 
 // Light grouping — three clusters keep the scan short without pretending
-// nine items need a taxonomy.
+// these items need a deep taxonomy. Assumptions sits in the last cluster
+// beside Data: both are "settings behind the numbers" rather than a view of
+// money, even though Assumptions is an input you own and Data is plumbing.
 const SECTIONS = [
   { title: "Overview", screens: ["home", "plan"] },
   { title: "Wealth", screens: ["networth", "portfolio", "income", "budget", "pension", "other"] },
-  { title: "Tax & data", screens: ["tax", "data"] },
+  { title: "Tax & settings", screens: ["tax", "assumptions", "data"] },
 ];
 
 function NavButton({ label, Icon, active, onClick }) {
