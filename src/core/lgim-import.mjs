@@ -270,6 +270,18 @@ export function parseLgimApi(json) {
    confirming, because a wrong price on a pension holding is expensive. */
 const tokens = (s) => normaliseFundName(s).split(" ").filter((t) => t.length > 1);
 
+/* Stable key for "I've told you this fund isn't one of mine".
+
+   A scheme feed lists every fund in the plan — 25 of them here — while a
+   member typically holds two or three. Without a memory of what's been
+   dismissed, every refresh re-proposes the same two dozen wrong matches, and
+   the user has to decline them again. Keyed on the provider's fund code
+   where there is one so it survives renames, falling back to the normalised
+   name. */
+export const lgimIgnoreKey = (row) => (row?.code
+  ? `code:${String(row.code).trim().toUpperCase()}`
+  : `name:${normaliseFundName(row?.name)}`);
+
 export function suggestLgimMatch(row, candidates = []) {
   if (!candidates.length) return null;
   // Inverse document frequency across the candidate names. A word the

@@ -2,7 +2,7 @@ import React, { useState, useMemo, useCallback, useRef } from "react";
 import { Plus, Trash2, ClipboardPaste, Check } from "lucide-react";
 import { normWrapper } from "../core/portfolio.mjs";
 import { xirr } from "../core/returns.mjs";
-import { parseLgimPaste, parseLgimApi, matchLgimRows, suggestLgimMatch } from "../core/lgim-import.mjs";
+import { parseLgimPaste, parseLgimApi, matchLgimRows, suggestLgimMatch, lgimIgnoreKey } from "../core/lgim-import.mjs";
 import { gbp, gbp0, WrapperChip, num, round2, CurrencyInput, NumberInput, uid, todayISO, rateIsDisplayable, Field, Stat, Empty } from "../ui/shared.jsx";
 import useAppStore from "../state/appStore.js";
 import { removeWithUndo } from "../ui/undo.jsx";
@@ -25,7 +25,7 @@ import { removeWithUndo } from "../ui/undo.jsx";
      a ticker; the mapping is remembered in secMeta.lgimName so subsequent
      pastes are one click. Putting a wrong price on a pension holding is far
      worse than asking once. */
-function LgimPastePanel({ rows: holdingRows, secMeta, setSecMeta, setPrices, setPriceMeta }) {
+function LgimPastePanel({ rows: holdingRows, secMeta, setSecMeta, setPrices, setPriceMeta, ignored, setIgnored }) {
   const [open, setOpen] = useState(false);
   const [text, setText] = useState("");
   const [assign, setAssign] = useState({});   // fund name -> ticker chosen now
@@ -33,6 +33,7 @@ function LgimPastePanel({ rows: holdingRows, secMeta, setSecMeta, setPrices, set
   const [fetched, setFetched] = useState(null); // rows from the live feed
   const [busy, setBusy] = useState(false);
   const [fetchErr, setFetchErr] = useState("");
+  const [showDismissed, setShowDismissed] = useState(false);
 
   // The widget's own JSON feed, via /api/lgim-prices. Failure is never fatal:
   // it just leaves the paste box as the way through, which always works.
@@ -65,22 +66,39 @@ function LgimPastePanel({ rows: holdingRows, secMeta, setSecMeta, setPrices, set
   // Global Equity Fund (Passive)"), so offer a best guess rather than making
   // the user map every fund by hand. Suggestions only PRE-SELECT; nothing is
   // applied until Apply is pressed.
+  const ignoredSet = useMemo(() => new Set(ignored || []), [ignored]);
+  const isIgnored = (r) => ignoredSet.has(lgimIgnoreKey(r));
+  // A scheme feed lists every fund in the plan; you hold a handful. Anything
+  // dismissed stays dismissed across refreshes — re-proposing a rejected
+  // match every time is worse than not suggesting at all.
+  const liveUnmatched = unmatched.filter((r) => !isIgnored(r));
+  const dismissed = unmatched.filter(isIgnored);
+
   const suggestions = useMemo(() => {
     const cands = assignable.map((h) => ({ ticker: h.ticker, name: secMeta[h.ticker]?.name || h.ticker }));
     const out = {};
-    for (const u of unmatched) {
+    for (const u of liveUnmatched) {
       const s = suggestLgimMatch(u, cands);
       if (s) out[u.name] = s.ticker;
     }
     return out;
-  }, [unmatched, assignable, secMeta]);
+  }, [liveUnmatched, assignable, secMeta]);
+
+  const dismiss = (r) => {
+    setIgnored((cur) => [...new Set([...(cur || []), lgimIgnoreKey(r)])]);
+    setAssign((a) => { const n = { ...a }; delete n[r.name]; return n; });
+  };
+  const restore = (r) => {
+    const k = lgimIgnoreKey(r);
+    setIgnored((cur) => (cur || []).filter((x) => x !== k));
+  };
 
   // An explicit choice wins over a suggestion; "" means the user cleared it.
   const chosenFor = (r) => (assign[r.name] !== undefined ? assign[r.name] : (suggestions[r.name] || ""));
 
   const pending = [
     ...matched.map((m) => ({ ...m, ticker: m.ticker, via: "saved" })),
-    ...unmatched.filter((u) => chosenFor(u)).map((u) => ({ ...u, ticker: chosenFor(u), via: "new" })),
+    ...liveUnmatched.filter((u) => chosenFor(u)).map((u) => ({ ...u, ticker: chosenFor(u), via: "new" })),
   ];
 
   const apply = () => {
@@ -122,7 +140,7 @@ function LgimPastePanel({ rows: holdingRows, secMeta, setSecMeta, setPrices, set
     <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3 space-y-2">
       <button onClick={() => setOpen((o) => !o)} className="text-sm font-semibold flex items-center gap-1.5">
         <ClipboardPaste size={15} className="text-[var(--accent)]" aria-hidden="true" />
-        Update fund prices by paste {open ? "▾" : "▸"}
+        Update workplace fund prices {open ? "▾" : "▸"}
       </button>
       {done && <div className="text-xs text-[var(--gain)] flex items-center gap-1"><Check size={13} aria-hidden="true" /> {done}</div>}
       {open && (
@@ -147,24 +165,38 @@ function LgimPastePanel({ rows: holdingRows, secMeta, setSecMeta, setPrices, set
 
           {parsed.rows.length > 0 && (
             <>
-              <div className="text-xs text-[var(--muted)]">
-                Found <strong className="text-[var(--fg)]">{parsed.rows.length}</strong> priced fund{parsed.rows.length === 1 ? "" : "s"} · {matched.length} already mapped{unmatched.length > 0 && <> · {unmatched.length} need a holding</>}
+              <div className="text-xs text-[var(--muted)] flex flex-wrap items-center gap-x-1.5">
+                <span>
+                  Found <strong className="text-[var(--fg)]">{parsed.rows.length}</strong> priced fund{parsed.rows.length === 1 ? "" : "s"} · {matched.length} mapped{liveUnmatched.length > 0 && <> · {liveUnmatched.length} unmatched</>}{dismissed.length > 0 && <> · {dismissed.length} dismissed</>}
+                </span>
+                {dismissed.length > 0 && (
+                  <button onClick={() => setShowDismissed((v) => !v)} className="underline underline-offset-2 hover:text-[var(--fg)]">
+                    {showDismissed ? "hide dismissed" : `show ${dismissed.length} dismissed`}
+                  </button>
+                )}
               </div>
               <div className="rounded-lg border border-[var(--border)] max-h-64 overflow-y-auto">
                 <table className="w-full text-xs">
                   <tbody className="divide-y divide-[var(--border)]">
-                    {[...matched, ...unmatched].map((r) => {
+                    {[...matched, ...liveUnmatched, ...(showDismissed ? dismissed : [])].map((r) => {
                       const isMatched = matched.includes(r);
-                      const chosen = isMatched ? r.ticker : chosenFor(r);
-                      const isSuggested = !isMatched && chosen && assign[r.name] === undefined;
+                      const wasDismissed = isIgnored(r);
+                      const chosen = isMatched ? r.ticker : (wasDismissed ? "" : chosenFor(r));
+                      const isSuggested = !isMatched && !wasDismissed && chosen && assign[r.name] === undefined;
                       return (
-                        <tr key={r.name} className={chosen ? "" : "opacity-70"}>
+                        <tr key={r.name} className={wasDismissed ? "opacity-45" : (chosen ? "" : "opacity-70")}>
                           <td className="px-2 py-1.5">{r.name}</td>
                           <td className="px-2 py-1.5 num text-right whitespace-nowrap">{r.pricePence}p</td>
                           <td className="px-2 py-1.5 num text-right whitespace-nowrap text-[var(--muted)]">{gbp(r.price)}</td>
                           <td className="px-2 py-1.5">
                             {isMatched ? (
                               <span className="text-[var(--gain)]">→ {r.ticker}</span>
+                            ) : wasDismissed ? (
+                              <span className="inline-flex items-center gap-1.5">
+                                <span className="text-[10px] text-[var(--muted)]">not mine</span>
+                                <button onClick={() => restore(r)} className="text-[10px] underline underline-offset-2 hover:text-[var(--fg)]"
+                                  title="Bring this fund back — use this if you've switched into it">restore</button>
+                              </span>
                             ) : (
                               <span className="inline-flex items-center gap-1.5">
                                 <select value={chosen} aria-label={`Holding for ${r.name}`}
@@ -174,6 +206,8 @@ function LgimPastePanel({ rows: holdingRows, secMeta, setSecMeta, setPrices, set
                                   {assignable.map((h) => <option key={h.ticker} value={h.ticker}>{h.ticker} · {secMeta[h.ticker]?.name || h.ticker}</option>)}
                                 </select>
                                 {isSuggested && <span className="text-[10px] text-[var(--m-bb)]" title="Best guess from the fund name — check it before applying">suggested</span>}
+                                <button onClick={() => dismiss(r)} className="text-[10px] text-[var(--muted)] underline underline-offset-2 hover:text-[var(--fg)]"
+                                  title="I don't hold this fund — stop offering it on future refreshes">not mine</button>
                               </span>
                             )}
                           </td>
@@ -187,7 +221,7 @@ function LgimPastePanel({ rows: holdingRows, secMeta, setSecMeta, setPrices, set
                 Apply {pending.length} price{pending.length === 1 ? "" : "s"}
               </button>
               <p className="text-[11px] text-[var(--muted)]">
-                Funds left as “skip” are ignored — the table lists every fund in the scheme, not just the ones you hold. Mappings you set here are remembered, so next time it&apos;s paste then apply.
+                The feed lists every fund in the scheme, not just yours. “Not mine” hides a fund for good, so refreshes stop re-proposing it; nothing is deleted, and if you later switch into one, use <span className="whitespace-nowrap">“show dismissed”</span> → restore to map it. Confirmed mappings are remembered by the provider&apos;s fund code, so future refreshes are one click.
               </p>
             </>
           )}
@@ -205,6 +239,7 @@ function PensionTab({ recomputeProviderCost }) {
   const secMeta = useAppStore((s) => s.secMeta), setSecMeta = useAppStore((s) => s.setSecMeta);
   const prices = useAppStore((s) => s.prices), setPrices = useAppStore((s) => s.setPrices);
   const setPriceMeta = useAppStore((s) => s.setPriceMeta);
+  const lgimIgnored = useAppStore((s) => s.lgimIgnored), setLgimIgnored = useAppStore((s) => s.setLgimIgnored);
   const pensionCashflows = useAppStore((s) => s.pensionCashflows), setPensionCashflows = useAppStore((s) => s.setPensionCashflows);
   const [form, setForm] = useState({ wrapper: "SIPP", provider: "", ticker: "", name: "", units: "", price: "" });
   const [cfForm, setCfForm] = useState({ provider: "", date: todayISO(), type: "Regular Contribution", amount: "" });
@@ -374,7 +409,8 @@ function PensionTab({ recomputeProviderCost }) {
       </div>
 
       {rows.length > 0 && (
-        <LgimPastePanel rows={rows} secMeta={secMeta} setSecMeta={setSecMeta} setPrices={setPrices} setPriceMeta={setPriceMeta} />
+        <LgimPastePanel rows={rows} secMeta={secMeta} setSecMeta={setSecMeta} setPrices={setPrices} setPriceMeta={setPriceMeta}
+          ignored={lgimIgnored} setIgnored={setLgimIgnored} />
       )}
 
       {rows.length === 0 && !(+cash.LISA) ? (
