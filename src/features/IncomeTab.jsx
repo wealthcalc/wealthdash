@@ -5,7 +5,7 @@ import { ukTaxYear } from "../core/cgt-engine.mjs";
 import { WRAPPERS, isWrapperTaxable, normWrapper } from "../core/portfolio.mjs";
 import { investmentIncomeTax } from "../core/uk-tax.mjs";
 import { addMonthsISO } from "../core/ishares-eri.mjs";
-import { summariseBySource } from "../core/income-calendar.mjs";
+import { summariseBySource, certaintySplit } from "../core/income-calendar.mjs";
 import { dividendChanges, incomeConcentration, incomeByGroup } from "../core/income-analysis.mjs";
 import { vctHoldings } from "../core/vct.mjs";
 import { store, unitsHeldAt, gbp, gbp0, SubTabs, SegmentedControl, num, uid, todayISO, fxToGBP, Field, Empty, useSort, sortRows, SortTh, CurrencyInput, downloadText } from "../ui/shared.jsx";
@@ -646,6 +646,7 @@ function IncomeCalendarView({ events: allEvents }) {
     [allEvents, calWrap]
   );
   const summary = useMemo(() => summariseBySource(events), [events]);
+  const certainty = useMemo(() => certaintySplit(events), [events]);
   const total = events.reduce((s, e) => s + (+e.amount || 0), 0);
   // Same events as the table below, grouped by calendar month and stacked
   // by source — the forward-looking analogue of the historical "by wrapper"
@@ -702,6 +703,27 @@ function IncomeCalendarView({ events: allEvents }) {
           <div className="font-semibold num">{gbp(total)}</div>
         </div>
       </div>
+
+      {/* How much of that forecast is CONTRACTUAL versus projected. Each
+          event already carried a `certainty` flag, but the headline gave a
+          fixed gilt coupon and a guess at next year's dividend equal
+          billing — which is precisely the distinction an income floor turns
+          on. */}
+      {certainty.total > 0 && (
+        <div className="rounded-xl border border-[var(--border)] bg-[var(--panel2)] px-3 py-2 text-xs text-[var(--muted)] space-y-1.5">
+          <div>
+            Of that {gbp0(certainty.total)}: <strong className="text-[var(--gain)]">{gbp0(certainty.scheduled)} contractual</strong> ({Math.round(certainty.scheduledPct)}%) · <strong className="text-[var(--fg)]">{gbp0(certainty.estimated)} estimated</strong>
+          </div>
+          <div className="h-1.5 rounded-full bg-[var(--border)] overflow-hidden flex" role="img"
+            aria-label={`${Math.round(certainty.scheduledPct)} percent of forecast income is contractual`}>
+            <span style={{ width: `${certainty.scheduledPct}%`, background: "var(--gain)" }} />
+            <span style={{ width: `${100 - certainty.scheduledPct}%`, background: "color-mix(in srgb, var(--fg) 35%, transparent)" }} />
+          </div>
+          <div className="text-[11px] leading-relaxed">
+            Contractual = gilt coupons, redemptions and fixed-term cash maturities: fixed by the instrument. Estimated = dividends and variable interest projected from what they last paid — a company can cut a dividend at any time, so this is the part your income floor shouldn&apos;t lean on.
+          </div>
+        </div>
+      )}
 
       {monthlyData.length > 1 && (
         <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3">

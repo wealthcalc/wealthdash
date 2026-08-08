@@ -49,6 +49,7 @@ export function dataHealth({
   totalSpend = 0,             // £ total spend in the same window (for the %)
   staleImports = [],          // [{source, days}] broker feeds >45d old
   missingIsins = [],          // [ticker] held unsheltered with no ISIN on record
+  positionDrift = null,       // core/position-reconcile.mjs summary, if a broker report exists
   today,
 } = {}) {
   if (!today) throw new Error("dataHealth requires `today` — pure functions don't read the clock.");
@@ -62,6 +63,22 @@ export function dataHealth({
       detail: unpricedValueKnown
         ? "Excluded from market value, so net worth is understated."
         : "Value can't even be estimated — net worth is materially incomplete.",
+    });
+  }
+
+  // The broker's own position report disagreeing with the ledger is the most
+  // consequential data problem the app can detect: every quantity, cost base
+  // and CGT figure is derived from that ledger, so a mismatch means those are
+  // all quietly wrong. Ranked highest for that reason.
+  if (positionDrift && positionDrift.mismatched > 0) {
+    const short = positionDrift.missingInLedger || 0;
+    issues.push({
+      id: "position-drift", severity: "high", tab: "import",
+      count: positionDrift.mismatched,
+      message: `${positionDrift.mismatched} holding${positionDrift.mismatched === 1 ? "" : "s"} disagree with your broker's position report`,
+      detail: short
+        ? `${short} where the broker holds MORE than your transactions explain — cost basis and CGT on those will be wrong until the missing entries are added.`
+        : "Your ledger holds more than the broker reports — a sale or transfer may be missing.",
     });
   }
 
