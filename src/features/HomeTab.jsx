@@ -10,7 +10,7 @@ import { buildActionQueue } from "../core/action-queue.mjs";
 import { monthlyBudget, annualBudget, planSpendFromBudget, mergedSpend } from "../core/budget.mjs";
 import { savingsRate } from "../core/savings-rate.mjs";
 import { dataHealth } from "../core/data-health.mjs";
-import { niceTicks } from "../core/chart-scale.mjs";
+import { niceTicks, axisLabel } from "../core/chart-scale.mjs";
 import { useIsMobile } from "../ui/useIsMobile.js";
 import { sinceLastVisit } from "../core/since-last-visit.mjs";
 import PlanHealthCard from "../ui/PlanHealthCard.jsx";
@@ -189,7 +189,9 @@ function TrendChart({ valuations, snapshots }) {
   // Left padding now carries axis labels, so it's wide enough for "£1.2m".
   const W = compact ? 380 : 800;
   const H = compact ? 165 : 220;
-  const PAD_L = compact ? 44 : 62, PAD_R = 10, PAD_T = 14, PAD_B = compact ? 18 : 22;
+  // Gutter fits the widest label the formatter can produce ("£1.25m"), which
+  // is wider than the single-decimal form it replaced.
+  const PAD_L = compact ? 52 : 72, PAD_R = 10, PAD_T = 14, PAD_B = compact ? 18 : 22;
   const FS = compact ? 9 : 10.5;   // font units inside the viewBox
   const t0 = +new Date(first.date), t1 = +new Date(last.date);
   const vs = [...series.map((s) => s.value), ...overlay.map((p) => p.value)];
@@ -211,14 +213,10 @@ function TrendChart({ valuations, snapshots }) {
   const periodChange = last.value - first.value;
   const periodPct = first.value ? (periodChange / Math.abs(first.value)) * 100 : null;
   const ticks = niceTicks(lo, hi, compact ? 3 : 4);
-  // Compact axis labels: £1.2m / £840k / £900 — full precision belongs in
-  // the headline, not repeated four times down the side.
-  const axisLabel = (v) => {
-    const a = Math.abs(v);
-    if (a >= 1e6) return `£${(v / 1e6).toFixed(a >= 1e7 ? 0 : 1)}m`;
-    if (a >= 1e3) return `£${Math.round(v / 1e3)}k`;
-    return `£${Math.round(v)}`;
-  };
+  // Label precision follows the gridline STEP so adjacent labels can never
+  // read the same (core/chart-scale.mjs) — at a £50k step, one decimal would
+  // print 1.15m and 1.20m both as "£1.2m".
+  const tickStep = ticks.length > 1 ? ticks[1] - ticks[0] : 0;
   // A month/year label at each end of the x axis — enough to orient without
   // crowding a chart this small.
   const dateLabel = (d) => new Date(d).toLocaleDateString("en-GB", { month: "short", year: "2-digit" });
@@ -276,7 +274,7 @@ function TrendChart({ valuations, snapshots }) {
         {ticks.map((t) => (
           <g key={t}>
             <line x1={PAD_L} x2={W - PAD_R} y1={y(t)} y2={y(t)} stroke="var(--border)" strokeWidth="1" vectorEffect="non-scaling-stroke" opacity="0.55" />
-            <text x={PAD_L - 6} y={y(t) + 3.5} fontSize={FS} textAnchor="end" fill="var(--muted)" className="num">{axisLabel(t)}</text>
+            <text x={PAD_L - 6} y={y(t) + 3.5} fontSize={FS} textAnchor="end" fill="var(--muted)" className="num">{axisLabel(t, tickStep)}</text>
           </g>
         ))}
         {/* Where the window STARTED — the reference the £ change is measured
