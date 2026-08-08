@@ -1,10 +1,143 @@
 import React, { useState, useMemo, useCallback, useRef } from "react";
-import { Plus, Trash2 } from "lucide-react";
+import { Plus, Trash2, ClipboardPaste, Check } from "lucide-react";
 import { normWrapper } from "../core/portfolio.mjs";
 import { xirr } from "../core/returns.mjs";
+import { parseLgimPaste, matchLgimRows } from "../core/lgim-import.mjs";
 import { gbp, gbp0, WrapperChip, num, round2, CurrencyInput, NumberInput, uid, todayISO, rateIsDisplayable, Field, Stat, Empty } from "../ui/shared.jsx";
 import useAppStore from "../state/appStore.js";
 import { removeWithUndo } from "../ui/undo.jsx";
+
+/* Workplace fund prices, pasted.
+
+   These funds have no live quote source. The scheme publishes a price table
+   on the web, but the page it appears on only EMBEDS a widget from another
+   host, and that widget renders client-side — so there is nothing for a
+   server-side fetch to read. Pasting the copied table is therefore not a
+   lazy shortcut, it's the only thing that reliably works today, and it can't
+   break when the provider restyles their site.
+
+   Design notes that matter for correctness:
+   - Prices are quoted in PENCE and are dated with the day the price was
+     STRUCK, typically a day or two back. The quote date is what gets
+     recorded, so staleness is judged against the fund's own date rather than
+     the moment you pasted.
+   - Nothing is guessed. A fund only takes a price once its name is mapped to
+     a ticker; the mapping is remembered in secMeta.lgimName so subsequent
+     pastes are one click. Putting a wrong price on a pension holding is far
+     worse than asking once. */
+function LgimPastePanel({ rows: holdingRows, secMeta, setSecMeta, setPrices, setPriceMeta }) {
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState("");
+  const [assign, setAssign] = useState({});   // fund name -> ticker chosen now
+  const [done, setDone] = useState("");
+
+  const parsed = useMemo(() => (text.trim() ? parseLgimPaste(text) : { rows: [], warnings: [] }), [text]);
+  const { matched, unmatched } = useMemo(() => matchLgimRows(parsed.rows, { secMeta }), [parsed.rows, secMeta]);
+
+  // Pension-fund tickers that don't already have a price from this paste.
+  const claimed = new Set(matched.map((m) => m.ticker));
+  const assignable = holdingRows.filter((r) => !claimed.has(r.ticker));
+
+  const pending = [
+    ...matched.map((m) => ({ ...m, ticker: m.ticker, via: "saved" })),
+    ...unmatched.filter((u) => assign[u.name]).map((u) => ({ ...u, ticker: assign[u.name], via: "new" })),
+  ];
+
+  const apply = () => {
+    if (!pending.length) return;
+    setPrices((p) => {
+      const next = { ...p };
+      for (const r of pending) next[r.ticker] = r.price;
+      return next;
+    });
+    setPriceMeta((p) => {
+      const next = { ...p };
+      for (const r of pending) {
+        // asOf is the QUOTE date, not now — these strike in arrears.
+        next[r.ticker] = { asOf: `${r.date}T00:00:00.000Z`, raw: r.pricePence, ccy: "GBp", source: "L&G" };
+      }
+      return next;
+    });
+    // Remember any newly confirmed name→ticker mappings so the next paste
+    // needs no clicks at all.
+    const fresh = pending.filter((r) => r.via === "new");
+    if (fresh.length) {
+      setSecMeta((m) => {
+        const next = { ...m };
+        for (const r of fresh) next[r.ticker] = { ...next[r.ticker], lgimName: r.name };
+        return next;
+      });
+    }
+    setDone(`Updated ${pending.length} fund price${pending.length === 1 ? "" : "s"} (priced ${pending[0].date}).`);
+    setText(""); setAssign({});
+    setTimeout(() => setDone(""), 6000);
+  };
+
+  return (
+    <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3 space-y-2">
+      <button onClick={() => setOpen((o) => !o)} className="text-sm font-semibold flex items-center gap-1.5">
+        <ClipboardPaste size={15} className="text-[var(--accent)]" aria-hidden="true" />
+        Update fund prices by paste {open ? "▾" : "▸"}
+      </button>
+      {done && <div className="text-xs text-[var(--gain)] flex items-center gap-1"><Check size={13} aria-hidden="true" /> {done}</div>}
+      {open && (
+        <div className="space-y-2">
+          <p className="text-xs text-[var(--muted)] leading-relaxed">
+            Workplace funds have no live price feed. Open your scheme&apos;s fund-price page, select the price table and copy it, then paste it here — the whole table at once is fine. Prices are read in pence and stamped with the date the provider struck them, not today.
+          </p>
+          <textarea value={text} onChange={(e) => setText(e.target.value)} rows={4}
+            aria-label="Paste the fund price table"
+            placeholder="Citi UK Plan Growth Fund0.4065%0.0161%0.4226%1,134.39p06/08/2026Download data"
+            className="input w-full text-xs font-mono" />
+
+          {parsed.warnings.map((w, i) => <div key={i} className="text-xs text-[var(--m-bb)]">{w}</div>)}
+
+          {parsed.rows.length > 0 && (
+            <>
+              <div className="text-xs text-[var(--muted)]">
+                Found <strong className="text-[var(--fg)]">{parsed.rows.length}</strong> priced fund{parsed.rows.length === 1 ? "" : "s"} · {matched.length} already mapped{unmatched.length > 0 && <> · {unmatched.length} need a holding</>}
+              </div>
+              <div className="rounded-lg border border-[var(--border)] max-h-64 overflow-y-auto">
+                <table className="w-full text-xs">
+                  <tbody className="divide-y divide-[var(--border)]">
+                    {[...matched, ...unmatched].map((r) => {
+                      const chosen = matched.includes(r) ? r.ticker : (assign[r.name] || "");
+                      return (
+                        <tr key={r.name} className={chosen ? "" : "opacity-70"}>
+                          <td className="px-2 py-1.5">{r.name}</td>
+                          <td className="px-2 py-1.5 num text-right whitespace-nowrap">{r.pricePence}p</td>
+                          <td className="px-2 py-1.5 num text-right whitespace-nowrap text-[var(--muted)]">{gbp(r.price)}</td>
+                          <td className="px-2 py-1.5">
+                            {matched.includes(r) ? (
+                              <span className="text-[var(--gain)]">→ {r.ticker}</span>
+                            ) : (
+                              <select value={chosen} aria-label={`Holding for ${r.name}`}
+                                onChange={(e) => setAssign((a) => ({ ...a, [r.name]: e.target.value }))}
+                                className="input text-xs py-0.5">
+                                <option value="">— skip —</option>
+                                {assignable.map((h) => <option key={h.ticker} value={h.ticker}>{h.ticker} · {secMeta[h.ticker]?.name || h.ticker}</option>)}
+                              </select>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <button onClick={apply} disabled={!pending.length} className={pending.length ? "btn-accent" : "btn-accent opacity-40 cursor-not-allowed"}>
+                Apply {pending.length} price{pending.length === 1 ? "" : "s"}
+              </button>
+              <p className="text-[11px] text-[var(--muted)]">
+                Funds left as “skip” are ignored — the table lists every fund in the scheme, not just the ones you hold. Mappings you set here are remembered, so next time it&apos;s paste then apply.
+              </p>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 // Phase 2.8 de-drilling: raw state from the store; the shell keeps
 // providing recomputeProviderCost (cross-slice derived logic).
@@ -13,6 +146,7 @@ function PensionTab({ recomputeProviderCost }) {
   const cash = useAppStore((s) => s.cash), setCash = useAppStore((s) => s.setCash);
   const secMeta = useAppStore((s) => s.secMeta), setSecMeta = useAppStore((s) => s.setSecMeta);
   const prices = useAppStore((s) => s.prices), setPrices = useAppStore((s) => s.setPrices);
+  const setPriceMeta = useAppStore((s) => s.setPriceMeta);
   const pensionCashflows = useAppStore((s) => s.pensionCashflows), setPensionCashflows = useAppStore((s) => s.setPensionCashflows);
   const [form, setForm] = useState({ wrapper: "SIPP", provider: "", ticker: "", name: "", units: "", price: "" });
   const [cfForm, setCfForm] = useState({ provider: "", date: todayISO(), type: "Regular Contribution", amount: "" });
@@ -180,6 +314,10 @@ function PensionTab({ recomputeProviderCost }) {
         <Stat label="SIPP" value={gbp0(rows.filter((r) => r.wrapper === "SIPP").reduce((s, r) => s + (prices[r.ticker] != null ? r.units * prices[r.ticker] : r.cost), 0))} />
         <Stat label="LISA" value={gbp0(rows.filter((r) => r.wrapper === "LISA").reduce((s, r) => s + (prices[r.ticker] != null ? r.units * prices[r.ticker] : r.cost), 0) + (+cash.LISA || 0) + lisaInvestedValue)} />
       </div>
+
+      {rows.length > 0 && (
+        <LgimPastePanel rows={rows} secMeta={secMeta} setSecMeta={setSecMeta} setPrices={setPrices} setPriceMeta={setPriceMeta} />
+      )}
 
       {rows.length === 0 && !(+cash.LISA) ? (
         <Empty msg="No pension or LISA holdings yet. Add a fund below, or set a LISA cash total if you don't want to itemise by fund." />
