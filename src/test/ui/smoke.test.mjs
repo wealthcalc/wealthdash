@@ -47,7 +47,7 @@ test("sidebar renders every screen and every leaf has a label + screen", () => {
   // decode the common entities before matching labels.
   const html = renderToString(React.createElement(DesktopSidebar, { tab: "home", setTab: () => {}, onOpenPalette: () => {} }))
     .replaceAll("&amp;", "&").replaceAll("&#x27;", "'");
-  assert.equal(SCREENS.length, 10);
+  assert.equal(SCREENS.length, 11);
   for (const s of SCREENS) {
     assert.ok(html.includes(s.label), s.label);
     for (const leaf of s.leaves) {
