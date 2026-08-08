@@ -80,3 +80,23 @@ test("score is floored at 0 and one noisy band can't sink everything", () => {
 test("requires today", () => {
   assert.throws(() => dataHealth({}), /today/);
 });
+
+test("a pension fund priced from a live feed is flagged — it's a symbol collision", () => {
+  // "AVEM" is both a workplace fund code and a real emerging-markets ETF.
+  // A live quote against the fund is a different security entirely, which is
+  // why the price arrives in the WRONG CURRENCY as well as the wrong number.
+  const h = dataHealth({
+    today: "2026-08-08",
+    wrongSourceFunds: [{ ticker: "AVEM", source: "Yahoo", ccy: "USD" }],
+  });
+  const issue = h.issues.find((i) => i.id === "fund-live-price");
+  assert.ok(issue, "must be surfaced");
+  assert.equal(issue.severity, "high");
+  assert.equal(issue.tab, "pension");
+  assert.match(issue.message, /AVEM/);
+  assert.match(issue.detail, /USD/, "the currency mismatch is the tell");
+
+  // Hand-entered and provider-fed prices are correct and must stay silent.
+  const clean = dataHealth({ today: "2026-08-08", wrongSourceFunds: [] });
+  assert.ok(!clean.issues.some((i) => i.id === "fund-live-price"));
+});

@@ -286,6 +286,10 @@ function PensionTab({ recomputeProviderCost }) {
       }];
     });
     setPrices((p) => ({ ...p, [LISA_INVESTED_TICKER]: round2(value) }));
+    setPriceMeta((m) => ({
+      ...m,
+      [LISA_INVESTED_TICKER]: { asOf: new Date().toISOString(), raw: round2(value), ccy: "GBP", source: "manual" },
+    }));
   };
 
   const total = rows.reduce((s, r) => s + (prices[r.ticker] != null ? r.units * prices[r.ticker] : r.cost), 0) + (+cash.LISA || 0) + lisaInvestedValue;
@@ -343,7 +347,20 @@ function PensionTab({ recomputeProviderCost }) {
   };
   // Price is purely a market-value input (same as every other holding's live
   // price elsewhere in the app) — it does NOT touch cost.
-  const setPrice = (ticker, price) => setPrices((p) => ({ ...p, [ticker]: price }));
+  //
+  // priceMeta is stamped too. Editing a price here used to write ONLY the
+  // price, leaving the old provenance record untouched — so the Live prices
+  // panel went on reporting a date from weeks earlier, the staleness checks
+  // judged a freshly-entered figure as stale, and "since you last opened"
+  // read from that same stale metadata. Any hand-entered price is, by
+  // definition, manual and current.
+  const setPrice = (ticker, price) => {
+    setPrices((p) => ({ ...p, [ticker]: price }));
+    setPriceMeta((m) => ({
+      ...m,
+      [ticker]: { asOf: new Date().toISOString(), raw: price, ccy: "GBP", source: "manual" },
+    }));
+  };
   // Manual cost override — only meaningful (and only offered in the UI) for
   // a provider with no contribution history to derive cost from instead.
   const setManualCost = (wrapper, ticker, cost) => setTxns((all) => all.map((t) =>
