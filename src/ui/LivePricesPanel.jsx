@@ -57,6 +57,16 @@ function LivePricesPanel({ tickers }) {
     setPriceMeta((p) => ({ ...p, [tk]: { asOf: new Date().toISOString(), raw, ccy, source } }));
     return true;
   };
+  // Drop a price and its provenance together. Used to clear a live-feed
+  // price that landed on a pension fund via a ticker collision — leaving the
+  // stale metadata behind would keep the warning on screen after the number
+  // was gone.
+  const clearPrice = (tk) => {
+    setPrices((p) => { const n = { ...p }; delete n[tk]; return n; });
+    setPriceMeta((p) => { const n = { ...p }; delete n[tk]; return n; });
+    setMsg(`${tk}: cleared. Enter the correct unit price on the Pension & LISA tab.`);
+  };
+
   const yahooFetch = async (syms) => {
     const r = await fetch(`/api/quotes?symbols=${encodeURIComponent(syms.join(","))}`);
     if (!r.ok) throw new Error(`function ${r.status}`);
@@ -144,7 +154,20 @@ function LivePricesPanel({ tickers }) {
                       {isGilt ? (
                         <td className="py-1 px-2 text-[var(--muted)]" colSpan={3}>DMO (via ISIN {secMeta[tk]?.isin || "— not set"})</td>
                       ) : isFund ? (
-                        <td className="py-1 px-2 text-[var(--muted)]" colSpan={3}>No live source — pension/LISA fund, set manually on the Pension &amp; LISA tab</td>
+                        <td className="py-1 px-2 text-[var(--muted)]" colSpan={3}>
+                          No live source — pension/LISA fund, set manually on the Pension &amp; LISA tab
+                          {/* A live-feed source on a fund is always a symbol
+                              collision with a real security (the refresh paths
+                              block this now, but prices captured before the
+                              holding was classified kept their bad figure). */}
+                          {pm?.source && !/^(manual|L&G)/i.test(pm.source) && (
+                            <span className="ml-2 text-[var(--loss)]">
+                              — showing a {pm.source} price{pm.ccy && pm.ccy !== "GBP" ? ` in ${pm.ccy}` : ""}, which is a different security with the same symbol.
+                              <button onClick={() => clearPrice(tk)} className="ml-1 underline underline-offset-2 hover:text-[var(--fg)]"
+                                title="Remove this price so it can be re-entered by hand">clear it</button>
+                            </span>
+                          )}
+                        </td>
                       ) : (<>
                         <td className="py-1 px-2"><input value={m.yahoo} onChange={(e) => setMeta(tk, { yahoo: e.target.value.trim() })} className="input num w-24 py-0.5" /></td>
                         <td className="py-1 px-2"><input value={m.av} onChange={(e) => setMeta(tk, { av: e.target.value.trim() })} className="input num w-24 py-0.5" /></td>

@@ -646,16 +646,24 @@ export default function HomeTab({
       const a = annualBudget({ categories: budgetCategories, txns: merged, month: spendMonth }).summary;
       uncat = a.uncategorised; spendTotal = a.totalActual + a.uncategorised;
     }
+    // A pension/LISA fund can only be priced by hand. Anything showing a
+    // live-feed source against one is a symbol collision with a real
+    // security — see the fund-live-price note in core/data-health.mjs.
+    const wrongSourceFunds = Object.entries(priceMeta || {})
+      .filter(([tk, m]) => secMeta?.[tk]?.kind === "fund" && m?.source && !/^(manual|L&G)/i.test(m.source))
+      .map(([ticker, m]) => ({ ticker, source: m.source, ccy: m.ccy }));
+
     return dataHealth({
       today: todayISO(),
       unpricedTickers: model?.total?.unpricedTickers || [],
       stalePriceTickers: staleTickers,
+      wrongSourceFunds,
       uncategorisedSpend: uncat, totalSpend: spendTotal,
       staleImports: Object.entries(store.get("cgt.lastImportAt", {})).map(([source, at]) => ({
         source, days: Math.floor((new Date(todayISO()) - new Date(at)) / DAY),
       })),
     });
-  }, [model, staleTickers, budgetCategories, budgetRules, spendTxns, recurringExpenses]);
+  }, [model, staleTickers, budgetCategories, budgetRules, spendTxns, recurringExpenses, priceMeta, secMeta]);
   const pensionCashflows = useAppStore((s) => s.pensionCashflows);
   // Combined pension XIRR for the SIPP/LISA boxes (core/returns.mjs) —
   // the ledger-based engine can't see pension contribution history (one

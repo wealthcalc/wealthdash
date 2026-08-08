@@ -50,6 +50,7 @@ export function dataHealth({
   staleImports = [],          // [{source, days}] broker feeds >45d old
   missingIsins = [],          // [ticker] held unsheltered with no ISIN on record
   positionDrift = null,       // core/position-reconcile.mjs summary, if a broker report exists
+  wrongSourceFunds = [],      // [{ticker, source, ccy}] pension/LISA funds priced from a live feed
   today,
 } = {}) {
   if (!today) throw new Error("dataHealth requires `today` — pure functions don't read the clock.");
@@ -79,6 +80,30 @@ export function dataHealth({
       detail: short
         ? `${short} where the broker holds MORE than your transactions explain — cost basis and CGT on those will be wrong until the missing entries are added.`
         : "Your ledger holds more than the broker reports — a sale or transfer may be missing.",
+    });
+  }
+
+  /* A pension/LISA fund holding a price from a LIVE FEED is always wrong.
+     These units are insurer-administered and aren't quoted anywhere, so any
+     Yahoo/AV price against one is a ticker collision: a real, unrelated
+     security that happens to share the symbol. "AVEM" is an emerging-markets
+     ETF as well as a workplace fund code, and the ETF's price is both a
+     different number and a different CURRENCY.
+
+     The refresh paths guard against this now, but the guard reads the
+     CURRENT classification — anything priced before the holding was marked
+     as a fund kept its bad figure silently. This finds those leftovers,
+     which no amount of future guarding would have surfaced. */
+  if (wrongSourceFunds.length) {
+    const list = wrongSourceFunds.map((f) => f.ticker).join(", ");
+    const foreign = wrongSourceFunds.filter((f) => f.ccy && f.ccy !== "GBP");
+    issues.push({
+      id: "fund-live-price", severity: "high", tab: "pension",
+      count: wrongSourceFunds.length, tickers: wrongSourceFunds.map((f) => f.ticker),
+      message: `${wrongSourceFunds.length} pension/LISA fund${wrongSourceFunds.length === 1 ? " has" : "s have"} a price from a live feed (${list})`,
+      detail: foreign.length
+        ? `These units aren't exchange-traded, so the price came from an unrelated security with the same symbol — and ${foreign.map((f) => `${f.ticker} is priced in ${f.ccy}`).join(", ")}, not GBP. Re-enter it on the Pension & LISA tab.`
+        : "These units aren't exchange-traded, so a live quote is an unrelated security with the same symbol. Re-enter the value on the Pension & LISA tab.",
     });
   }
 
