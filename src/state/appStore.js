@@ -82,6 +82,12 @@ const useAppStore = create((set) => {
     // re-proposing the same wrong matches every time (core/lgim-import.mjs).
     lgimIgnored: ls.get("cgt.lgimignored", []),
     setLgimIgnored: upd("lgimIgnored"),
+    // Target-allocation buckets ([{id,name,target}]) and which holding sits
+    // in which ({ ticker: groupId }) — core/target-allocation.mjs.
+    allocationGroups: ls.get("cgt.allocationgroups", []),
+    setAllocationGroups: upd("allocationGroups"),
+    allocationAssignments: ls.get("cgt.allocationassignments", {}),
+    setAllocationAssignments: upd("allocationAssignments"),
     // UK retirement planner inputs (Plan tab). Previously lived entirely
     // OUTSIDE this store — component-local state backed by its own
     // `localStorage.setItem("uk-retirement-planner:inputs", JSON.stringify(p))`

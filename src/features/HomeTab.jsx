@@ -338,8 +338,12 @@ function SinceLastVisitCard({ summary, setTab }) {
         <span className="text-[var(--m-bb)] text-xs" title="One of the two snapshots was recorded while a holding had no price">· approximate</span>
       )}
       {stalePrices.length > 0 && (
-        <button onClick={() => setTab && setTab("wealth")} className="text-xs text-[var(--muted)] underline underline-offset-2 hover:text-[var(--fg)]">
-          · {stalePrices.length} price{stalePrices.length === 1 ? "" : "s"} stale, so this may understate
+        // Naming them matters: an unattributed "1 price is stale" sends you
+        // hunting through a list of eighty holdings for something the panel
+        // may not even show.
+        <button onClick={() => setTab && setTab("wealth")} className="text-xs text-[var(--muted)] underline underline-offset-2 hover:text-[var(--fg)]"
+          title={`Stale: ${stalePrices.join(", ")}`}>
+          · stale {stalePrices.length <= 3 ? stalePrices.join(", ") : `${stalePrices.slice(0, 3).join(", ")} +${stalePrices.length - 3}`}, so this may understate
         </button>
       )}
     </div>
@@ -685,8 +689,13 @@ export default function HomeTab({
   // nag per tab. Inputs are already computed above / by the shell; this
   // only assembles them.
   const sinceVisit = useMemo(
-    () => sinceLastVisit({ snapshots: netWorthSnapshots, incomeEntries, priceMeta, today: todayISO() }),
-    [netWorthSnapshots, incomeEntries, priceMeta]
+    () => sinceLastVisit({
+      snapshots: netWorthSnapshots, incomeEntries, priceMeta, today: todayISO(),
+      // Only holdings you still own can have a stale price worth acting on;
+      // priceMeta keeps an entry for everything ever priced.
+      heldTickers: (model?.positions || []).filter((p) => p.qty > 1e-9).map((p) => p.ticker),
+    }),
+    [netWorthSnapshots, incomeEntries, priceMeta, model]
   );
 
   const health = useMemo(() => {

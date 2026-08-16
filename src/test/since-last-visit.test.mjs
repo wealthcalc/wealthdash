@@ -85,3 +85,26 @@ test("an estimated snapshot is flagged rather than silently dropped", () => {
 test("requires today", () => {
   assert.throws(() => sinceLastVisit({ snapshots: [] }), /today/);
 });
+
+test("stale prices are limited to holdings you STILL OWN", () => {
+  // priceMeta keeps an entry for every security ever priced, so scanning it
+  // wholesale reported a stale price for a long-sold holding — which the
+  // user then couldn't find, because the Live prices panel only lists
+  // current holdings.
+  const args = {
+    snapshots: [{ date: "2026-08-14", value: 100 }, { date: "2026-08-16", value: 100 }],
+    priceMeta: {
+      HELD: { asOf: "2026-08-16T10:10:00Z" },
+      SOLD_YEARS_AGO: { asOf: "2024-01-05T10:00:00Z" },
+      HELD_STALE: { asOf: "2026-08-01T10:00:00Z" },
+    },
+    today: "2026-08-16",
+  };
+  const scoped = sinceLastVisit({ ...args, heldTickers: ["HELD", "HELD_STALE"] });
+  assert.deepEqual(scoped.stalePrices, ["HELD_STALE"], "the sold holding is not the user's problem");
+
+  // Without the allowlist the old behaviour is preserved for any caller
+  // that hasn't supplied one.
+  const unscoped = sinceLastVisit(args);
+  assert.deepEqual(unscoped.stalePrices, ["HELD_STALE", "SOLD_YEARS_AGO"]);
+});
