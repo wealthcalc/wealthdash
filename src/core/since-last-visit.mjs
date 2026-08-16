@@ -33,6 +33,12 @@ const daysBetween = (a, b) => Math.round((Date.parse(b) - Date.parse(a)) / DAY);
    today: ISO. `staleDays` matches the app's own freshness threshold. */
 export function sinceLastVisit({
   snapshots = [], incomeEntries = [], priceMeta = {}, today, staleDays = 3,
+  // Tickers actually HELD right now. Without this the stale check scans the
+  // whole priceMeta map, which retains an entry for every security ever
+  // priced — so a holding sold years ago was reported as a stale price the
+  // user couldn't find anywhere, because the Live prices panel only lists
+  // current holdings. Omitted = check everything (previous behaviour).
+  heldTickers = null,
 } = {}) {
   if (!today) throw new Error("sinceLastVisit requires `today` (ISO).");
 
@@ -59,8 +65,10 @@ export function sinceLastVisit({
   // Prices that have gone stale — a reason the change figure may be
   // understated, so it belongs beside it rather than in a separate nag.
   const staleCutoff = new Date(Date.parse(today) - staleDays * DAY).toISOString().slice(0, 10);
+  const held = heldTickers ? new Set(heldTickers) : null;
   const stale = Object.entries(priceMeta)
-    .filter(([, m]) => m && m.asOf && String(m.asOf).slice(0, 10) < staleCutoff)
+    .filter(([ticker, m]) => (!held || held.has(ticker))
+      && m && m.asOf && String(m.asOf).slice(0, 10) < staleCutoff)
     .map(([ticker]) => ticker)
     .sort();
 

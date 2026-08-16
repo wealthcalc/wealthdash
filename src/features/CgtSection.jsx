@@ -1,10 +1,11 @@
 import React, { useState, useMemo, useCallback, useRef } from "react";
-import { AlertCircle, Download, Wand2, FlaskConical, Check, Printer, Info, Scale, TrendingDown } from "lucide-react";
+import { AlertCircle, Download, Wand2, FlaskConical, Check, Printer, Info, Scale, TrendingDown, Plus, Trash2 } from "lucide-react";
 import { ukTaxYear } from "../core/cgt-engine.mjs";
 import { cfgFor, aeaForYear, paFor, liabilityForYear, sharesForTargetGain, nextTaxYear, optimiseDisposals } from "../core/uk-tax.mjs";
 import { buildTaxPack, renderTaxPackHTML } from "../core/tax-pack.mjs";
 import { locationPlan } from "../core/asset-location.mjs";
 import { resolveAssumptions, kindAssumptionsFrom } from "../core/assumptions.mjs";
+import { allocationState, planContribution } from "../core/target-allocation.mjs";
 import { ISA_LIMIT, isaSubscriptionsByYear, realisedForYear, bedAndIsaPlan, lossHarvest } from "../core/allowances.mjs";
 import { rebalancePlan, BUCKETS, BUCKET_LABEL } from "../core/rebalancing.mjs";
 import { KIND_LABEL, store, fmtRate, gbp, gbp0, WrapperChip, SubTabs, SegmentedControl, num, uid, todayISO, METHOD, CurrencyInput, NumberInput, Field, Stat, Row, MethodChip, Empty } from "../ui/shared.jsx";
@@ -29,7 +30,7 @@ function CgtSection(props) {
   return (
     <div>
       <SubTabs
-        tabs={[["summary", "Summary"], ["planning", "Planning"], ["bedisa", "Bed & ISA"], ["rebalance", "Rebalance"], ["location", "Location"], ["report", "Report"], ["whatif", "What-if"]]}
+        tabs={[["summary", "Summary"], ["planning", "Planning"], ["bedisa", "Bed & ISA"], ["rebalance", "Rebalance"], ["allocate", "Contribute"], ["location", "Location"], ["report", "Report"], ["whatif", "What-if"]]}
         active={sub} onChange={setSub}
       />
       {sub === "summary" && <CgtTab {...{ taxYears, activeYear, setYear, yearDisposals, liab, income, setIncome, carried, setCarried, carryForward, exemptGiltDisposalCount }} />}
@@ -37,6 +38,7 @@ function CgtSection(props) {
       {sub === "planning" && <PlanningTab {...{ pools, prices, setPrices, disposals, txns, income }} />}
       {sub === "bedisa" && <BedIsaTab {...{ pools, prices, disposals, income, allTxns, secMeta, setTxns }} />}
       {sub === "rebalance" && <RebalanceTab {...{ positions: positions || [], disposals, income }} />}
+      {sub === "allocate" && <ContributeTab positions={positions || []} secMeta={secMeta} />}
       {sub === "report" && <ReportTab {...{ taxYears, disposals, income, carried, yearlyLiab }} />}
       {sub === "whatif" && <WhatIfTab {...{ pools, disposals, income, carried, prices }} />}
     </div>
@@ -114,6 +116,186 @@ function LocationTab({ positions = [], secMeta = {}, income = 0, incomeEntries =
       <p className="text-xs text-[var(--muted)] leading-relaxed">
         Rows marked <span className="whitespace-nowrap">(sheltered)</span> — ISA, SIPP, LISA — pay <span className="font-medium">£0 of this drag now</span> and are excluded from "Annual tax drag now"; the percentage shows only what they'd cost if moved to a GIA, used to rank which holdings most deserve the limited shelter. A SIPP defers annual drag exactly like an ISA, but its withdrawals are later taxed as income — so where you have a choice, put your highest-growth holdings in the ISA and use SIPP room for lower-growth or income assets.
       </p>
+    </div>
+  );
+}
+
+/* Contribute — rebalancing by BUYING rather than selling.
+
+   The Rebalance tab answers "what should I sell to get back to target",
+   which is the right tool when you're genuinely overweight but always costs
+   a disposal: a CGT event, the 30-day rule to navigate, and two sets of
+   dealing charges. Most of the time the question is the opposite one —
+   "I have money to invest this month; where should it go?" — and directing
+   new money at the underweight buckets fixes drift with no tax consequence
+   at all.
+
+   Unlike the Rebalance tab's fixed bonds-vs-equities split, the buckets
+   here are yours to define: by geography, by strategy, by risk, by whatever
+   your actual policy is. See core/target-allocation.mjs for why the
+   allocation is computed against the POST-contribution portfolio. */
+function ContributeTab({ positions, secMeta }) {
+  const groups = useAppStore((s) => s.allocationGroups), setGroups = useAppStore((s) => s.setAllocationGroups);
+  const assignments = useAppStore((s) => s.allocationAssignments), setAssignments = useAppStore((s) => s.setAllocationAssignments);
+  const [amount, setAmount] = useState("");
+  const [newName, setNewName] = useState("");
+
+  const state = useMemo(() => allocationState({ groups, assignments, positions }), [groups, assignments, positions]);
+  const plan = useMemo(() => planContribution({ state, amount: +amount || 0 }), [state, amount]);
+
+  const priced = useMemo(
+    () => positions.filter((p) => p.priced && p.marketValue > 0)
+      .sort((a, b) => b.marketValue - a.marketValue),
+    [positions]
+  );
+
+  const addGroup = () => {
+    const name = newName.trim();
+    if (!name) return;
+    setGroups((g) => [...(g || []), { id: uid(), name, target: 0 }]);
+    setNewName("");
+  };
+  const patchGroup = (id, patch) => setGroups((g) => g.map((x) => (x.id === id ? { ...x, ...patch } : x)));
+  const removeGroup = (id) => {
+    setGroups((g) => g.filter((x) => x.id !== id));
+    // Orphaned assignments would keep holdings invisibly bound to a bucket
+    // that no longer exists.
+    setAssignments((a) => Object.fromEntries(Object.entries(a || {}).filter(([, gid]) => gid !== id)));
+  };
+  const assign = (ticker, gid) => setAssignments((a) => {
+    const next = { ...(a || {}) };
+    if (gid) next[ticker] = gid; else delete next[ticker];
+    return next;
+  });
+
+  if (!priced.length) return <Empty msg="Needs priced holdings — set prices on the Holdings or Net worth tab first." />;
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-start gap-2 text-xs rounded-lg px-3 py-2 border border-[var(--border)] bg-[var(--panel2)] text-[var(--muted)]">
+        <Info size={14} className="mt-0.5 shrink-0 text-[var(--m-bb)]" />
+        <span>Directs NEW money at whatever is furthest below target, so drift is corrected without selling — no disposal, no CGT event, no 30-day rule, one set of dealing costs instead of two. Define buckets that match your own policy; this spans every wrapper.</span>
+      </div>
+
+      {/* Buckets and their targets */}
+      <div className="space-y-2">
+        <h3 className="text-sm font-semibold">Target allocation</h3>
+        {groups?.length > 0 && (
+          <div className="rounded-xl border border-[var(--border)] overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-[var(--panel2)] text-[var(--muted)] text-xs uppercase tracking-wide">
+                <tr>{["Bucket", "Target %", "Now", "Value", "Drift", ""].map((h, i) => (
+                  <th key={i} className={"px-3 py-2 font-medium " + (i === 0 ? "text-left" : i === 5 ? "" : "text-right")}>{h}</th>
+                ))}</tr>
+              </thead>
+              <tbody className="divide-y divide-[var(--border)] bg-[var(--panel)]">
+                {state.rows.map((r) => (
+                  <tr key={r.id} className={r.unassigned ? "opacity-70" : ""}>
+                    <td className="px-3 py-2 font-medium">{r.name}
+                      <span className="ml-1.5 text-[10px] text-[var(--muted)]">{r.holdings.length} holding{r.holdings.length === 1 ? "" : "s"}</span>
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      {r.unassigned ? <span className="text-[var(--muted)]">—</span> : (
+                        <input type="number" min="0" max="100" step="1" value={r.target}
+                          onChange={(e) => patchGroup(r.id, { target: +e.target.value || 0 })}
+                          aria-label={`Target percent for ${r.name}`} className="input num w-16 text-right py-0.5" />
+                      )}
+                    </td>
+                    <td className="px-3 py-2 num text-right">{num(r.weight, 1)}%</td>
+                    <td className="px-3 py-2 num text-right text-[var(--muted)]">{gbp0(r.value)}</td>
+                    <td className={"px-3 py-2 num text-right " + (Math.abs(r.drift) < 1 ? "text-[var(--muted)]" : r.drift > 0 ? "text-[var(--m-bb)]" : "text-[var(--m-same)]")}>
+                      {r.unassigned ? "—" : <>{r.drift > 0 ? "+" : ""}{num(r.drift, 1)}pp</>}
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      {!r.unassigned && <button onClick={() => removeGroup(r.id)} aria-label={`Remove ${r.name}`} className="text-[var(--muted)] hover:text-[var(--loss)]"><Trash2 size={13} /></button>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <div className="flex items-end gap-2 flex-wrap">
+          <Field label="New bucket"><input value={newName} onChange={(e) => setNewName(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && addGroup()} placeholder="e.g. Global equity" className="input w-44" /></Field>
+          <button onClick={addGroup} className="btn-accent"><Plus size={14} /> Add</button>
+          {groups?.length > 0 && !state.targetsValid && (
+            <span className="text-xs text-[var(--m-bb)] pb-2">Targets total {num(state.targetSum, 1)}%, not 100% — every drift figure is measured against that, so it&apos;ll read oddly until they add up.</span>
+          )}
+        </div>
+      </div>
+
+      {/* Assignment */}
+      {groups?.length > 0 && (
+        <details className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3">
+          <summary className="text-sm font-semibold cursor-pointer">Which holding goes in which bucket{state.hasUnassigned && <span className="ml-1.5 text-xs font-normal text-[var(--m-bb)]">— some unassigned</span>}</summary>
+          <div className="mt-2 grid sm:grid-cols-2 gap-1.5">
+            {priced.map((p) => (
+              <div key={p.ticker + p.wrapper} className="flex items-center gap-2 text-xs">
+                <span className="font-medium w-20 truncate" title={secMeta?.[p.ticker]?.name || p.ticker}>{p.ticker}</span>
+                <span className="num text-[var(--muted)] w-20 text-right">{gbp0(p.marketValue)}</span>
+                <select value={assignments?.[p.ticker] || ""} onChange={(e) => assign(p.ticker, e.target.value)}
+                  aria-label={`Bucket for ${p.ticker}`} className="input text-xs py-0.5 flex-1">
+                  <option value="">— unassigned —</option>
+                  {groups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
+                </select>
+              </div>
+            ))}
+          </div>
+        </details>
+      )}
+
+      {/* The plan */}
+      {groups?.length > 0 && (
+        <div className="space-y-2">
+          <div className="flex items-end gap-2 flex-wrap">
+            <Field label="Amount to invest"><CurrencyInput value={amount} onChange={setAmount} className="w-32" /></Field>
+          </div>
+
+          {plan.buys.length > 0 ? (
+            <>
+              <div className="rounded-xl border border-[var(--border)] overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-[var(--panel2)] text-[var(--muted)] text-xs uppercase tracking-wide">
+                    <tr>{["Buy into", "Amount", "Closes gap?", "Weight after"].map((h, i) => (
+                      <th key={i} className={"px-3 py-2 font-medium " + (i === 0 ? "text-left" : "text-right")}>{h}</th>
+                    ))}</tr>
+                  </thead>
+                  <tbody className="divide-y divide-[var(--border)] bg-[var(--panel)]">
+                    {plan.buys.map((b) => {
+                      const after = plan.after.find((r) => r.id === b.groupId);
+                      return (
+                        <tr key={b.groupId}>
+                          <td className="px-3 py-2 font-medium">{b.name}</td>
+                          <td className="px-3 py-2 num text-right font-semibold text-[var(--gain)]">{gbp0(b.amount)}</td>
+                          <td className="px-3 py-2 text-right text-xs text-[var(--muted)]">{b.closesGap ? "reaches target" : `${gbp0(b.toTarget)} would`}</td>
+                          <td className="px-3 py-2 num text-right">{after ? `${num(after.weight, 1)}% (${after.drift > 0 ? "+" : ""}${num(after.drift, 1)}pp)` : "—"}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              {plan.unallocated > 0 && (
+                <p className="text-xs text-[var(--muted)]">{gbp0(plan.unallocated)} unallocated — either everything is already at target, or the remainder was too small to be worth a trade.</p>
+              )}
+              {plan.overweight.length > 0 && (
+                <p className="text-xs text-[var(--m-bb)]">
+                  Buying can&apos;t fix {plan.overweight.map((o) => `${o.name} (+${num(o.drift, 1)}pp)`).join(", ")} — an overweight only comes down by selling, or by being diluted slowly over many contributions. The Rebalance tab prices the sale if you want it now.
+                </p>
+              )}
+            </>
+          ) : (
+            <p className="text-xs text-[var(--muted)]">
+              {+amount > 0 ? "Nothing to buy — every bucket is at or above target." : "Enter an amount to see where it should go."}
+            </p>
+          )}
+        </div>
+      )}
+
+      {groups?.length === 0 && (
+        <Empty msg="Add a bucket or two above (e.g. Global equity, Bonds, Alternatives), set target percentages, then assign your holdings." />
+      )}
     </div>
   );
 }
