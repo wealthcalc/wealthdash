@@ -5,6 +5,9 @@ import { pensionXirrByWrapper } from "../core/returns.mjs";
 import { giltAnalytics } from "../core/gilts.mjs";
 import { growthIndex, maxDrawdown, volatility, benchmarkCumulativeReturn, feeDrag } from "../core/benchmark.mjs";
 import { returnAttribution } from "../core/attribution.mjs";
+import { returnsByPeriod } from "../core/period-returns.mjs";
+import { riskMetrics, portfolioBeta } from "../core/risk-metrics.mjs";
+import { yieldOnCost, profitBySource } from "../core/yield-on-cost.mjs";
 import { gbp, WrapperChip, num, todayISO, pct, pctPlain, toneOf, SHORT_SPAN, RateCell, rateIsDisplayable, Stat, Empty, useSort, sortRows, SortTh, store, SubTabs, SegmentedControl, Field } from "../ui/shared.jsx";
 import useAppStore from "../state/appStore.js";
 
@@ -71,7 +74,7 @@ function ReturnsTab({ returns }) {
 
   return (
     <div className="space-y-4">
-      <SubTabs tabs={[["performance", "Performance"], ["attribution", "Attribution"], ["benchmark", "Benchmark & risk"]]} active={sub} onChange={setSub} />
+      <SubTabs tabs={[["performance", "Performance"], ["attribution", "Attribution"], ["income", "Income"], ["benchmark", "Benchmark & risk"]]} active={sub} onChange={setSub} />
 
       {sub === "performance" && (
       <>
@@ -200,9 +203,103 @@ function ReturnsTab({ returns }) {
 
       {sub === "attribution" && <AttributionView perHolding={perHolding} total={total} />}
 
+      {sub === "income" && <IncomeReturnView perHolding={perHolding} total={total} />}
+
       {sub === "benchmark" && (
-        <BenchmarkRiskView portfolioTWR={portfolioTWR} perHolding={perHolding} secMeta={secMeta} setSecMeta={setSecMeta} />
+        <BenchmarkRiskView portfolioTWR={portfolioTWR} perHolding={perHolding} secMeta={secMeta} setSecMeta={setSecMeta} valuations={valuations} />
       )}
+    </div>
+  );
+}
+
+/* Income view — yield on COST, and what the profit is actually made of.
+
+   Every yield elsewhere is measured against current value, i.e. "what would
+   a buyer get today". For a holding bought years ago that's the wrong
+   question: the money YOU committed may be earning far more. The gap
+   between the two is re-rating plus dividend growth, compounded — and for
+   an income portfolio it's the number that says whether the strategy is
+   working. */
+function IncomeReturnView({ perHolding, total }) {
+  const y = useMemo(() => yieldOnCost({ perHolding, total }), [perHolding, total]);
+  const split = useMemo(() => profitBySource({ perHolding, total }), [perHolding, total]);
+  if (!y.rows.length) return <Empty msg="No income-producing holdings yet — this view needs dividends or interest against an open position." />;
+
+  const s = y.summary;
+  const maxYoc = Math.max(...y.rows.map((r) => r.yieldOnCost ?? 0), 0.0001);
+  const PART_COLOUR = { capital: "var(--m-same)", income: "var(--gain)", realised: "var(--m-pool)", fees: "var(--loss)" };
+  const denom = split.parts.reduce((t, p) => t + Math.abs(p.value), 0) || 1;
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <Stat label="Yield on cost" value={s.yieldOnCost != null ? pct(s.yieldOnCost) : "n/a"} big tone="gain"
+          sub={`${gbp(s.forwardIncome)} expected on ${gbp(s.cost)} invested`} />
+        <Stat label="Yield on today's value" value={s.yieldOnValue != null ? pct(s.yieldOnValue) : "n/a"}
+          sub="what a buyer would get now" />
+        <Stat label="Re-rating gain" value={s.uplift != null ? `+${pct(s.uplift)}` : "n/a"}
+          sub="how far cost yield has outgrown market yield" tone={s.uplift > 0 ? "gain" : undefined} />
+        <Stat label="Banked vs paper" value={split.bankedShare != null ? pct(split.bankedShare) : "n/a"}
+          sub="share of profit already received as cash" />
+      </div>
+
+      {/* What the return is actually made of. Income and realised gains are
+          money that arrived; capital gain is value that could still go. */}
+      {Math.abs(split.total) > 1 && (
+        <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3 space-y-2">
+          <div className="text-sm font-medium">Where the {gbp(split.total)} profit came from</div>
+          <div className="h-3 rounded-full overflow-hidden flex bg-[var(--panel2)]">
+            {split.parts.filter((p) => p.value > 0).map((p) => (
+              <span key={p.key} title={`${p.label} ${gbp(p.value)}`}
+                style={{ width: `${(Math.abs(p.value) / denom) * 100}%`, background: PART_COLOUR[p.key] || "var(--muted)" }} />
+            ))}
+          </div>
+          <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
+            {split.parts.map((p) => (
+              <span key={p.key} className="flex items-center gap-1.5">
+                <span style={{ width: 9, height: 9, borderRadius: 2, background: PART_COLOUR[p.key] || "var(--muted)" }} />
+                <span className="text-[var(--muted)]">{p.label}</span>
+                <span className={"num " + (p.value >= 0 ? "" : "text-[var(--loss)]")}>{gbp(p.value)}</span>
+                {p.share != null && <span className="text-[var(--muted)]">({pct(p.share, 0)})</span>}
+              </span>
+            ))}
+          </div>
+          <p className="text-xs text-[var(--muted)] leading-relaxed">
+            The parts sum exactly to total profit. Income and realised gains are cash that has actually arrived; unrealised capital gain is value that could still move. {split.excludedCount > 0 && `${split.excludedCount} unpriced holding${split.excludedCount === 1 ? "" : "s"} excluded.`}
+          </p>
+        </div>
+      )}
+
+      <div className="rounded-xl border border-[var(--border)] overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead className="bg-[var(--panel2)] text-[var(--muted)] text-xs uppercase tracking-wide">
+            <tr>{["Holding", "Invested", "Forward income", "On today's value", "Yield on cost"].map((h, i) => (
+              <th key={i} className={"px-3 py-2 font-medium " + (i === 0 ? "text-left" : i === 4 ? "text-left" : "text-right")}>{h}</th>
+            ))}</tr>
+          </thead>
+          <tbody className="divide-y divide-[var(--border)] bg-[var(--panel)]">
+            {y.rows.map((r) => (
+              <tr key={r.ticker + r.wrapper} className="hover:bg-[var(--panel2)]">
+                <td className="px-3 py-2 font-medium whitespace-nowrap">{r.ticker} <span className="text-[10px] text-[var(--muted)]">{r.wrapper}</span></td>
+                <td className="px-3 py-2 num text-right text-[var(--muted)]">{gbp(r.cost)}</td>
+                <td className="px-3 py-2 num text-right">{gbp(r.forwardIncome)}</td>
+                <td className="px-3 py-2 num text-right text-[var(--muted)]">{r.yieldOnValue != null ? pct(r.yieldOnValue) : "—"}</td>
+                <td className="px-3 py-2">
+                  <div className="flex items-center gap-2">
+                    <span className="num w-14 text-right shrink-0 text-[var(--gain)]">{r.yieldOnCost != null ? pct(r.yieldOnCost) : "—"}</span>
+                    <span className="flex-1 h-2 rounded-sm bg-[var(--panel2)] overflow-hidden min-w-[50px]">
+                      <span className="block h-full rounded-sm" style={{ width: `${((r.yieldOnCost ?? 0) / maxYoc) * 100}%`, background: "var(--gain)" }} />
+                    </span>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="text-xs text-[var(--muted)] leading-relaxed">
+        Yield on cost divides expected income by the money you actually committed, so a holding bought cheaply years ago shows the return your capital is really earning — often far above the {s.yieldOnValue != null ? pct(s.yieldOnValue) : "market"} a buyer would get today. Closed positions and non-payers are excluded. Forward income is an estimate from current units; see the Income tab for how much of it is contractual.
+      </p>
     </div>
   );
 }
@@ -299,7 +396,7 @@ function AttributionView({ perHolding, total }) {
   );
 }
 
-function BenchmarkRiskView({ portfolioTWR, perHolding, secMeta, setSecMeta }) {
+function BenchmarkRiskView({ portfolioTWR, perHolding, secMeta, setSecMeta, valuations = [] }) {
   const [symbol, setSymbol] = useState(() => store.get("cgt.benchmark.symbol", "VWRL.L"));
   useEffect(() => store.set("cgt.benchmark.symbol", symbol), [symbol]);
   const [benchmarkData, setBenchmarkData] = useState(null);
@@ -329,6 +426,41 @@ function BenchmarkRiskView({ portfolioTWR, perHolding, secMeta, setSecMeta }) {
   );
   const dd = useMemo(() => maxDrawdown(growthIdx), [growthIdx]);
   const vol = useMemo(() => (portfolioTWR?.twr != null ? volatility(portfolioTWR.periods) : { annualisedVol: null }), [portfolioTWR]);
+
+  // Risk-adjusted return. The risk-free rate is an input, not a constant —
+  // Sharpe is sensitive to it and it has moved a long way in recent years.
+  const [rfPct, setRfPct] = useState(() => store.get("cgt.returns.rf", 4));
+  useEffect(() => store.set("cgt.returns.rf", rfPct), [rfPct]);
+  const risk = useMemo(
+    () => (portfolioTWR?.periods?.length ? riskMetrics({ periods: portfolioTWR.periods, riskFreeRate: (+rfPct || 0) / 100 }) : { sharpe: null }),
+    [portfolioTWR, rfPct]
+  );
+  // Beta needs the benchmark sampled on the SAME period boundaries as the
+  // portfolio, or the two series aren't comparable.
+  const beta = useMemo(() => {
+    if (!benchmarkData?.prices?.length || !portfolioTWR?.periods?.length) return null;
+    const closeAt = (d) => {
+      let out = null;
+      for (const p of benchmarkData.prices) { if (p.date <= d) out = p; else break; }
+      return out ? +out.close : null;
+    };
+    const pf = [], bf = [];
+    for (const p of portfolioTWR.periods) {
+      const a = closeAt(p.from), b = closeAt(p.to);
+      if (!(a > 0) || !(b > 0) || !(p.factor > 0)) continue;
+      pf.push(p.factor); bf.push(b / a);
+    }
+    return portfolioBeta({ portfolioFactors: pf, benchmarkFactors: bf });
+  }, [benchmarkData, portfolioTWR]);
+
+  // Per-period returns from the same TWR periods, so they reconcile.
+  const [periodBy, setPeriodBy] = useState("year");
+  const byPeriod = useMemo(
+    () => returnsByPeriod({
+      periods: portfolioTWR?.periods || [], values: valuations, by: periodBy, today: todayISO(),
+    }),
+    [portfolioTWR, valuations, periodBy]
+  );
   const benchCmp = useMemo(
     () => (benchmarkData && portfolioTWR?.from ? benchmarkCumulativeReturn(benchmarkData.prices, portfolioTWR.from, portfolioTWR.to) : null),
     [benchmarkData, portfolioTWR]
@@ -361,7 +493,75 @@ function BenchmarkRiskView({ portfolioTWR, perHolding, secMeta, setSecMeta }) {
             <Stat label="Cumulative TWR" value={pct(portfolioTWR.twr)} sub={`${portfolioTWR.from} → ${portfolioTWR.to}`} tone={toneOf(portfolioTWR.twr)} />
           </div>
         )}
+
+        {/* Volatility says how bumpy; these say whether it was worth it. */}
+        {risk.sharpe != null && (
+          <div className="pt-3 border-t border-[var(--border)] space-y-2">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+              <Stat label="Sharpe ratio" value={num(risk.sharpe, 2)}
+                sub={`return per unit of total volatility${risk.riskFreeRate ? `, over ${pct(risk.riskFreeRate, 1)} risk-free` : ""}`}
+                tone={risk.sharpe >= 1 ? "gain" : risk.sharpe < 0 ? "loss" : undefined} />
+              <Stat label="Sortino ratio" value={risk.sortino != null ? num(risk.sortino, 2) : "n/a"}
+                sub={risk.sortino != null ? "counts only downside volatility" : risk.sortinoReason}
+                tone={risk.sortino >= 1 ? "gain" : undefined} />
+              <Stat label={`Beta vs ${benchmarkData?.symbol || "benchmark"}`}
+                value={beta?.beta != null ? num(beta.beta, 2) : "n/a"}
+                sub={beta?.beta != null
+                  ? (beta.reliable ? `moves ${beta.beta > 1 ? "more" : "less"} than the index · R² ${num(beta.rSquared, 2)}` : beta.note)
+                  : (beta?.reason || "load a benchmark above")} />
+            </div>
+            <div className="flex items-center gap-2 text-xs flex-wrap">
+              <label className="flex items-center gap-1.5 text-[var(--muted)]">
+                Risk-free rate
+                <input type="number" step="0.25" min="0" max="15" value={rfPct}
+                  onChange={(e) => setRfPct(e.target.value)} aria-label="Risk-free rate percent"
+                  className="input num w-16 py-0.5" />%
+              </label>
+              <span className="text-[var(--muted)]">
+                Sharpe divides excess return by ALL volatility, so it penalises upside swings too; Sortino divides only by downside, which is usually the fairer read for a long-only portfolio. Beta is co-movement with the index, not size of moves — a low-beta portfolio can still be volatile.
+              </span>
+            </div>
+          </div>
+        )}
       </div>
+
+      {/* Per-year returns — the question a cumulative curve can't answer. */}
+      {byPeriod.rows.length > 0 && (
+        <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 space-y-3">
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <div className="text-sm font-medium">Return by {periodBy === "year" ? "calendar year" : "month"}</div>
+            <SegmentedControl size="xs" ariaLabel="Period grouping" value={periodBy} onChange={setPeriodBy}
+              options={[["year", "Yearly"], ["month", "Monthly"]]} />
+          </div>
+          <div className="space-y-1.5">
+            {byPeriod.rows.map((r) => {
+              const maxAbs = Math.max(...byPeriod.rows.map((x) => Math.abs(x.return)), 0.01);
+              return (
+                <div key={r.key} className="flex items-center gap-2 text-xs">
+                  <span className="w-16 shrink-0 num text-[var(--muted)]">{r.key}{r.partial && <span title="still running">*</span>}</span>
+                  <span className="num w-14 text-right shrink-0" style={{ color: r.return >= 0 ? "var(--gain)" : "var(--loss)" }}>{pct(r.return)}</span>
+                  <span className="flex-1 h-3 rounded-sm bg-[var(--panel2)] relative overflow-hidden min-w-[60px]">
+                    <span className="absolute top-0 bottom-0" style={{
+                      left: r.return >= 0 ? "50%" : undefined,
+                      right: r.return < 0 ? "50%" : undefined,
+                      width: `${(Math.abs(r.return) / maxAbs) * 50}%`,
+                      background: r.return >= 0 ? "var(--gain)" : "var(--loss)",
+                    }} />
+                    <span className="absolute top-0 bottom-0 left-1/2 w-px bg-[var(--border)]" />
+                  </span>
+                  {r.valueChange != null && <span className="num w-20 text-right shrink-0 text-[var(--muted)]">{gbp(r.valueChange)}</span>}
+                </div>
+              );
+            })}
+          </div>
+          <p className="text-xs text-[var(--muted)] leading-relaxed">
+            {byPeriod.summary.completeCount > 0 && <>{byPeriod.summary.positive} up, {byPeriod.summary.negative} down
+              {byPeriod.summary.best && <> · best {byPeriod.summary.best.key} {pct(byPeriod.summary.best.return)}</>}
+              {byPeriod.summary.worst && <> · worst {byPeriod.summary.worst.key} {pct(byPeriod.summary.worst.return)}</>}. </>}
+            Time-weighted, so contributions don&apos;t flatter a period; these compound back to the cumulative TWR above rather than being separately derived. The £ column DOES include contributions, which is why it won&apos;t match the percentage. <span className="whitespace-nowrap">* = still running.</span>
+          </p>
+        </div>
+      )}
 
       {/* benchmark comparison */}
       <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 space-y-3">

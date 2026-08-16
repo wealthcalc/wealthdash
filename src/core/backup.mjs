@@ -45,6 +45,7 @@ export const ID_ARRAYS = [
   "otherLiabilities", "cashAccounts", "privateHoldings", "privateEvents", "rsuGrants",
   "rsuEvents", "deferredCashAwards", "deferredCashVests", "creditCards", "scenarios",
   "budgetCategories", "budgetRules", "spendTxns", "recurringExpenses",
+  "allocationGroups",
 ];
 // Keys merged into current state rather than replacing it.
 export const MERGE_KEYS = ["secMeta"];
@@ -63,6 +64,7 @@ const TYPES = {
   cash: "object", prices: "object", priceMeta: "object", avMeta: "object",
   secMeta: "object", allowanceOverrides: "object", assumptionOverrides: "object", planInputs: "object",
   lgimIgnored: "array",
+  allocationGroups: "array", allocationAssignments: "object",
   income: "number", carried: "number",
   ibkrQueryId: "string", avKey: "string", ibkrToken: "string",
 };

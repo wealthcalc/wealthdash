@@ -42,6 +42,8 @@ export const PERSIST_KEYS = {
   allowanceOverrides: "cgt.allowanceoverrides",
   assumptionOverrides: "cgt.assumptionoverrides",
   lgimIgnored: "cgt.lgimignored",
+  allocationGroups: "cgt.allocationgroups",
+  allocationAssignments: "cgt.allocationassignments",
   planInputs: "cgt.planinputs",
   privateHoldings: "cgt.privateholdings",
   privateEvents: "cgt.privateevents",
