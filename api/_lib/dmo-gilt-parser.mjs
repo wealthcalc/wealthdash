@@ -32,14 +32,86 @@
 // Strips RTF control words/groups and embedded binary shape data (Crystal
 // Reports inlines background shapes as long hex blobs with no separating
 // control words, which would otherwise survive as noise).
+//
+// Character escapes are DECODED rather than deleted. That matters here for
+// one specific reason: the DMO writes gilt coupons as vulgar fractions, so
+// "1½% Treasury Gilt 2026" reaches us as `\u189?` (RTF unicode escape with
+// an ASCII fallback char) or `\'bd` (cp1252 byte escape). The original
+// implementation deleted both, leaving "1 ? %" — which is why the gilt name
+// was previously unusable as a source of the coupon rate and every gilt had
+// to have its coupon typed in by hand from a broker page. Eighths (⅛, ⅜)
+// aren't in cp1252 and the DMO emits those as literal "1 / 8" text, so both
+// forms have to be handled downstream — see parseGiltName.
+const CP1252 = { a3: "£", bc: "¼", bd: "½", be: "¾", b0: "°", 92: "'", 93: "“", 94: "”", 96: "-", 97: "-" };
 export function stripRtf(raw) {
   return raw
-    .replace(/\\'[0-9a-fA-F]{2}/g, "")
+    // \uNNNN with its optional single-character fallback (which may be "?"
+    // or, in Crystal's output, a space). Must run BEFORE the generic
+    // control-word strip, which would otherwise eat the \uNNNN itself.
+    .replace(/\\u(-?\d+)\s?\??/g, (_, n) => {
+      const code = Number(n);
+      return String.fromCharCode(code < 0 ? code + 65536 : code);
+    })
+    .replace(/\\'([0-9a-fA-F]{2})/g, (_, hex) => CP1252[hex.toLowerCase()] ?? "")
     .replace(/\\[a-zA-Z]+-?\d*/g, " ")
     .replace(/[{}\\]/g, " ")
     .replace(/[0-9a-fA-F]{40,}/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+/* --------------------------- gilt name → coupon ----------------------- */
+const VULGAR = { "¼": 0.25, "½": 0.5, "¾": 0.75, "⅛": 0.125, "⅜": 0.375, "⅝": 0.625, "⅞": 0.875, "⅓": 1 / 3, "⅔": 2 / 3 };
+// The gilt's NAME, anchored on the "%" that precedes "Treasury
+// Gilt/Stock". Hyphens survive stripping inconsistently (Crystal splits
+// "Index-linked" across independently positioned cells), so separators are
+// matched loosely as [-_ ].
+const NAME_RE = /%\s*((?:Index[-_ ]*linked[-_ ]*)?Treasury\s*(?:Gilt|Stock|Loan)[^%]*?(\d{4}))/i;
+
+// The coupon is whatever sits IMMEDIATELY before that "%", read by
+// anchoring to the end of the preceding text rather than scanning forward.
+// That distinction matters: the row is "…84.12 22 Oct 2030 0 3 / 8 %
+// Treasury Gilt 2030", so a forward scan happily swallows the price and the
+// redemption year on its way to the "%".
+const RATE_FRACTION = /(\d+)?\s*(\d+)\s*\/\s*(\d+)\s*$/;                 // "0 3 / 8", "4 1 / 8"
+const RATE_VULGAR = /(\d+)?\s*([¼½¾⅛⅜⅝⅞⅓⅔])\s*$/;                        // "1½", "4 ¼"
+const RATE_PLAIN = /(?:^|[^\d.])(\d+(?:\.\d+)?)\s*$/;                     // "4", "3.75"
+
+// Parses "0 3 / 8 % Treasury Gilt 2030" -> { coupon: 0.375, indexLinked: false, ... }.
+// Returns coupon: null when the rate can't be read with certainty — a gilt
+// registered with a wrong coupon silently misprices every future cashflow,
+// so guessing is worse than declining.
+export function parseGiltName(chunk) {
+  const text = String(chunk || "");
+  const m = text.match(NAME_RE);
+  if (!m) return { name: null, coupon: null, indexLinked: false, maturityYear: null };
+  const name = m[1].replace(/_/g, "-").replace(/\s+/g, " ").trim();
+  const indexLinked = /index[-_ ]*linked/i.test(name);
+  const before = text.slice(0, m.index);
+
+  let coupon = null;
+  const frac = before.match(RATE_FRACTION);
+  const vulgar = before.match(RATE_VULGAR);
+  const plain = before.match(RATE_PLAIN);
+  if (frac) coupon = (frac[1] ? +frac[1] : 0) + +frac[2] / +frac[3];
+  else if (vulgar) coupon = (vulgar[1] ? +vulgar[1] : 0) + VULGAR[vulgar[2]];
+  else if (plain) coupon = +plain[1];
+
+  if (coupon != null) coupon = Math.round(coupon * 1e6) / 1e6;
+  // A rate outside anything the UK has ever issued means the parse went
+  // wrong (most often it read the redemption year), not that the gilt is
+  // exotic — so it's reported as unknown rather than passed on.
+  if (coupon != null && (!Number.isFinite(coupon) || coupon < 0 || coupon > 20)) coupon = null;
+  return { name, coupon, indexLinked, maturityYear: +m[2] };
+}
+
+const MONTHS = { jan: "01", feb: "02", mar: "03", apr: "04", may: "05", jun: "06", jul: "07", aug: "08", sep: "09", oct: "10", nov: "11", dec: "12" };
+// "22 Oct 2026" -> "2026-10-22". Null for anything else — never a partial date.
+export function dmoRedemptionToIso(s) {
+  const m = String(s || "").match(/^(\d{1,2})\s+([A-Za-z]{3})[a-z]*\s+(\d{4})$/);
+  if (!m) return null;
+  const mm = MONTHS[m[2].toLowerCase()];
+  return mm ? `${m[3]}-${mm}-${String(m[1]).padStart(2, "0")}` : null;
 }
 
 // Parses cleaned text into { [ISIN]: { purchaseClean, purchaseDirty, saleClean, saleDirty, redemptionDate, rump } }.
@@ -70,7 +142,13 @@ export function parseGiltPrices(cleanText) {
       saleDirty = parseFloat(nums[nums.length - 1]);
     }
 
-    out[isin] = { purchaseClean, purchaseDirty, saleClean, saleDirty, redemptionDate, rump };
+    // Name/coupon/maturity: everything needed to REGISTER the gilt, not just
+    // to price one already registered. Any of these may be null (an
+    // unreadable coupon is reported as unknown, never guessed).
+    const { name, coupon, indexLinked } = parseGiltName(chunk);
+    const maturity = dmoRedemptionToIso(redemptionDate);
+
+    out[isin] = { purchaseClean, purchaseDirty, saleClean, saleDirty, redemptionDate, rump, name, coupon, indexLinked, maturity };
   }
   return out;
 }

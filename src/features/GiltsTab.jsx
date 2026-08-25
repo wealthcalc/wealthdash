@@ -1,29 +1,64 @@
-import React, { useState, useMemo, useCallback, useRef } from "react";
-import { Landmark } from "lucide-react";
-import { gbp, WrapperChip, dmoDateToIso, fetchDmoGiltPrices, num, NumberInput, uid, todayISO, Field, Stat, Empty, useSort, sortRows, SortTh } from "../ui/shared.jsx";
+import React, { useState, useMemo, useRef } from "react";
+import { Landmark, AlertTriangle, Plus, Search, X } from "lucide-react";
+import { gbp, WrapperChip, dmoDateToIso, fetchDmoGiltPrices, fetchDmoGiltCatalogue, num, uid, todayISO, Stat, Empty, useSort, sortRows, SortTh, TwoStepDelete } from "../ui/shared.jsx";
 import { buildGiltLadder } from "../core/gilt-ladder.mjs";
+import {
+  validateGiltRegistration, unregisterGiltMeta, giltRegistryDiagnostics,
+  shapeGiltCatalogue, searchGiltCatalogue, buildGiltTrade,
+} from "../core/gilt-registry.mjs";
 import useAppStore from "../state/appStore.js";
+
+const BLANK_FORM = { ticker: "", name: "", coupon: "", maturity: "", isin: "" };
 
 // Raw persisted state from the store via selectors; only DERIVED data
 // (`data`, the shell's giltAnalytics output) arrives as a prop — Phase 2.8.
 function GiltsTab({ data }) {
   const secMeta = useAppStore((s) => s.secMeta), setSecMeta = useAppStore((s) => s.setSecMeta);
   const prices = useAppStore((s) => s.prices), setPrices = useAppStore((s) => s.setPrices);
+  const txns = useAppStore((s) => s.txns), setTxns = useAppStore((s) => s.setTxns);
   const dmoReportDate = useAppStore((s) => s.dmoReportDate), setDmoReportDate = useAppStore((s) => s.setDmoReportDate);
-  const [form, setForm] = React.useState({ ticker: "", name: "", coupon: "", maturity: "", isin: "" });
+  const [form, setForm] = React.useState(BLANK_FORM);
+  const [editing, setEditing] = React.useState(null);   // ticker being edited, or null
+  const [errors, setErrors] = React.useState({});
   const [dmoState, setDmoState] = React.useState({ status: "idle", message: "" }); // idle | loading | done | error
   const [sort, toggleSort] = useSort("maturity", "asc");
   const [targetAnnual, setTargetAnnual] = useState(0);
+  const registerRef = useRef(null);
   const registered = Object.entries(secMeta).filter(([, m]) => m && m.kind === "gilt");
+
+  // Why an empty ladder is empty. Registration and holding are two separate
+  // halves (see core/gilt-registry.mjs) and neither is visible when it's the
+  // one that's missing — so the tab has to say which.
+  const diag = useMemo(() => giltRegistryDiagnostics({ txns, secMeta }), [txns, secMeta]);
+
+  const focusRegister = (prefill) => {
+    if (prefill) { setForm({ ...BLANK_FORM, ...prefill }); setEditing(null); setErrors({}); }
+    registerRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+  };
+
   const registerGilt = () => {
-    const tk = form.ticker.toUpperCase().trim();
-    if (!tk || !Number.isFinite(+form.coupon) || !/^\d{4}-\d{2}-\d{2}$/.test(form.maturity)) return;
-    setSecMeta((m) => ({
-      ...m,
-      [tk]: { ...m[tk], kind: "gilt", coupon: +form.coupon, maturity: form.maturity, domicile: "GB", eri: false,
-        name: form.name.trim() || tk, isin: form.isin.toUpperCase().trim() || (m[tk] && m[tk].isin) || "" },
-    }));
-    setForm({ ticker: "", name: "", coupon: "", maturity: "", isin: "" });
+    const r = validateGiltRegistration(form, { secMeta, editing });
+    setErrors(r.errors);
+    if (!r.ok) return;
+    const { ticker, patch } = r.value;
+    setSecMeta((m) => {
+      const next = { ...m, [ticker]: patch };
+      // Renaming during an edit must not leave the old registration behind
+      // as a second, holding-less gilt.
+      if (editing && editing !== ticker) delete next[editing];
+      return next;
+    });
+    setForm(BLANK_FORM); setEditing(null); setErrors({});
+  };
+
+  const startEdit = (tk, m) => {
+    setEditing(tk); setErrors({});
+    setForm({ ticker: tk, name: m.name || "", coupon: String(m.coupon ?? ""), maturity: m.maturity || "", isin: m.isin || "" });
+    registerRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+  };
+  const unregister = (tk) => {
+    setSecMeta((m) => ({ ...m, [tk]: unregisterGiltMeta(m[tk] || {}) }));
+    if (editing === tk) { setEditing(null); setForm(BLANK_FORM); setErrors({}); }
   };
 
   // Live gilt prices from the DMO's own official daily Purchase & Sale Service
@@ -64,20 +99,30 @@ function GiltsTab({ data }) {
     [data, targetAnnual]
   );
 
-  if (!data) return <Empty msg="Couldn't compute gilt analytics — check the Transactions tab for ledger errors." />;
-  const liveBase = data.holdings.filter((h) => h.nominal > 1e-9).sort((a, b) => a.ticker.localeCompare(b.ticker));
+  // A failed analytics run must NOT take the registration panel down with
+  // it: that was the previous behaviour, and it meant the one screen where
+  // a broken gilt could be fixed disappeared exactly when it was needed.
+  const liveBase = (data?.holdings || []).filter((h) => h.nominal > 1e-9).sort((a, b) => a.ticker.localeCompare(b.ticker));
   const live = sortRows(liveBase, sort, {
     ticker: (h) => h.ticker, wrapper: (h) => h.wrapper, maturity: (h) => h.maturity, nominal: (h) => h.nominal,
     clean: (h) => prices[h.ticker] ?? null, accrued: (h) => h.accruedPer100, dirty: (h) => h.dirtyValue,
     nextCoupon: (h) => h.nextCoupon?.date ?? null, gry: (h) => h.gry?.semiAnnual ?? null, coupons12m: (h) => h.couponIncomeNext12m,
   });
-  const aisYears = Object.keys(data.ais.byYear).sort();
-  const upcoming = data.cashflows.slice(0, 12);
+  const aisYears = Object.keys(data?.ais?.byYear || {}).sort();
+  const upcoming = (data?.cashflows || []).slice(0, 12);
 
   return (
     <div className="space-y-4">
-      {live.length === 0 && (
-        <Empty msg={`No gilt holdings yet. Buy an individual gilt in any wrapper using a registered ticker (${registered.map(([t]) => t).join(", ") || "none registered"}) on the Transactions tab, or register another gilt below. Quantity = £ nominal (face value); price = clean price per £1 nominal (e.g. £94.23 per £100 → 0.9423 — the live price feed for LSE gilt lines already lands in this unit).`} />
+      {!data && (
+        <Empty msg="Couldn't compute gilt analytics — check the Transactions tab for ledger errors. You can still register, edit and remove gilts below." />
+      )}
+
+      <GiltDiagnostics diag={diag} onRegister={focusRegister} onEdit={startEdit} secMeta={secMeta} />
+
+      {data && live.length === 0 && (
+        <Empty msg={registered.length
+          ? `Nothing held yet. ${registered.map(([t]) => t).join(", ")} ${registered.length === 1 ? "is" : "are"} registered — add the purchase below, or on the Transactions tab (quantity = £ nominal, price = clean per £1 nominal, i.e. £94.23 per £100 → 0.9423).`
+          : "No gilts registered yet. Register one below — you can pick it straight off the DMO's own list, so the coupon and redemption date don't have to be typed from memory."} />
       )}
 
       {live.length > 0 && (
@@ -239,21 +284,263 @@ function GiltsTab({ data }) {
         </>
       )}
 
+      {/* add a holding — the second half of getting a gilt onto this tab */}
+      {registered.length > 0 && <AddGiltTrade registered={registered} onAdd={(row) => setTxns((t) => [...t, { id: uid(), ...row }])} />}
+
       {/* register */}
-      <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 space-y-2">
-        <div className="text-sm font-medium">Register a gilt</div>
-        <div className="flex flex-wrap gap-2">
-          <input className="input w-24" placeholder="Ticker" value={form.ticker} onChange={(e) => setForm({ ...form, ticker: e.target.value })} />
-          <input className="input flex-1 min-w-40" placeholder="Name (optional)" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
-          <input className="input w-28" type="number" step="0.001" placeholder="Coupon %" value={form.coupon} onChange={(e) => setForm({ ...form, coupon: e.target.value })} />
-          <input className="input w-40" type="date" title="Maturity date" value={form.maturity} onChange={(e) => setForm({ ...form, maturity: e.target.value })} />
-          <input className="input w-40" placeholder="ISIN (optional)" value={form.isin} onChange={(e) => setForm({ ...form, isin: e.target.value })} />
-          <button className="btn-accent" onClick={registerGilt}>Add</button>
+      <div ref={registerRef} className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 space-y-3">
+        <RegisteredGilts registered={registered} editing={editing} onEdit={startEdit} onRemove={unregister} diag={diag} />
+
+        <div className="text-sm font-medium pt-1">{editing ? `Edit ${editing}` : "Register a gilt"}</div>
+        <GiltPicker onPick={(row) => {
+          setForm((f) => ({ ...f, name: row.name, coupon: String(row.coupon), maturity: row.maturity, isin: row.isin }));
+          setErrors({});
+        }} />
+
+        <div className="grid gap-2 sm:grid-cols-[7rem_1fr_7rem_10rem_11rem_auto] items-start">
+          <FormField label="Ticker" error={errors.ticker}>
+            <input className="input w-full" placeholder="TG30" value={form.ticker} onChange={(e) => setForm({ ...form, ticker: e.target.value })} aria-invalid={!!errors.ticker} />
+          </FormField>
+          <FormField label="Name" error={errors.name}>
+            <input className="input w-full" placeholder="0.375% Treasury Gilt 2030" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+          </FormField>
+          <FormField label="Coupon %" error={errors.coupon}>
+            <input className="input num w-full" inputMode="decimal" placeholder="0.375" value={form.coupon} onChange={(e) => setForm({ ...form, coupon: e.target.value })} aria-invalid={!!errors.coupon} />
+          </FormField>
+          <FormField label="Redemption" error={errors.maturity}>
+            <input className="input w-full" type="date" value={form.maturity} onChange={(e) => setForm({ ...form, maturity: e.target.value })} aria-invalid={!!errors.maturity} />
+          </FormField>
+          <FormField label="ISIN" error={errors.isin}>
+            <input className="input w-full" placeholder="GB00…" value={form.isin} onChange={(e) => setForm({ ...form, isin: e.target.value })} aria-invalid={!!errors.isin} />
+          </FormField>
+          <FormField label={null}>
+            <div className="flex gap-2">
+              <button className="btn-accent" onClick={registerGilt}>{editing ? "Save" : "Add"}</button>
+              {(editing || form.ticker || form.isin) && (
+                <button className="text-xs text-[var(--muted)] hover:text-[var(--fg)] px-1" onClick={() => { setEditing(null); setForm(BLANK_FORM); setErrors({}); }}>Cancel</button>
+              )}
+            </div>
+          </FormField>
         </div>
+
         <p className="text-xs text-[var(--muted)] leading-relaxed">
-          Registered: {registered.length ? registered.map(([t, m]) => `${t} (${m.coupon}% ${m.maturity})`).join(" · ") : "none"}. Registering marks the ticker CGT-exempt (TCGA 1992 s115) and interest-paying, and drives the coupon schedule — coupon and maturity must come from the DMO/your broker, not memory. Conventions: semi-annual coupons anchored at maturity, actual/actual accrued, ex-div 7 business days (weekends only — UK bank holidays not modelled). Index-linked gilts are NOT supported: schedules here assume fixed cash coupons and par redemption, so an IL gilt's figures would be wrong — leave those unregistered.
+          Registering marks the ticker CGT-exempt (TCGA 1992 s115) and interest-paying, and drives the whole coupon schedule. The ticker must match the one your ledger uses, character for character — that's how the two halves find each other. Conventions: semi-annual coupons anchored at maturity, actual/actual accrued, ex-div 7 business days (weekends only — UK bank holidays not modelled). Index-linked gilts are NOT supported: the schedules here assume fixed cash coupons and par redemption, so an IL gilt's figures would be wrong.
         </p>
       </div>
+    </div>
+  );
+}
+
+/* ------------------------------ sub-views ----------------------------- */
+
+// A labelled control that shows WHY it was rejected. The whole point: the
+// old form's only response to a bad field was to do nothing at all.
+// `label={null}` reserves the same vertical space for a button, so controls
+// on the row still line up.
+function FormField({ label, error, children }) {
+  return (
+    <label className="block">
+      <span className="block text-[11px] uppercase tracking-wide text-[var(--muted)] mb-1" aria-hidden={label == null || undefined}>
+        {label == null ? " " : label}
+      </span>
+      {children}
+      {error && <span role="alert" className="block text-[11px] text-[var(--loss)] mt-1 leading-snug">{error}</span>}
+    </label>
+  );
+}
+
+// Why the ladder is empty, in the specific terms of this user's data. Silent
+// on a healthy setup.
+function GiltDiagnostics({ diag, onRegister, onEdit, secMeta }) {
+  if (diag.clean) return null;
+  const Box = ({ children }) => (
+    <div className="rounded-xl border border-[color:color-mix(in_srgb,var(--m-bb)_45%,var(--border))] bg-[color:color-mix(in_srgb,var(--m-bb)_8%,transparent)] p-3 flex gap-2.5 text-sm">
+      <AlertTriangle size={15} className="text-[var(--m-bb)] shrink-0 mt-0.5" />
+      <div className="space-y-1 leading-relaxed">{children}</div>
+    </div>
+  );
+  return (
+    <div className="space-y-2">
+      {diag.isinConflicts.map((c) => (
+        <Box key={c.isin + c.heldAs}>
+          <div><span className="font-medium">{c.registeredAs} and {c.heldAs} are the same stock</span> — both carry ISIN {c.isin}, but only {c.registeredAs} is registered as a gilt and only {c.heldAs} has any transactions ({gbp(c.qty)} nominal).</div>
+          <div className="text-xs text-[var(--muted)]">Nothing can show until they agree. Either register {c.heldAs} instead, or rename the ledger rows to {c.registeredAs} on the Transactions tab. Broker imports match by ISIN, so this is usually an import that used the broker&apos;s own name for it.</div>
+          <button className="text-xs text-[var(--accent)] hover:underline" onClick={() => onRegister({ ticker: c.heldAs, isin: c.isin, coupon: String(secMeta[c.registeredAs]?.coupon ?? ""), maturity: secMeta[c.registeredAs]?.maturity || "", name: secMeta[c.registeredAs]?.name || "" })}>
+            Register {c.heldAs} with {c.registeredAs}&apos;s coupon and maturity →
+          </button>
+        </Box>
+      ))}
+      {diag.unregistered.map((u) => (
+        <Box key={u.ticker}>
+          <div><span className="font-medium">{u.ticker} looks like a gilt but isn&apos;t registered as one</span> — {gbp(u.qty)} nominal in your ledger{u.firstDate ? ` since ${u.firstDate}` : ""}.</div>
+          <div className="text-xs text-[var(--muted)]">Until it is, it&apos;s treated as an ordinary share: CGT applies to it, and it has no coupon schedule, no accrued interest and no place in the ladder.</div>
+          <button className="text-xs text-[var(--accent)] hover:underline" onClick={() => onRegister({ ticker: u.ticker, isin: u.isin || "", name: u.name === u.ticker ? "" : u.name })}>Register {u.ticker} →</button>
+        </Box>
+      ))}
+      {diag.registeredUnheld.map((r) => (
+        <Box key={r.ticker}>
+          <div><span className="font-medium">{r.ticker} is registered but you don&apos;t hold any</span> — there are no transactions under that exact ticker.</div>
+          <div className="text-xs text-[var(--muted)]">Add the purchase below, or if you bought it under a different ticker, <button className="text-[var(--accent)] hover:underline" onClick={() => onEdit(r.ticker, { ...r })}>correct the registration</button> to match the ledger.</div>
+        </Box>
+      ))}
+    </div>
+  );
+}
+
+function RegisteredGilts({ registered, editing, onEdit, onRemove, diag }) {
+  if (!registered.length) return null;
+  const unheld = new Set(diag.registeredUnheld.map((r) => r.ticker));
+  return (
+    <div>
+      <div className="text-sm font-medium mb-1.5">Registered gilts</div>
+      <div className="rounded-lg border border-[var(--border)] overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead className="bg-[var(--panel2)] text-[var(--muted)] text-xs uppercase tracking-wide">
+            <tr>
+              <th className="text-left px-3 py-1.5 font-medium">Ticker</th>
+              <th className="text-left px-3 py-1.5 font-medium">Name</th>
+              <th className="text-right px-3 py-1.5 font-medium">Coupon</th>
+              <th className="text-left px-3 py-1.5 font-medium">Redemption</th>
+              <th className="text-left px-3 py-1.5 font-medium">ISIN</th>
+              <th className="px-3 py-1.5" />
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-[var(--border)]">
+            {registered.map(([tk, m]) => (
+              <tr key={tk} className={editing === tk ? "bg-[color:color-mix(in_srgb,var(--accent)_10%,transparent)]" : ""}>
+                <td className="px-3 py-1.5 font-medium">{tk}{unheld.has(tk) && <span className="ml-1.5 text-[11px] text-[var(--muted)]">not held</span>}</td>
+                <td className="px-3 py-1.5 text-[var(--muted)] truncate max-w-56">{m.name || "—"}</td>
+                <td className="px-3 py-1.5 num text-right">{num(+m.coupon, 3)}%</td>
+                <td className="px-3 py-1.5 num text-xs">{m.maturity}</td>
+                <td className="px-3 py-1.5 num text-xs text-[var(--muted)]">{m.isin || <span title="No ISIN, so DMO price fetches will skip it">—</span>}</td>
+                <td className="px-3 py-1.5 text-right whitespace-nowrap">
+                  <button className="text-xs text-[var(--accent)] hover:underline mr-3" onClick={() => onEdit(tk, m)}>Edit</button>
+                  <TwoStepDelete onConfirm={() => onRemove(tk)} label={`Un-register ${tk}`} />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// Pick a gilt off the DMO's own daily list instead of typing its coupon and
+// redemption date. Both are load-bearing: a wrong coupon misprices every
+// projected cashflow, and neither is verifiable from inside the app.
+function GiltPicker({ onPick }) {
+  const [state, setState] = useState({ status: "idle", rows: [], date: null, message: "" });
+  const [q, setQ] = useState("");
+
+  const load = async () => {
+    setState((s) => ({ ...s, status: "loading", message: "" }));
+    try {
+      const body = await fetchDmoGiltCatalogue();
+      const { rows, date } = shapeGiltCatalogue(body);
+      setState({ status: "done", rows, date, message: rows.length ? "" : "The DMO report came back without any readable coupons — type the gilt in below instead." });
+    } catch (e) {
+      setState({ status: "error", rows: [], date: null, message: (e && e.message) || "Fetch failed — type the gilt in below instead." });
+    }
+  };
+
+  const hits = useMemo(() => searchGiltCatalogue(state.rows, q).slice(0, 40), [state.rows, q]);
+
+  if (state.status === "idle") {
+    return (
+      <button className="text-xs text-[var(--accent)] hover:underline flex items-center gap-1.5" onClick={load}>
+        <Search size={13} /> Find it in the DMO&apos;s list instead of typing the coupon and date
+      </button>
+    );
+  }
+  return (
+    <div className="rounded-lg border border-[var(--border)] bg-[var(--panel2)] p-3 space-y-2">
+      <div className="flex items-center gap-2 flex-wrap">
+        <input className="input flex-1 min-w-48" autoFocus placeholder="Search by year, coupon, name or ISIN — e.g. 2030" value={q} onChange={(e) => setQ(e.target.value)} />
+        <button className="text-[var(--muted)] hover:text-[var(--fg)]" onClick={() => setState({ status: "idle", rows: [], date: null, message: "" })} title="Close" aria-label="Close the gilt picker"><X size={15} /></button>
+      </div>
+      {state.status === "loading" && <div className="text-xs text-[var(--muted)]">Fetching the DMO&apos;s gilt list…</div>}
+      {state.message && <div className="text-xs text-[var(--loss)]">{state.message}</div>}
+      {state.status === "done" && state.rows.length > 0 && (
+        <>
+          <div className="max-h-64 overflow-y-auto rounded border border-[var(--border)] divide-y divide-[var(--border)]">
+            {hits.map((r) => (
+              <button key={r.isin} disabled={!r.supported}
+                onClick={() => r.supported && onPick(r)}
+                title={r.unsupportedReason || `Fill the form from the DMO's record for ${r.isin}`}
+                className={"w-full text-left px-3 py-1.5 text-sm flex items-baseline justify-between gap-3 " + (r.supported ? "hover:bg-[var(--panel)]" : "opacity-45 cursor-not-allowed")}>
+                <span>{r.name}{!r.supported && <span className="ml-1.5 text-[11px] text-[var(--m-bb)]">not supported</span>}</span>
+                <span className="num text-xs text-[var(--muted)] whitespace-nowrap">{r.maturity} · {r.clean != null ? num(r.clean, 2) : "—"}</span>
+              </button>
+            ))}
+            {hits.length === 0 && <div className="px-3 py-2 text-xs text-[var(--muted)]">Nothing matches &ldquo;{q}&rdquo;.</div>}
+          </div>
+          <p className="text-[11px] text-[var(--muted)] leading-relaxed">
+            {state.rows.length} gilts in the DMO report dated {state.date}. Picking one fills in the coupon, redemption date, ISIN and name from the issuer&apos;s own record — you still supply the ticker, because the DMO doesn&apos;t publish one and it has to match whatever your ledger and broker use. Gilts whose coupon couldn&apos;t be read from the report are left out rather than guessed at.
+          </p>
+        </>
+      )}
+    </div>
+  );
+}
+
+// The other half: creating the holding. Entered in contract-note units (£
+// nominal and a clean price per £100), because that's what's on the note and
+// the conversion to the app's per-£1 unit is a 100x waiting to happen.
+function AddGiltTrade({ registered, onAdd }) {
+  const [f, setF] = useState({ ticker: registered[0]?.[0] || "", date: todayISO(), side: "BUY", wrapper: "GIA", nominal: "", clean100: "", fees: "" });
+  const [errors, setErrors] = useState({});
+  const [done, setDone] = useState("");
+  const preview = buildGiltTrade(f);
+
+  const submit = () => {
+    const r = buildGiltTrade(f);
+    setErrors(r.errors);
+    if (!r.ok) return;
+    onAdd(r.row);
+    setDone(`Added: ${r.row.side} ${gbp(r.row.quantity)} nominal ${r.row.ticker} for ${gbp(r.row.gbpAmount)}.`);
+    setF((x) => ({ ...x, nominal: "", clean100: "", fees: "" }));
+    setErrors({});
+  };
+
+  return (
+    <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 space-y-2">
+      <div className="text-sm font-medium flex items-center gap-2"><Plus size={15} className="text-[var(--accent)]" /> Add a gilt trade</div>
+      <div className="grid gap-2 sm:grid-cols-[8rem_9rem_6rem_6rem_8rem_9rem_7rem_auto] items-start">
+        <FormField label="Gilt" error={errors.ticker}>
+          <select className="input w-full" value={f.ticker} onChange={(e) => setF({ ...f, ticker: e.target.value })}>
+            {registered.map(([tk, m]) => <option key={tk} value={tk}>{tk} — {m.coupon}% {String(m.maturity).slice(0, 4)}</option>)}
+          </select>
+        </FormField>
+        <FormField label="Date" error={errors.date}>
+          <input className="input w-full" type="date" value={f.date} onChange={(e) => setF({ ...f, date: e.target.value })} />
+        </FormField>
+        <FormField label="Side">
+          <select className="input w-full" value={f.side} onChange={(e) => setF({ ...f, side: e.target.value })}><option>BUY</option><option>SELL</option></select>
+        </FormField>
+        <FormField label="Wrapper">
+          <select className="input w-full" value={f.wrapper} onChange={(e) => setF({ ...f, wrapper: e.target.value })}>
+            {["GIA", "ISA", "SIPP", "LISA"].map((w) => <option key={w}>{w}</option>)}
+          </select>
+        </FormField>
+        <FormField label="£ nominal" error={errors.nominal}>
+          <input className="input num w-full text-right" inputMode="decimal" placeholder="20000" value={f.nominal} onChange={(e) => setF({ ...f, nominal: e.target.value })} aria-invalid={!!errors.nominal} />
+        </FormField>
+        <FormField label="Clean /£100" error={errors.clean100}>
+          <input className="input num w-full text-right" inputMode="decimal" placeholder="84.12" value={f.clean100} onChange={(e) => setF({ ...f, clean100: e.target.value })} aria-invalid={!!errors.clean100} />
+        </FormField>
+        <FormField label="Fees">
+          <input className="input num w-full text-right" inputMode="decimal" placeholder="0" value={f.fees} onChange={(e) => setF({ ...f, fees: e.target.value })} />
+        </FormField>
+        <FormField label={null}><button className="btn-accent" onClick={submit}>Add</button></FormField>
+      </div>
+      <p className="text-xs text-[var(--muted)] leading-relaxed">
+        {preview.ok
+          ? <>Cost recorded: <span className="num font-medium text-[var(--fg)]">{gbp(preview.row.gbpAmount)}</span> ({gbp(preview.consideration)} clean{+f.fees > 0 ? ` + ${gbp(+f.fees)} fees` : ""}). </>
+          : <>£ nominal is the face value you bought, not the cash you paid; the price is the clean price per £100 nominal straight off the contract note. </>}
+        Accrued interest paid on the purchase is deliberately not added to cost — it&apos;s interest, not price, and it&apos;s handled by the Accrued Income Scheme section above.
+        {done && <span className="block text-[var(--gain)] mt-1">{done}</span>}
+      </p>
     </div>
   );
 }

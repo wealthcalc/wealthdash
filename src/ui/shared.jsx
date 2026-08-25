@@ -210,6 +210,19 @@ async function fetchDmoGiltPrices(targets, { knownReportDate, force = false } = 
   }
   return { pricesByTicker, matched, date: body.date, reportDateIso: body.date ? dmoDateToIso(body.date) : null, total: withIsin.length };
 }
+
+// The same DMO report with NO isin filter: every gilt in issue, with the
+// coupon and redemption date parsed out of the official name. Used by the
+// Gilts tab's registration picker so a gilt can be registered from the
+// issuer's own record rather than from a coupon and maturity typed in by
+// hand — the two fields that silently corrupt every projected cashflow if
+// either is wrong. Shaping lives in core/gilt-registry.mjs.
+async function fetchDmoGiltCatalogue() {
+  const r = await fetch("/api/gilt-prices");
+  const body = await r.json();
+  if (!r.ok) throw new Error(body.error || `HTTP ${r.status}`);
+  return body;
+}
 const num = (x, dp = 2) => (x ?? 0).toLocaleString("en-GB", { minimumFractionDigits: dp, maximumFractionDigits: dp });
 const round2 = (x) => Math.round((+x || 0) * 100) / 100;
 
@@ -577,7 +590,7 @@ if (_style && !document.getElementById("cgt-util")) { _style.id = "cgt-util"; do
 export {
   store, downloadText, fmtRate, unitsHeldAt, SECURITY_SEED, gbp, gbp0,
   WRAPPER_CHIP_CLASS, wrapperChipClass, WrapperChip, SubTabs, SegmentedControl,
-  dmoDateToIso, fetchDmoGiltPrices, num, round2, CurrencyInput, NumberInput,
+  dmoDateToIso, fetchDmoGiltPrices, fetchDmoGiltCatalogue, num, round2, CurrencyInput, NumberInput,
   uid, todayISO, SAMPLE, METHOD,
   AV_URL, avQuote, fxViaFrankfurter, fxViaYahoo, fxViaAlphaVantage, fxHistorical, fxToGBP, toGBP, avBudget, avBump, sleep,
   KIND_LABEL, ALLOC_COLORS, AllocBar, pct, pctPlain, toneOf, SHORT_SPAN, RateCell, rateIsDisplayable,

@@ -2432,6 +2432,53 @@ Four small pieces:
   visible), plus a stacked source-by-source area chart against the spend
   line, step-shaped because cashflows arrive on dates, not curves.
 
+## Getting a gilt onto the Gilts tab
+A gilt only reaches `giltAnalytics()` when TWO independent things line up:
+`secMeta[TICKER].kind === "gilt"` with a finite coupon and an ISO maturity
+(the *registration*), **and** BUY/SELL rows in the ledger under exactly that
+ticker (the *holding*). Neither half is visible when it's the half that's
+missing, which is why a correctly-registered gilt could sit there showing
+nothing at all with no indication why.
+
+- **`core/gilt-registry.mjs`** — `validateGiltRegistration()` replaces a form
+  handler that returned silently on any invalid field: every failure now
+  names itself, and a BLANK coupon is refused rather than accepted (`+"" ===
+  0` is finite, so it used to register a 0% gilt whose every projected
+  cashflow was wrong). `giltRegistryDiagnostics()` explains an empty ladder
+  in terms of the user's own data — registered-but-not-held,
+  held-but-not-registered (matched on the LSE `T/TN/TR/TG + yy` shape or a
+  "Treasury Gilt" name), and the one no form validation could ever catch:
+  **the same ISIN registered under one ticker and held under another**.
+  Broker imports map by ISIN, so a gilt can already be in the ledger under
+  the broker's name; both halves then look perfectly healthy and can never
+  meet. ISIN is the only identifier the two sides share.
+  `buildGiltTrade()` builds the ledger row from contract-note units (£
+  nominal + clean price per £100) rather than the app's internal per-£1
+  price — a factor of 100 that is otherwise entered by hand every time.
+  Accrued interest paid is deliberately kept out of cost: it's interest, not
+  price, and it's already handled by the Accrued Income Scheme section.
+- **`api/_lib/dmo-gilt-parser.mjs`** — `stripRtf()` now DECODES RTF character
+  escapes instead of deleting them. That one change is what makes the rest
+  possible: the DMO writes coupons as vulgar fractions, so "1½% Treasury
+  Gilt 2026" arrived as `\u189?` and was being flattened to an unusable "1 ?
+  %" — which is why every gilt's coupon previously had to be typed in from a
+  broker page. `parseGiltName()` reads the rate by anchoring to the end of
+  the text *before* the "%" (a forward scan swallows the price and the
+  redemption year on its way there) and returns `null` rather than a guess
+  when it can't be read, since a wrong coupon misprices every future
+  cashflow. `/api/gilt-prices` now returns name/coupon/maturity/indexLinked
+  alongside the prices.
+- **Gilts tab** — registration is now a proper form with per-field errors and
+  an editable/removable table of what's registered; a **"find it in the DMO's
+  list"** picker fills coupon, redemption date, ISIN and name from the
+  issuer's own daily report (index-linked gilts are shown but disabled with
+  the reason, rather than silently hidden); an **"Add a gilt trade"** panel
+  creates the holding without leaving the tab; and the diagnostics above
+  surface as actionable banners. The whole panel now renders even when
+  `giltAnalytics()` fails — it previously sat behind an early return, so the
+  one screen where a broken gilt could be fixed disappeared exactly when it
+  was needed.
+
 ## Tests
 ```
 npm test        # node --test: 611 core tests + 12 UI smoke tests (test:ui)
