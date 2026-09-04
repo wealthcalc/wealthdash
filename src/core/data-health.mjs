@@ -71,12 +71,17 @@ export function dataHealth({
   // consequential data problem the app can detect: every quantity, cost base
   // and CGT figure is derived from that ledger, so a mismatch means those are
   // all quietly wrong. Ranked highest for that reason.
-  if (positionDrift && positionDrift.mismatched > 0) {
+  // `discrepancies` deliberately EXCLUDES holdings the statement never
+  // covered — a second broker in the same wrapper isn't drift (see
+  // core/position-reconcile.mjs). `mismatched` is the older name for the
+  // same figure, kept for callers that still pass it.
+  const drift = positionDrift ? (positionDrift.discrepancies ?? positionDrift.mismatched ?? 0) : 0;
+  if (drift > 0) {
     const short = positionDrift.missingInLedger || 0;
     issues.push({
       id: "position-drift", severity: "high", tab: "import",
-      count: positionDrift.mismatched,
-      message: `${positionDrift.mismatched} holding${positionDrift.mismatched === 1 ? "" : "s"} disagree with your broker's position report`,
+      count: drift,
+      message: `${drift} holding${drift === 1 ? "" : "s"} disagree with your broker's position report`,
       detail: short
         ? `${short} where the broker holds MORE than your transactions explain — cost basis and CGT on those will be wrong until the missing entries are added.`
         : "Your ledger holds more than the broker reports — a sale or transfer may be missing.",

@@ -10,7 +10,7 @@ test("PERSIST_KEYS covers every localStorage key the app has ever used", () => {
     "cgt.properties", "cgt.mortgages", "cgt.otherliabilities", "cgt.cashaccounts",
     "cgt.allowanceoverrides", "cgt.assumptionoverrides", "cgt.lgimignored", "cgt.allocationgroups", "cgt.allocationassignments", "cgt.planinputs", "cgt.privateholdings", "cgt.privateevents",
     "cgt.rsugrants", "cgt.rsuevents", "cgt.deferredcashawards", "cgt.deferredcashvests",
-    "cgt.ibkrqueryid", "cgt.ibkrtoken", "cgt.creditcards",
+    "cgt.brokerscope", "cgt.ibkrqueryid", "cgt.ibkrtoken", "cgt.creditcards",
     "cgt.scenarios",
     "cgt.budgetcategories", "cgt.budgetrules", "cgt.spendtxns", "cgt.recurringexpenses",
   ];

@@ -8,9 +8,11 @@
 // far easier to parse reliably than the binary .xls (no BIFF dependency),
 // and normalises the result to { ISIN: { clean, dirty, redemptionDate } }.
 //
-// Only conventional gilts are returned with full confidence; index-linked
-// gilts parse fine too (see _lib/dmo-gilt-parser.mjs) but this app doesn't
-// model them, so the client should ignore ISINs it hasn't registered.
+// Conventional and 3-month-lag index-linked gilts are both returned. For a
+// linker, `clean`/`dirty` are REAL prices and `indexRatio` is what converts
+// them to money — see core/gilts.mjs. `indexationLagMonths` is passed through
+// so the client can refuse the pre-2005 8-month-lag linkers, which use a
+// different formula this app doesn't implement.
 //
 // GET /api/gilt-prices                       -> most recent business day found
 // GET /api/gilt-prices?date=2026-07-02        -> a specific date (YYYY-MM-DD)

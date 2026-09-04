@@ -7,7 +7,8 @@ import { parseIBKR } from "../core/ibkr-import.mjs";
 import { parseFidelity } from "../core/fidelity-import.mjs";
 import useAppStore from "../state/appStore.js";
 import { shapeFlexPull, shapeCashReport } from "../core/ibkr-flex.mjs";
-import { reconcilePositions } from "../core/position-reconcile.mjs";
+import { reconcilePositions, mergeBrokerCoverage } from "../core/position-reconcile.mjs";
+import { partitionFxConversions, nearDuplicateGroups, crossCheckPositions, isFxConversion } from "../core/import-hygiene.mjs";
 import { detectCorporateActions } from "../core/price-sanity.mjs";
 import { buildPositions } from "../core/portfolio.mjs";
 import { parseISharesWorkbook } from "../core/ishares-eri.mjs";
@@ -81,24 +82,52 @@ const ibkrIdKey = (t) => (t.ibkrId ? `ibkr:${t.ibkrId}` : null);
    basis is excluded. Nothing is auto-corrected: the app can tell you the
    quantity is wrong, but not why, and inventing a date and price to "fix" it
    would put fiction into a tax record. */
-function PositionReconcilePanel({ broker, positions = [], wrapper = "GIA" }) {
+function PositionReconcilePanel({ broker, positions = [], wrapper = "GIA", source = "ibkr" }) {
+  const brokerScope = useAppStore((s) => s.brokerScope), setBrokerScope = useAppStore((s) => s.setBrokerScope);
+  const scope = brokerScope?.[source] || {};
+  const seenAtBroker = scope.seen || [];
+  const excluded = scope.excluded || [];
+
   const result = useMemo(
-    () => (broker && broker.length ? reconcilePositions({ broker, positions, wrappers: [wrapper] }) : null),
-    [broker, positions, wrapper]
+    () => (broker && broker.length
+      ? reconcilePositions({ broker, positions, wrappers: [wrapper], seenAtBroker, excluded })
+      : null),
+    [broker, positions, wrapper, seenAtBroker, excluded]
   );
+
+  // Remember what this broker reports, so next time an ABSENT line can be
+  // told apart from one that was never here. Written on render rather than
+  // on import because the panel appears for previews too, and the coverage
+  // fact ("this statement listed TG30") is true either way.
+  React.useEffect(() => {
+    if (!broker || !broker.length) return;
+    const next = mergeBrokerCoverage(seenAtBroker, broker);
+    if (next.length === seenAtBroker.length && next.every((t, i) => t === seenAtBroker[i])) return;
+    setBrokerScope((m) => ({ ...m, [source]: { ...(m?.[source] || {}), seen: next } }));
+  }, [broker, source]);
+
+  const setExcluded = (list) => setBrokerScope((m) => ({ ...m, [source]: { ...(m?.[source] || {}), excluded: list } }));
+  const exclude = (ticker) => setExcluded([...new Set([...excluded, ticker])].sort());
+  const unexcludeAll = () => setExcluded([]);
+
   const [showAll, setShowAll] = useState(false);
+  const [showExcluded, setShowExcluded] = useState(false);
   const corporateActions = useMemo(
     () => (result ? detectCorporateActions({ reconcileRows: result.rows }) : []),
     [result]
   );
   if (!result) return null;
   const { rows, summary } = result;
-  const shown = showAll ? rows : rows.filter((r) => r.status !== "match");
+  // Out-of-scope lines get their own section below — mixing them into the
+  // differences table is what made every import look like 11 problems.
+  const judged = rows.filter((r) => r.status !== "not-at-broker");
+  const outOfScope = rows.filter((r) => r.status === "not-at-broker");
+  const shown = showAll ? judged : judged.filter((r) => r.status !== "match");
 
   const LABEL = {
     "missing-in-ledger": "broker holds more",
     "extra-in-ledger": "ledger holds more",
-    "not-at-broker": "not in this statement",
+    "closed-at-broker": "was here before, gone now",
     match: "agrees",
   };
 
@@ -109,15 +138,21 @@ function PositionReconcilePanel({ broker, positions = [], wrapper = "GIA" }) {
         : { background: "color-mix(in srgb, var(--loss) 8%, transparent)", borderColor: "color-mix(in srgb, var(--loss) 30%, transparent)" }}>
       <div className="font-semibold text-sm" style={{ color: summary.clean ? "var(--gain)" : "var(--loss)" }}>
         {summary.clean
-          ? `All ${summary.checked} ${wrapper} holdings match your broker's position report`
-          : `${summary.mismatched} of ${summary.checked} ${wrapper} holdings disagree with your broker`}
+          ? `All ${summary.checked} holdings in this statement match your ledger`
+          : `${summary.discrepancies} of ${summary.checked} holdings in this statement disagree with your ledger`}
       </div>
 
       {!summary.clean && (
         <p className="text-[var(--fg)] leading-relaxed">
-          {summary.missingInLedger > 0
-            ? <>The broker holds <strong>more</strong> than your transactions explain on {summary.missingInLedger} line{summary.missingInLedger === 1 ? "" : "s"} — so their cost base, unrealised gain and any CGT on sale are all understated until the missing entries are added.</>
-            : <>Your ledger holds more than the broker reports — a sale or transfer out may be missing.</>}
+          {summary.missingInLedger > 0 && (
+            <>The broker holds <strong>more</strong> than your transactions explain on {summary.missingInLedger} line{summary.missingInLedger === 1 ? "" : "s"} — so their cost base, unrealised gain and any CGT on sale are all understated until the missing entries are added.{" "}</>
+          )}
+          {summary.extraInLedger > 0 && (
+            <>Your ledger holds more than the broker reports on {summary.extraInLedger} line{summary.extraInLedger === 1 ? "" : "s"} — a sale or transfer out may be missing.{" "}</>
+          )}
+          {summary.closedAtBroker > 0 && (
+            <>{summary.closedAtBroker} holding{summary.closedAtBroker === 1 ? " was" : "s were"} in a previous statement from this broker and {summary.closedAtBroker === 1 ? "is" : "are"} absent now, while your ledger still shows a position — so a sale or transfer out is probably unrecorded.</>
+          )}
         </p>
       )}
 
@@ -158,9 +193,52 @@ function PositionReconcilePanel({ broker, positions = [], wrapper = "GIA" }) {
         </div>
       )}
 
+      {/* Holdings this statement never covered. NOT a discrepancy: a Flex
+          Query speaks for one account, and a second broker in the same
+          wrapper is the normal reason a line is absent. Dismissing one is
+          permanent and reversible, so the list shrinks to nothing over time
+          instead of nagging on every import. */}
+      {outOfScope.length > 0 && (
+        <div className="rounded-lg border border-[var(--border)] bg-[var(--panel)] px-2.5 py-2 space-y-1.5">
+          <div className="font-semibold text-[var(--fg)]">
+            {outOfScope.length} {wrapper} holding{outOfScope.length === 1 ? "" : "s"} aren&apos;t in this statement
+          </div>
+          <p className="text-[var(--muted)] leading-relaxed">
+            This statement covers one account, so anything held at a different broker appears here. That isn&apos;t a discrepancy and isn&apos;t counted as one — but if you tell it which ones live elsewhere, they&apos;ll stop appearing. Anything this broker <em>has</em> reported before and has now dropped is flagged above instead, because that one does mean something.
+          </p>
+          <div className="flex flex-wrap gap-1.5 pt-0.5">
+            {outOfScope.map((r) => (
+              <span key={r.ticker} className="inline-flex items-center gap-1.5 rounded-full border border-[var(--border)] bg-[var(--panel2)] pl-2 pr-1 py-0.5">
+                <span className="font-medium">{r.ticker}</span>
+                <span className="text-[var(--muted)] num">{num(r.ledgerQty, r.ledgerQty % 1 ? 4 : 0)}</span>
+                <button onClick={() => exclude(r.ticker)}
+                  className="text-[var(--muted)] hover:text-[var(--fg)] px-1 rounded"
+                  title={`${r.ticker} is held at another broker — stop listing it here`}
+                  aria-label={`Mark ${r.ticker} as held at another broker`}>×</button>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {summary.excludedCount > 0 && (
+        <div className="text-[var(--muted)]">
+          {summary.excludedCount} holding{summary.excludedCount === 1 ? "" : "s"} marked as held at another broker{" "}
+          <button onClick={() => setShowExcluded((v) => !v)} className="underline underline-offset-2 hover:text-[var(--fg)]">
+            {showExcluded ? "hide" : "show"}
+          </button>
+          {showExcluded && (
+            <>
+              {" "}— <span className="num">{summary.excludedTickers.join(", ")}</span>{" "}
+              <button onClick={unexcludeAll} className="underline underline-offset-2 hover:text-[var(--fg)]">bring them all back</button>
+            </>
+          )}
+        </div>
+      )}
+
       <div className="flex items-center gap-2 flex-wrap text-[var(--muted)]">
         <button onClick={() => setShowAll((v) => !v)} className="underline underline-offset-2 hover:text-[var(--fg)]">
-          {showAll ? "show only differences" : `show all ${rows.length} holdings`}
+          {showAll ? "show only differences" : `show all ${judged.length} holdings in this statement`}
         </button>
         <span>· Quantities only — a broker&apos;s cost basis follows different conventions to a UK S104 pool, so comparing it would be noise. Fix differences by adding the missing transactions on the Transactions tab.</span>
       </div>
@@ -253,7 +331,12 @@ function ImportTab({ setTab, recomputeProviderCost }) {
       const fx = cache[k];
       if (fx) { row.fxRate = fx; row[gbpKey] = Math.round(row.nativeAmount * fx * 100) / 100; }
     };
-    const trades = ib.trades.map((t) => ({ ...t })), income = ib.income.map((t) => ({ ...t }));
+    // Currency conversions are cash movement, not holdings — importing a
+    // "GBP.USD" row would create a security with a quantity, a cost basis
+    // and a place in the CGT pool. Dropped here rather than filtered in the
+    // preview so the rows stay visible and explained.
+    const { trades: realTrades, fxConversions } = partitionFxConversions(ib.trades);
+    const trades = realTrades.map((t) => ({ ...t })), income = ib.income.map((t) => ({ ...t }));
     for (const t of trades) await resolve(t, "gbpAmount");
     for (const t of income) await resolve(t, "amount");
     const newTxns = trades.filter((t) => t.gbpAmount != null).map((t) => ({ id: uid(), date: t.date, ticker: t.ticker, isin: t.isin, side: t.side, quantity: t.quantity, nativeCurrency: t.nativeCurrency, nativeAmount: t.nativeAmount, fxRate: t.fxRate || 1, gbpAmount: t.gbpAmount, fees: +t.fees || 0, account: t.account || "", wrapper: t.wrapper, note: `${t.source || "IBKR"} import`, ibkrId: t.ibkrId || null }));
@@ -274,7 +357,8 @@ function ImportTab({ setTab, recomputeProviderCost }) {
     const parts = [`Imported ${dedTxns.rows.length} trades and ${dedIncome.rows.length} income rows.`];
     if (dupSkipped) parts.push(`${dupSkipped} duplicate row(s) already in your ledger — skipped.`);
     if (fxSkipped) parts.push(`${fxSkipped} row(s) skipped — FX could not be resolved; add them manually.`);
-    if (dupSkipped || fxSkipped) setNote(parts.join(" "));
+    if (fxConversions.length) parts.push(`${fxConversions.length} currency conversion(s) skipped — cash movement, not holdings.`);
+    if (dupSkipped || fxSkipped || fxConversions.length) setNote(parts.join(" "));
     else setTab(dedTxns.rows.length ? "ledger" : "income");
   };
 
@@ -291,6 +375,30 @@ function ImportTab({ setTab, recomputeProviderCost }) {
   const isDupIncome = (e) => existingIncomeIds.has(ibkrIdKey(e)) || existingIncomeKeys.has(incomeKey(e));
   const ibDupTrades = ib ? ib.trades.filter(isDupTrade).length : 0;
   const ibDupIncome = ib ? ib.income.filter(isDupIncome).length : 0;
+
+  // Rows that survive the dup check — the ones that will actually land.
+  // Everything below judges THESE, not the raw pull, or the warnings would
+  // be about rows that were never going to be imported anyway.
+  const ibNewTrades = useMemo(() => (ib ? ib.trades.filter((t) => !isDupTrade(t)) : []), [ib, existingTxnIds, existingTxnKeys]);
+  const fxRows = useMemo(() => (ib ? partitionFxConversions(ib.trades).fxConversions : []), [ib]);
+  const nearDups = useMemo(() => nearDuplicateGroups(ibNewTrades), [ibNewTrades]);
+  // Quantities the ledger already holds, in the wrapper this import targets
+  // — the cross-check adds to these, it doesn't replace them.
+  const existingQtyByTicker = useMemo(() => {
+    const m = {};
+    for (const p of positions) {
+      if (String(p.wrapper).toUpperCase() !== String(wrapper).toUpperCase()) continue;
+      m[String(p.ticker).toUpperCase()] = (m[String(p.ticker).toUpperCase()] || 0) + (+p.qty || 0);
+    }
+    return m;
+  }, [positions, wrapper]);
+  const crossCheck = useMemo(
+    () => (ib?.brokerPositions?.length
+      ? crossCheckPositions({ trades: ibNewTrades, brokerPositions: ib.brokerPositions, existingQty: existingQtyByTicker })
+      : { conflicts: [], clean: true }),
+    [ib, ibNewTrades, existingQtyByTicker]
+  );
+  const [hideDups, setHideDups] = useState(true);
   const removeIbTrade = (i) => setIb((r) => ({ ...r, trades: r.trades.filter((_, idx) => idx !== i) }));
   const removeIbIncome = (i) => setIb((r) => ({ ...r, income: r.income.filter((_, idx) => idx !== i) }));
 
@@ -566,7 +674,7 @@ function ImportTab({ setTab, recomputeProviderCost }) {
                   IBKR cash balance{cashReport.length > 1 ? "s" : ""}: {cashReport.map((c) => `${num(c.endingCash, 2)} ${c.currency}`).join(", ")} — a reconciliation check against the Wealth tab, not imported automatically.
                 </div>
               )}
-              <PositionReconcilePanel broker={ib?.brokerPositions} positions={positions} wrapper={wrapper} />
+              <PositionReconcilePanel broker={ib?.brokerPositions} positions={positions} wrapper={wrapper} source="ibkr" />
             </div>
           )}
 
@@ -590,12 +698,59 @@ function ImportTab({ setTab, recomputeProviderCost }) {
                 <span className="num">{ib.income.filter((i) => i.kind === "dividend").length} dividends</span>
                 <span className="num">{ib.income.filter((i) => i.kind === "interest").length} interest</span>
                 {(ibDupTrades + ibDupIncome) > 0 && (
-                  <span className="text-[var(--muted)]">{ibDupTrades + ibDupIncome} look{ibDupTrades + ibDupIncome === 1 ? "s" : ""} like duplicate{ibDupTrades + ibDupIncome === 1 ? "" : "s"} of rows already in your ledger — flagged "dup" below, skipped automatically on import.</span>
+                  <span className="text-[var(--muted)]">
+                    {ibDupTrades + ibDupIncome} already in your ledger — skipped automatically.{" "}
+                    <button onClick={() => setHideDups((v) => !v)} className="underline underline-offset-2 hover:text-[var(--fg)]">
+                      {hideDups ? "show them" : "hide them"}
+                    </button>
+                  </span>
                 )}
               </div>
               {ib.warnings.map((w, i) => (
                 <div key={i} className="flex items-start gap-2 text-xs rounded-lg px-3 py-2 text-[var(--loss)]" style={{ background: "color-mix(in srgb, var(--loss) 10%, transparent)" }}><AlertTriangle size={14} className="mt-0.5 shrink-0" />{w}</div>
               ))}
+
+              {/* The statement contradicting ITSELF. Its own position report
+                  is the only thing that can settle whether a repeated-looking
+                  row is a second fill or the same fill reported twice — and
+                  it's already in this pull. */}
+              {crossCheck.conflicts.length > 0 && (
+                <div className="rounded-lg px-3 py-2 space-y-1.5 text-xs" style={{ background: "color-mix(in srgb, var(--loss) 10%, transparent)", border: "1px solid color-mix(in srgb, var(--loss) 35%, transparent)" }}>
+                  <div className="font-semibold text-[var(--loss)] flex items-center gap-1.5"><AlertTriangle size={14} /> This pull disagrees with its own position report</div>
+                  {crossCheck.conflicts.map((c) => (
+                    <div key={c.ticker} className="text-[var(--fg)] leading-relaxed">
+                      Importing these rows would leave you holding <span className="num font-medium">{num(c.wouldBe, c.wouldBe % 1 ? 4 : 0)}</span> {c.ticker}, but the same statement says the position is <span className="num font-medium">{num(c.brokerQty, c.brokerQty % 1 ? 4 : 0)}</span>.
+                      {c.repeatFactor && <> That&apos;s exactly <strong>{c.repeatFactor}x</strong> — the same trade reported {c.repeatFactor} times, not {c.repeatFactor} separate trades.</>}
+                    </div>
+                  ))}
+                  <div className="text-[var(--muted)] leading-relaxed">
+                    A Flex Query set to more than one level of detail (Executions <em>and</em> Orders, say) emits each fill more than once, with the money differing slightly because each section nets commission and accrued interest differently. In IBKR: Reports ▸ Flex Queries ▸ your query ▸ Trades ▸ <strong>Options</strong> — leave a single level of detail ticked. Meanwhile, remove the extra rows below with the bin icon; the position report is the one to trust.
+                  </div>
+                </div>
+              )}
+
+              {/* Same date, ticker, side and quantity, money a few pounds
+                  apart — invisible to an exact-match dup key. */}
+              {nearDups.length > 0 && crossCheck.conflicts.length === 0 && (
+                <div className="rounded-lg px-3 py-2 space-y-1 text-xs" style={{ background: "color-mix(in srgb, var(--m-bb) 10%, transparent)", border: "1px solid color-mix(in srgb, var(--m-bb) 35%, transparent)" }}>
+                  <div className="font-semibold" style={{ color: "var(--m-bb)" }}>Some rows look like the same trade twice</div>
+                  {nearDups.map((g) => (
+                    <div key={g.ticker + g.date} className="text-[var(--fg)]">
+                      {g.count} x {g.side} <span className="num">{num(g.quantity, g.quantity % 1 ? 4 : 0)}</span> {g.ticker} on {g.date}, {g.identical ? "for the same amount to the penny" : `for amounts ${g.spreadPct}% apart`}.
+                    </div>
+                  ))}
+                  <div className="text-[var(--muted)]">Not removed automatically — buying the same thing twice in a day is a real thing. Check against your contract notes and delete any extras below.</div>
+                </div>
+              )}
+
+              {/* IBKR reports currency conversions as trades in "GBP.USD".
+                  Imported as-is they become securities with a cost basis and
+                  a place in the CGT pool. */}
+              {fxRows.length > 0 && (
+                <div className="text-xs text-[var(--muted)] leading-relaxed">
+                  {fxRows.length} currency conversion{fxRows.length === 1 ? "" : "s"} ({[...new Set(fxRows.map((f) => f.ticker))].join(", ")}) are listed below but will <strong>not</strong> be imported — a cash conversion isn&apos;t a holding, and importing one would create a security with a cost basis and a CGT pool.
+                </div>
+              )}
               {ib.trades.length > 0 && (
                 <div className="overflow-x-auto max-h-72 overflow-y-auto">
                   <table className="w-full text-xs">
@@ -603,12 +758,17 @@ function ImportTab({ setTab, recomputeProviderCost }) {
                     <tbody className="num">
                       {ib.trades.map((t, i) => {
                         const dup = isDupTrade(t);
+                        if (dup && hideDups) return null;
+                        const fx = isFxConversion(t.ticker);
                         return (
-                          <tr key={i} className="border-t border-[var(--border)]">
+                          <tr key={i} className={"border-t border-[var(--border)] " + (fx ? "opacity-45" : "")}>
                             <td className="px-2 py-1">{t.date}</td><td className="px-2 py-1">{t.ticker}</td><td className="px-2 py-1">{t.side}</td>
                             <td className="px-2 py-1">{num(t.quantity, t.quantity % 1 ? 4 : 0)}</td><td className="px-2 py-1">{t.nativeCurrency}</td>
                             <td className="px-2 py-1">{num(t.nativeAmount)}</td><td className="px-2 py-1">{t.gbpAmount == null ? "FX on import" : gbp(t.gbpAmount)}</td>
-                            <td className="px-2 py-1">{dup && <span className="text-[11px] uppercase font-semibold px-1.5 py-0.5 rounded-full text-[var(--muted)] border border-[var(--border)]">dup</span>}</td>
+                            <td className="px-2 py-1 whitespace-nowrap">
+                              {dup && <span className="text-[11px] uppercase font-semibold px-1.5 py-0.5 rounded-full text-[var(--muted)] border border-[var(--border)]">dup</span>}
+                              {fx && <span className="text-[11px] uppercase font-semibold px-1.5 py-0.5 rounded-full text-[var(--muted)] border border-[var(--border)]" title="Currency conversion — not a holding, so it won't be imported">fx</span>}
+                            </td>
                             <td className="px-2 py-1"><button onClick={() => removeIbTrade(i)} title="Remove this row" className="text-[var(--muted)] hover:text-[var(--loss)]"><Trash2 size={13} /></button></td>
                           </tr>
                         );
@@ -624,6 +784,7 @@ function ImportTab({ setTab, recomputeProviderCost }) {
                     <tbody className="num">
                       {ib.income.map((e, i) => {
                         const dup = isDupIncome(e);
+                        if (dup && hideDups) return null;
                         return (
                           <tr key={i} className="border-t border-[var(--border)]">
                             <td className="px-2 py-1">{e.date}</td><td className="px-2 py-1">{e.ticker || "—"}</td><td className="px-2 py-1 capitalize">{e.kind}</td>

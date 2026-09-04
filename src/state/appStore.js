@@ -126,6 +126,7 @@ const useAppStore = create((set) => {
     // pattern as avKey. Still persisted locally like avKey so it doesn't
     // need retyping every session; the security boundary that matters is
     // server-side (api/ibkr-flex.mjs never writes it anywhere), not this.
+    brokerScope: ls.get("cgt.brokerscope", {}), setBrokerScope: upd("brokerScope"),
     ibkrQueryId: ls.get("cgt.ibkrqueryid", ""), setIbkrQueryId: upd("ibkrQueryId"),
     ibkrToken: ls.get("cgt.ibkrtoken", ""), setIbkrToken: upd("ibkrToken"),
     // Credit cards (Wealth tab) — named revolving-debt balances subtracted

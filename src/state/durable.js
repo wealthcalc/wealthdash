@@ -51,6 +51,11 @@ export const PERSIST_KEYS = {
   rsuEvents: "cgt.rsuevents",
   deferredCashAwards: "cgt.deferredcashawards",
   deferredCashVests: "cgt.deferredcashvests",
+  // { source: { seen: [ticker], excluded: [ticker] } } — which holdings a
+  // given broker's statements actually cover. See core/position-reconcile.mjs:
+  // without it, holdings at a SECOND broker in the same wrapper are reported
+  // as discrepancies on every single import, with no way to dismiss them.
+  brokerScope: "cgt.brokerscope",
   ibkrQueryId: "cgt.ibkrqueryid",
   ibkrToken: "cgt.ibkrtoken",
   creditCards: "cgt.creditcards",

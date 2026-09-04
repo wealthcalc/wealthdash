@@ -2528,6 +2528,55 @@ has `.L` appended to it (`UKTI 0 1/8 11/22/36.L` is a ticker no price source
 will ever match), and the skip warning now names the ISIN and says to register
 it on the Gilts tab, which is the one thing that makes the row importable.
 
+## Broker imports: scope, duplicates and self-consistency
+Three problems that all showed up in one real IBKR Flex pull, and all of
+which trained the user to ignore the panel that catches genuinely wrong tax
+numbers.
+
+**Reconciliation scope is not the wrapper.** The first version compared every
+holding in a wrapper against the statement, which assumed one broker per
+wrapper. Hold a GIA at IBKR and a second GIA elsewhere — investment trusts on
+a platform, vested shares at the employer's broker — and every holding at the
+*other* broker was reported as a discrepancy on every import ("11 of 27 GIA
+holdings disagree"), with a message suggesting a missing sale. A ticker the
+statement doesn't mention is now sorted three ways:
+
+- the user has dismissed it as held elsewhere → excluded outright,
+- this broker **has** reported it before → a real flag: it's gone, so a sale
+  or transfer out may be unrecorded,
+- never seen from this broker → out of scope, shown quietly, never counted
+  as a disagreement (and `dataHealth` no longer raises a high-severity alert
+  for it).
+
+That middle case is the whole reason coverage is remembered across imports
+(`brokerScope`, `mergeBrokerCoverage()`): inside a single statement, an
+omitted line and a line that was never there are indistinguishable. An
+exclusion can't override a line the statement *does* report, or a dismissal
+made once would suppress a genuine discrepancy for ever.
+
+**`core/import-hygiene.mjs`** — three pre-import checks:
+
+- `partitionFxConversions()` — IBKR reports currency conversions as trades in
+  `GBP.USD`. Imported as-is they become securities with a quantity, a cost
+  basis and a place in the CGT pool. The asset-class guard only catches these
+  when the export carries an AssetClass column, so the symbol shape is checked
+  too — strictly (`AAA.BBB`), so `AV.`, `VOD.L` and `BRK.B` are untouched.
+- `nearDuplicateGroups()` — same date, ticker, side and quantity, amounts a
+  few pounds apart. Exact-match dedupe sails straight past that, because each
+  Flex section nets commission and accrued interest differently. Flagged,
+  never auto-removed: buying the same thing twice in a day is real.
+- `crossCheckPositions()` — the decisive one, and the only thing that settles
+  the case above. The same pull already contains the broker's own
+  `OpenPosition` report, so "importing these rows would leave you holding
+  30,000 TG36, but this statement says 10,000" is a fact about the data
+  rather than a guess about the user's Flex configuration. When the implied
+  position is an exact whole multiple of the reported one, it says so — 3×
+  doesn't happen by coincidence, and it points at a Flex Query with more than
+  one level of detail ticked.
+
+The preview now hides already-imported duplicates by default (they were 20 of
+34 rows in the real pull) with a one-click reveal.
+
 ## Tests
 ```
 npm test        # node --test: 611 core tests + 12 UI smoke tests (test:ui)

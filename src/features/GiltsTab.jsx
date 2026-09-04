@@ -202,60 +202,67 @@ function GiltsTab({ data }) {
             <Stat label="Next cashflow" value={upcoming[0] ? gbp(amt(upcoming[0])) : "—"} sub={upcoming[0] ? `${upcoming[0].ticker} ${upcoming[0].type} · ${upcoming[0].date}` : undefined} />
           </div>
 
-          {/* ladder */}
+          {/* ladder — 11 columns didn't fit a laptop, so the right-hand
+              ones (GRY, 12m income) were falling off the edge unseen. Four
+              columns are folded into cells they belong with rather than
+              dropped: the wrapper chip and maturity sit under the ticker,
+              and the index ratio under the price it modifies. Accrued
+              collapses below xl — it's already inside the value column, and
+              its total is in the headline strip. */}
           <div className="rounded-xl border border-[var(--border)] overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="bg-[var(--panel2)] text-[var(--muted)] text-xs uppercase tracking-wide">
                 <tr>
-                  <SortTh id="ticker" label="Gilt" sort={sort} onSort={toggleSort} className="px-3 py-2 font-medium" />
-                  <SortTh id="wrapper" label="Wrapper" sort={sort} onSort={toggleSort} className="px-3 py-2 font-medium" />
-                  <SortTh id="maturity" label="Maturity" sort={sort} onSort={toggleSort} className="px-3 py-2 font-medium" />
-                  <SortTh id="nominal" label="Nominal" sort={sort} onSort={toggleSort} align="right" className="px-3 py-2 font-medium" />
-                  <SortTh id="clean" label={anyIL ? "Clean /£100 (real)" : "Clean /£100"} sort={sort} onSort={toggleSort} align="right" className="px-3 py-2 font-medium" />
-                  {anyIL && <th className="text-right px-3 py-2 font-medium" title="RPI now ÷ RPI at issue, published daily by the DMO. The cash value of a linker is its real price × this.">Index ratio</th>}
-                  <SortTh id="accrued" label="Accrued /£100" sort={sort} onSort={toggleSort} align="right" className="px-3 py-2 font-medium" />
-                  <SortTh id="dirty" label="Dirty value" sort={sort} onSort={toggleSort} align="right" className="px-3 py-2 font-medium" />
-                  <SortTh id="nextCoupon" label="Next coupon" sort={sort} onSort={toggleSort} align="right" className="px-3 py-2 font-medium" />
-                  <SortTh id="gry" label="GRY (semi)" sort={sort} onSort={toggleSort} align="right" className="px-3 py-2 font-medium" />
-                  <SortTh id="coupons12m" label="12m coupons" sort={sort} onSort={toggleSort} align="right" className="px-3 py-2 font-medium" />
+                  <SortTh id="maturity" label="Gilt" sort={sort} onSort={toggleSort} className="px-2.5 py-2 font-medium" />
+                  <SortTh id="nominal" label="Nominal" sort={sort} onSort={toggleSort} align="right" className="px-2.5 py-2 font-medium" />
+                  <SortTh id="clean" label={anyIL ? "Clean (real)" : "Clean"} sort={sort} onSort={toggleSort} align="right" className="px-2.5 py-2 font-medium" />
+                  <SortTh id="accrued" label="Accrued" sort={sort} onSort={toggleSort} align="right" className="px-2.5 py-2 font-medium hidden xl:table-cell" />
+                  <SortTh id="dirty" label="Value" sort={sort} onSort={toggleSort} align="right" className="px-2.5 py-2 font-medium" />
+                  <SortTh id="nextCoupon" label="Next coupon" sort={sort} onSort={toggleSort} align="right" className="px-2.5 py-2 font-medium" />
+                  <SortTh id="gry" label="GRY" sort={sort} onSort={toggleSort} align="right" className="px-2.5 py-2 font-medium" />
+                  <SortTh id="coupons12m" label="12m income" sort={sort} onSort={toggleSort} align="right" className="px-2.5 py-2 font-medium" />
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--border)] bg-[var(--panel)]">
                 {live.map((h) => (
-                  <tr key={h.wrapper + h.ticker} className="hover:bg-[var(--panel2)]">
-                    <td className="px-3 py-2 font-medium" title={`${h.name} · ${h.isin}`}>
-                      {h.ticker}
-                      {h.indexLinked && <span className="ml-1.5 text-[11px] font-semibold px-1.5 py-0.5 rounded bg-[color:color-mix(in_srgb,var(--accent)_18%,transparent)] text-[var(--accent)] align-middle" title="Index-linked: quoted in real terms, uplifted by the index ratio. CGT-exempt including the whole inflation uplift (TCGA 1992 s115); only the coupon is taxable.">IL</span>}
-                      {h.exDiv && <span className="ml-1.5 text-[11px] font-semibold px-1.5 py-0.5 rounded bg-[color:color-mix(in_srgb,var(--m-bb)_18%,transparent)] text-[var(--m-bb)] align-middle" title="In the ex-dividend window (7 business days before the coupon; bank holidays not modelled) — accrued is negative (rebate); the registered holder at ex-div gets the coupon">ex-div</span>}
+                  <tr key={h.wrapper + h.ticker} className="hover:bg-[var(--panel2)] align-top">
+                    <td className="px-2.5 py-2" title={`${h.name} · ${h.isin}`}>
+                      <div className="font-medium whitespace-nowrap">
+                        {h.ticker}
+                        {h.indexLinked && <span className="ml-1.5 text-[10px] font-semibold px-1 py-0.5 rounded bg-[color:color-mix(in_srgb,var(--accent)_18%,transparent)] text-[var(--accent)] align-middle" title="Index-linked: quoted in real terms, uplifted by the index ratio. CGT-exempt including the whole inflation uplift (TCGA 1992 s115); only the coupon is taxable.">IL</span>}
+                        {h.exDiv && <span className="ml-1.5 text-[10px] font-semibold px-1 py-0.5 rounded bg-[color:color-mix(in_srgb,var(--m-bb)_18%,transparent)] text-[var(--m-bb)] align-middle" title="In the ex-dividend window (7 business days before the coupon; bank holidays not modelled) — accrued is negative (rebate); the registered holder at ex-div gets the coupon">ex-div</span>}
+                      </div>
+                      <div className="flex items-center gap-1.5 mt-0.5">
+                        <WrapperChip wrapper={h.wrapper} />
+                        <span className="num text-[11px] text-[var(--muted)] whitespace-nowrap">{h.maturity}</span>
+                      </div>
                     </td>
-                    <td className="px-3 py-2"><WrapperChip wrapper={h.wrapper} /></td>
-                    <td className="px-3 py-2 num text-[var(--muted)] whitespace-nowrap text-xs">{h.maturity}</td>
-                    <td className="px-3 py-2 num text-right">{gbp(h.nominal)}</td>
-                    <td className="px-3 py-2 text-right">
+                    <td className="px-2.5 py-2 num text-right whitespace-nowrap">{gbp(h.nominal)}</td>
+                    <td className="px-2.5 py-2 text-right">
                       <input type="number" step="0.0001" value={h.realClean100 != null ? +h.realClean100.toFixed(4) : ""} placeholder="—"
                         onChange={(e) => setPrices((pr) => ({ ...pr, [h.ticker]: e.target.value === "" ? undefined : (+e.target.value * (h.indexRatio || 1)) / 100 }))}
-                        className="input num w-24 text-right py-1"
+                        className="input num w-20 text-right py-1 text-xs"
                         title={h.indexLinked
                           ? `The REAL clean price per £100, as quoted. Stored uplifted by the index ratio (${num(h.indexRatio, 5)}), which is what it's actually worth — ${num(h.clean100, 2)} per £100.`
                           : "Clean price per £100 nominal (stored per £1 for consistency with the rest of the app)"} />
+                      {h.indexLinked && (
+                        <div className="num text-[11px] mt-0.5 whitespace-nowrap">
+                          {h.indexRatioMissing
+                            ? <span className="text-[var(--loss)]" title="Without it this holding is valued at its real price — materially low. Fetch DMO prices, or set it on the registration below.">no ratio</span>
+                            : <span className="text-[var(--muted)]" title={`Index ratio ${num(h.indexRatio, 5)}${h.indexRatioDate ? ` as at ${h.indexRatioDate}` : ""} — cash value ${num(h.clean100, 2)} per £100 nominal`}>×{num(h.indexRatio, 4)} = {num(h.clean100, 2)}</span>}
+                        </div>
+                      )}
                     </td>
-                    {anyIL && (
-                      <td className="px-3 py-2 num text-right text-xs">
-                        {h.indexLinked
-                          ? h.indexRatioMissing
-                            ? <span className="text-[var(--loss)]" title="Without it this holding is valued at its real price — materially low. Fetch DMO prices, or set it on the registration below.">missing</span>
-                            : <span className="text-[var(--muted)]" title={`Cash value ${num(h.clean100, 2)} per £100 nominal${h.indexRatioDate ? ` · ratio as at ${h.indexRatioDate}` : ""}`}>{num(h.indexRatio, 5)}</span>
-                          : <span className="text-[var(--muted)]">—</span>}
-                      </td>
-                    )}
-                    <td className={"px-3 py-2 num text-right " + (h.accruedPer100 < 0 ? "text-[var(--m-bb)]" : "text-[var(--muted)]")}>{num(h.accruedPer100, 4)}</td>
-                    <td className="px-3 py-2 num text-right">{h.dirtyValue != null ? gbp(h.dirtyValue) : "—"}</td>
-                    <td className="px-3 py-2 num text-right whitespace-nowrap">{h.nextCoupon ? <span className="text-xs">{gbp(h.nextCoupon.amount)} <span className="text-[var(--muted)]">on {h.nextCoupon.date}</span></span> : "—"}</td>
-                    <td className="px-3 py-2 num text-right">{h.gry && h.gry.semiAnnual != null
+                    <td className={"px-2.5 py-2 num text-right hidden xl:table-cell " + (h.accruedPer100 < 0 ? "text-[var(--m-bb)]" : "text-[var(--muted)]")}>{num(h.accruedPer100, 4)}</td>
+                    <td className="px-2.5 py-2 num text-right whitespace-nowrap" title={`Includes ${gbp(h.accruedValue)} accrued interest`}>{h.dirtyValue != null ? gbp(h.dirtyValue) : "—"}</td>
+                    <td className="px-2.5 py-2 num text-right whitespace-nowrap text-xs">
+                      {h.nextCoupon ? <>{gbp(h.nextCoupon.amount)}<span className="block text-[11px] text-[var(--muted)]">{h.nextCoupon.date}</span></> : "—"}
+                    </td>
+                    <td className="px-2.5 py-2 num text-right whitespace-nowrap">{h.gry && h.gry.semiAnnual != null
                       ? <span title={`Effective annual ${num(h.gry.effectiveAnnual * 100, 3)}% · dirty ${num(h.gry.dirty, 4)}/£100 (real)${h.gry.real ? ". This is a REAL yield — the return ABOVE inflation. Add expected inflation before comparing it with a conventional gilt." : ""}`}>
-                        {num(h.gry.semiAnnual * 100, 2)}%{h.gry.real && <span className="ml-1 text-[10px] text-[var(--m-bb)] font-semibold align-super">real</span>}
+                        {num(h.gry.semiAnnual * 100, 2)}%{h.gry.real && <span className="ml-0.5 text-[10px] text-[var(--m-bb)] font-semibold align-super">real</span>}
                       </span> : "—"}</td>
-                    <td className="px-3 py-2 num text-right text-[var(--muted)]">{gbp(cash ? h.couponIncomeNext12m : h.couponIncomeNext12mReal)}</td>
+                    <td className="px-2.5 py-2 num text-right text-[var(--muted)] whitespace-nowrap">{gbp(cash ? h.couponIncomeNext12m : h.couponIncomeNext12mReal)}</td>
                   </tr>
                 ))}
               </tbody>

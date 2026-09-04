@@ -35,7 +35,7 @@
    ====================================================================== */
 import { PERSIST_KEYS } from "../state/durable.js";
 
-export const BACKUP_VERSION = 18;
+export const BACKUP_VERSION = 19;
 
 export const EXPORT_EXCLUDED = ["dark", "tab", "dmoReportDate", "avKey", "ibkrToken"];
 export const RESTORE_ONLY = ["avKey", "ibkrToken"];
@@ -66,6 +66,7 @@ const TYPES = {
   lgimIgnored: "array",
   allocationGroups: "array", allocationAssignments: "object",
   income: "number", carried: "number",
+  brokerScope: "object",
   ibkrQueryId: "string", avKey: "string", ibkrToken: "string",
 };
 
