@@ -221,6 +221,16 @@ test("GiltsTab and RsuTab render their empty states from store defaults", () => 
   assert.ok(rsu.length > 100);
 });
 
+test("GiltsTab keeps the registration panel up even when analytics fail", () => {
+  // The panel used to sit behind an early `if (!data) return <Empty/>`, so
+  // the one place a broken gilt could be fixed vanished exactly when it was
+  // needed. data: null is that case.
+  const html = renderToString(React.createElement(GiltsTab, { data: null })).replaceAll("&amp;", "&");
+  assert.ok(html.includes("Register a gilt"), "the register form survives a failed analytics run");
+  assert.ok(html.includes("Redemption"), "and its fields with it");
+  assert.ok(html.includes("DMO"), "including the pick-from-the-DMO-list route");
+});
+
 test("SyncTab renders the disabled state with both setup paths", () => {
   const html = renderToString(React.createElement(SyncTab)).replaceAll("&amp;", "&");
   assert.ok(html.includes("end-to-end encrypted"));

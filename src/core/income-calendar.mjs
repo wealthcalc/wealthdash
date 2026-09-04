@@ -126,7 +126,13 @@ export function buildIncomeCalendar({
     if (cf.date > today && cf.date <= horizonISO) {
       events.push({
         date: cf.date, source: cf.type === "redemption" ? "gilt-redemption" : "gilt-coupon",
-        label: cf.ticker, amount: cf.amount, certainty: "scheduled", wrapper: cf.wrapper || "GIA",
+        label: cf.ticker, amount: cf.amount, wrapper: cf.wrapper || "GIA",
+        // A conventional gilt's cash is contractual. An INDEX-LINKED one's
+        // is not: the date is fixed but the amount depends on RPI, known
+        // only ~3 months ahead, so beyond that it's a projection. Counting
+        // it as "scheduled" would overstate guaranteed income — which is
+        // precisely what the certainty split exists to avoid.
+        certainty: cf.indexLinked ? "estimated" : "scheduled",
       });
     }
   }

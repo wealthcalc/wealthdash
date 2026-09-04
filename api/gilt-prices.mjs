@@ -79,6 +79,21 @@ export default async function handler(req, res) {
         purchaseClean: data.purchaseClean,
         saleClean: data.saleClean,
         redemptionDate: data.redemptionDate,
+        // Registration data, so the client can offer the whole gilt universe
+        // as a pick-list instead of asking the user to type a coupon and
+        // maturity from memory (getting either wrong silently misprices
+        // every projected cashflow). Any of these may be null.
+        name: data.name,
+        coupon: data.coupon,
+        maturity: data.maturity,
+        indexLinked: data.indexLinked,
+        rump: data.rump,
+        // Index-linked only. Clean/dirty above are REAL (per £100 of
+        // original nominal); the cash figure is clean x indexRatio. The lag
+        // matters because pre-2005 8-month-lag gilts use a different
+        // formula the app doesn't implement.
+        indexRatio: data.indexRatio,
+        indexationLagMonths: data.indexationLagMonths,
       };
     }
 

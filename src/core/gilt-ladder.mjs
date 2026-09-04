@@ -20,12 +20,22 @@
 
 // Group cashflows by calendar year (from each flow's `date`), summing
 // coupon + redemption amounts landing in that year.
-export function giltIncomeByYear(cashflows = []) {
+//
+// `field` picks which of the two figures every cashflow carries (see
+// gilts.mjs): "amount" is the cash expected to arrive, "realAmount" is the
+// same flow in today's purchasing power. Which one is right depends on the
+// target it's being compared against — a flat £40k/yr need is a REAL need,
+// so comparing it against nominal cash quietly flatters the ladder; but if
+// the user is thinking in cash terms, nominal is what they want. Neither is
+// the default answer to every question, so the caller chooses.
+export function giltIncomeByYear(cashflows = [], field = "amount") {
   const byYear = {};
   for (const f of cashflows) {
-    if (!f || !f.date || !Number.isFinite(+f.amount)) continue;
+    if (!f || !f.date) continue;
+    const v = +(f[field] ?? f.amount);
+    if (!Number.isFinite(v)) continue;
     const y = +f.date.slice(0, 4);
-    byYear[y] = (byYear[y] || 0) + f.amount;
+    byYear[y] = (byYear[y] || 0) + v;
   }
   return byYear;
 }
@@ -36,8 +46,8 @@ export function giltIncomeByYear(cashflows = []) {
 // so comparing it to a flat nominal target is the honest like-for-like;
 // the caller can pass an already-inflated target per year via
 // `targetByYear` to override the flat figure for specific years).
-export function buildGiltLadder({ cashflows = [], targetAnnual = 0, fromYear, toYear, targetByYear = {} } = {}) {
-  const byYear = giltIncomeByYear(cashflows);
+export function buildGiltLadder({ cashflows = [], targetAnnual = 0, fromYear, toYear, targetByYear = {}, field = "amount" } = {}) {
+  const byYear = giltIncomeByYear(cashflows, field);
   const years = Object.keys(byYear).map(Number);
   const from = fromYear ?? (years.length ? Math.min(...years) : new Date().getUTCFullYear());
   const to = toYear ?? (years.length ? Math.max(...years) : from);

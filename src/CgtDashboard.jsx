@@ -257,9 +257,13 @@ export default function App() {
 
   // Gilt ladder analytics (build step 4) — driven by secMeta kind: "gilt".
   const giltData = useMemo(() => {
-    try { return giltAnalytics({ txns, secMeta, prices }); }
+    // `inflation` only bites on index-linked gilts (and the today's-money
+    // column for conventional ones) — taken from the plan's own inflation
+    // assumption so there isn't a second, quietly different one.
+    const inflation = Math.max(0, (+planInputs?.inflation || 0) / 100);
+    try { return giltAnalytics({ txns, secMeta, prices, inflation }); }
     catch { return null; }
-  }, [txns, secMeta, prices]);
+  }, [txns, secMeta, prices, planInputs?.inflation]);
 
   // Phase 2, step 4: forward income calendar — gilt coupons/redemptions
   // (contractually scheduled, from giltData.cashflows), cash account

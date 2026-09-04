@@ -2432,6 +2432,102 @@ Four small pieces:
   visible), plus a stacked source-by-source area chart against the spend
   line, step-shaped because cashflows arrive on dates, not curves.
 
+## Getting a gilt onto the Gilts tab
+A gilt only reaches `giltAnalytics()` when TWO independent things line up:
+`secMeta[TICKER].kind === "gilt"` with a finite coupon and an ISO maturity
+(the *registration*), **and** BUY/SELL rows in the ledger under exactly that
+ticker (the *holding*). Neither half is visible when it's the half that's
+missing, which is why a correctly-registered gilt could sit there showing
+nothing at all with no indication why.
+
+- **`core/gilt-registry.mjs`** — `validateGiltRegistration()` replaces a form
+  handler that returned silently on any invalid field: every failure now
+  names itself, and a BLANK coupon is refused rather than accepted (`+"" ===
+  0` is finite, so it used to register a 0% gilt whose every projected
+  cashflow was wrong). `giltRegistryDiagnostics()` explains an empty ladder
+  in terms of the user's own data — registered-but-not-held,
+  held-but-not-registered (matched on the LSE `T/TN/TR/TG + yy` shape or a
+  "Treasury Gilt" name), and the one no form validation could ever catch:
+  **the same ISIN registered under one ticker and held under another**.
+  Broker imports map by ISIN, so a gilt can already be in the ledger under
+  the broker's name; both halves then look perfectly healthy and can never
+  meet. ISIN is the only identifier the two sides share.
+  `buildGiltTrade()` builds the ledger row from contract-note units (£
+  nominal + clean price per £100) rather than the app's internal per-£1
+  price — a factor of 100 that is otherwise entered by hand every time.
+  Accrued interest paid is deliberately kept out of cost: it's interest, not
+  price, and it's already handled by the Accrued Income Scheme section.
+- **`api/_lib/dmo-gilt-parser.mjs`** — `stripRtf()` now DECODES RTF character
+  escapes instead of deleting them. That one change is what makes the rest
+  possible: the DMO writes coupons as vulgar fractions, so "1½% Treasury
+  Gilt 2026" arrived as `\u189?` and was being flattened to an unusable "1 ?
+  %" — which is why every gilt's coupon previously had to be typed in from a
+  broker page. `parseGiltName()` reads the rate by anchoring to the end of
+  the text *before* the "%" (a forward scan swallows the price and the
+  redemption year on its way there) and returns `null` rather than a guess
+  when it can't be read, since a wrong coupon misprices every future
+  cashflow. `/api/gilt-prices` now returns name/coupon/maturity/indexLinked
+  alongside the prices.
+- **Gilts tab** — registration is now a proper form with per-field errors and
+  an editable/removable table of what's registered; a **"find it in the DMO's
+  list"** picker fills coupon, redemption date, ISIN and name from the
+  issuer's own daily report (index-linked gilts are shown but disabled with
+  the reason, rather than silently hidden); an **"Add a gilt trade"** panel
+  creates the holding without leaving the tab; and the diagnostics above
+  surface as actionable banners. The whole panel now renders even when
+  `giltAnalytics()` fails — it previously sat behind an early return, so the
+  one screen where a broken gilt could be fixed disappeared exactly when it
+  was needed.
+
+## Index-linked gilts
+Supported for the 3-month-lag ("new style", post-2005) linkers only. Verified
+against DMO *Formulae for Calculating Gilt Prices from Yields* s.2 and against
+a real D10B row — `GB00BYZW3J87`, 0⅛% Index-linked Treasury Gilt 2036 (TG36):
+clean 84.02, index ratio 1.59440, dirty 133.986401. **84.02 × 1.59440 = 133.96**
+is the single fact the implementation rests on, and it's asserted in the tests.
+
+- **Prices are quoted in REAL terms.** Cash value = real price × index ratio
+  (RPI now ÷ RPI at issue, published daily by the DMO; with a 3-month lag it's
+  a known fact up to three months ahead, not a forecast). So `prices[ticker]`
+  stores the **uplifted** price per £1 nominal. That choice is load-bearing:
+  `buildPositions()` does `marketValue = qty × prices[ticker]` with no
+  gilt-specific branch, so putting the uplift there makes Holdings, Wealth,
+  allocation, Returns and the Gilts tab all correct at once. Storing the real
+  quote instead would have understated TG36 by ~37% everywhere. A registered
+  linker with no ratio is flagged rather than valued low in silence.
+- **Every cashflow carries two figures.** `amount` is the cash expected to
+  arrive; `realAmount` is the same flow in today's purchasing power. For a
+  linker the cash grows and the real value is flat; for a conventional gilt
+  it's the exact reverse. The Gilts tab has a *Today's money / Cash expected*
+  toggle wired to both the ladder and the coverage table, because a flat
+  £X/yr income target is a REAL need — comparing it against nominal cash
+  flatters the ladder. Projection beyond the known window uses the plan's own
+  inflation assumption (no second, quietly different one).
+- **The yield on a linker is a REAL yield** — computed from real cashflows
+  against the real dirty price, so the ratio cancels from both sides. Tagged
+  `real: true` and badged in the table, since adding it to a conventional
+  gilt's GRY column would be comparing a post-inflation number with a
+  pre-inflation one.
+- **Income calendar:** a linker's coupon is `estimated`, not `scheduled`. The
+  date is contractual; the amount depends on RPI.
+- **Tax:** still CGT-exempt (TCGA 1992 s115), and the exemption covers the
+  whole inflation uplift — only the coupon is taxable as savings income.
+  Accrued Income Scheme figures are uplifted at today's ratio and marked
+  `ratioEstimated`, since historic ratios aren't stored.
+- **Refused, not mismodelled:** 8-month-lag (pre-2005) linkers use a different
+  formula, and so does any row whose lag or ratio the DMO report didn't carry.
+  The picker shows them greyed with the reason rather than hiding gilts the
+  user can see they own.
+
+**Getting one in from an IBKR flex query.** IBKR reports a gilt by
+description — `UKTI 0 1/8 11/22/36` — which matches no ticker anywhere, so the
+ISIN is the only thing that carries. Register the gilt with its ISIN first and
+`seedByIsin` maps the line onto your ticker; the asset-class guard lets a
+seeded bond through. Two fixes here: an *unseeded* bond description no longer
+has `.L` appended to it (`UKTI 0 1/8 11/22/36.L` is a ticker no price source
+will ever match), and the skip warning now names the ISIN and says to register
+it on the Gilts tab, which is the one thing that makes the row importable.
+
 ## Tests
 ```
 npm test        # node --test: 611 core tests + 12 UI smoke tests (test:ui)

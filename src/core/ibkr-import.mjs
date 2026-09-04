@@ -45,6 +45,12 @@ export function resolveIbkrTicker(symbol, isin, currency, exchange, seedByIsin =
   const is = String(isin || "").trim().toUpperCase();
   if (is && seedByIsin[is]) return seedByIsin[is];
   if (!sym || sym.includes(".")) return sym;
+  // Bonds come through as a DESCRIPTION, not an exchange symbol — IBKR
+  // reports a gilt as "UKTI 0 1/8 11/22/36". Appending ".L" to that makes a
+  // ticker with spaces and slashes in it that no price source will ever
+  // match, so it's left alone: without a seeded ISIN there is no ticker to
+  // resolve to, and a junk one is worse than an honest raw string.
+  if (/\s/.test(sym)) return sym;
   const lse = /^LSE/.test(String(exchange || "").toUpperCase());
   if (lse || currency === "GBP") return `${sym}.L`;
   return sym;
@@ -62,7 +68,15 @@ function _ibTrade(get, defaultWrapper, baseCurrency, warnings, seedByIsin = {}) 
   // anyway and remapped to the app's gilt ticker — otherwise UK gilts
   // pulled from IBKR (asset class BOND) would be silently skipped.
   const seededGilt = isin && seedByIsin[isin];
-  if (asset && !_IBSTOCK.has(asset) && !seededGilt) { warnings.push(`Skipped ${symbol} ${date}: asset class "${asset}" not supported.`); return null; }
+  if (asset && !_IBSTOCK.has(asset) && !seededGilt) {
+    // A bond is the one skip a user can actually fix, and the fix isn't
+    // obvious — IBKR names it "UKTI 0 1/8 11/22/36", which matches nothing,
+    // so registering the ISIN on the Gilts tab is what makes it importable.
+    warnings.push(asset === "bond"
+      ? `Skipped ${symbol} ${date}: bond${isin ? ` ${isin}` : ""} isn't registered as a gilt. Register it on the Gilts tab (Portfolio ▸ Gilts) with that ISIN, then re-import — IBKR matches bonds by ISIN, not by name.`
+      : `Skipped ${symbol} ${date}: asset class "${asset}" not supported.`);
+    return null;
+  }
   const ticker = resolveIbkrTicker(symbol, isin, currency, exchange, seedByIsin);
   const qtyRaw = _ibnum(get("quantity"));
   const bs = (get("buysell") || "").trim().toUpperCase();

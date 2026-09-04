@@ -653,7 +653,7 @@ export default function HomeTab({
   const spendTxns = useAppStore((s) => s.spendTxns);
   const recurringExpenses = useAppStore((s) => s.recurringExpenses);
   const txns = useAppStore((s) => s.txns);
-  const secMeta = useAppStore((s) => s.secMeta);
+  const secMeta = useAppStore((s) => s.secMeta), setSecMeta = useAppStore((s) => s.setSecMeta);
   const avKey = useAppStore((s) => s.avKey), avMeta = useAppStore((s) => s.avMeta);
   const prices = useAppStore((s) => s.prices), setPrices = useAppStore((s) => s.setPrices);
   const dmoReportDate = useAppStore((s) => s.dmoReportDate), setDmoReportDate = useAppStore((s) => s.setDmoReportDate);
@@ -839,7 +839,7 @@ export default function HomeTab({
     const res = await refreshAllPrices({
       prices,   // baseline for the post-refresh sanity check
       tickers: openTickers, txns, secMeta, avMeta, avKey, dmoReportDate,
-      setPrices, setPriceMeta, setDmoReportDate, onProgress: setRefreshMsg,
+      setPrices, setPriceMeta, setDmoReportDate, setSecMeta, onProgress: setRefreshMsg,
     });
     setRefreshMsg(res.message);
     setRefreshing(false);

@@ -42,6 +42,10 @@ export async function refreshAllPrices({
   // compares against. Optional: without it, jumps simply aren't detected.
   prices: priorPrices = {},
   dmoReportDate = null, setPrices, setPriceMeta, setDmoReportDate,
+  // Index-linked gilts only: the DMO's index ratio moves with RPI daily, so
+  // it's refreshed with the price. Optional — without it the price still
+  // updates and the ratio simply goes stale (which the Gilts tab shows).
+  setSecMeta,
   onProgress = () => {},
 } = {}) {
   const giltTickers = tickers.filter((tk) => secMeta[tk]?.kind === "gilt");
@@ -69,12 +73,19 @@ export async function refreshAllPrices({
   if (giltTickers.length) {
     onProgress("Fetching gilts from the DMO…");
     try {
-      const { pricesByTicker, matched, date, skipped } = await fetchDmoGiltPrices(
+      const { pricesByTicker, ratiosByTicker, matched, date, skipped } = await fetchDmoGiltPrices(
         giltTickers.map((tk) => ({ ticker: tk, isin: secMeta[tk]?.isin })), { knownReportDate: dmoReportDate });
       if (skipped) {
         giltMsg = `gilts already up to date (DMO report ${dmoReportDate})`;
         for (const tk of giltTickers) done[tk] = true;
       } else {
+        if (setSecMeta && ratiosByTicker && Object.keys(ratiosByTicker).length) {
+          setSecMeta((m) => {
+            const n = { ...m };
+            for (const [tk, r] of Object.entries(ratiosByTicker)) n[tk] = { ...n[tk], ...r };
+            return n;
+          });
+        }
         if (Object.keys(pricesByTicker).length) {
           setPrices((p) => ({ ...p, ...pricesByTicker }));
           setPriceMeta((p) => { const n = { ...p }; for (const tk of Object.keys(pricesByTicker)) n[tk] = { asOf: new Date().toISOString(), raw: pricesByTicker[tk] * 100, ccy: "GBP", source: "DMO" }; return n; });

@@ -17,7 +17,7 @@ function LivePricesPanel({ tickers }) {
   const prices = useAppStore((s) => s.prices), setPrices = useAppStore((s) => s.setPrices);
   const priceMeta = useAppStore((s) => s.priceMeta), setPriceMeta = useAppStore((s) => s.setPriceMeta);
   const txns = useAppStore((s) => s.txns);
-  const secMeta = useAppStore((s) => s.secMeta);
+  const secMeta = useAppStore((s) => s.secMeta), setSecMeta = useAppStore((s) => s.setSecMeta);
   const dmoReportDate = useAppStore((s) => s.dmoReportDate), setDmoReportDate = useAppStore((s) => s.setDmoReportDate);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -79,9 +79,12 @@ function LivePricesPanel({ tickers }) {
     setBusy(true); setProg(`Fetching ${tk}...`); setMsg("");
     if (secMeta[tk]?.kind === "gilt") {
       try {
-        const { pricesByTicker, matched, date, skipped } = await fetchDmoGiltPrices([{ ticker: tk, isin: secMeta[tk]?.isin }], { knownReportDate: dmoReportDate });
+        const { pricesByTicker, ratiosByTicker, matched, date, skipped } = await fetchDmoGiltPrices([{ ticker: tk, isin: secMeta[tk]?.isin }], { knownReportDate: dmoReportDate });
         if (skipped) { setMsg(`${tk}: already have today's DMO report (${dmoReportDate}) — no need to ask again.`); setBusy(false); setProg(""); return; }
         if (matched) {
+          // Index-linked: the ratio moves daily with RPI, so it's refreshed
+          // with the price (the stored price is already uplifted by it).
+          if (setSecMeta && ratiosByTicker?.[tk]) setSecMeta((m) => ({ ...m, [tk]: { ...m[tk], ...ratiosByTicker[tk] } }));
           setPrices((p) => ({ ...p, [tk]: pricesByTicker[tk] }));
           setPriceMeta((p) => ({ ...p, [tk]: { asOf: new Date().toISOString(), raw: pricesByTicker[tk] * 100, ccy: "GBP", source: "DMO" } }));
           if (setDmoReportDate && date) setDmoReportDate(dmoDateToIso(date));
@@ -120,7 +123,7 @@ function LivePricesPanel({ tickers }) {
     const res = await refreshAllPrices({
       prices,   // baseline for the post-refresh sanity check
       tickers, txns, secMeta, avMeta, avKey, dmoReportDate,
-      setPrices, setPriceMeta, setDmoReportDate, onProgress: setProg,
+      setPrices, setPriceMeta, setDmoReportDate, setSecMeta, onProgress: setProg,
     });
     setMsg(res.message);
     setBusy(false);
