@@ -213,3 +213,37 @@ export function balancingDraft(row, { wrapper = "GIA", date = null } = {}) {
       : `Balancing entry: ledger has ${row.ledgerQty}, broker reports ${row.brokerQty}.`,
   };
 }
+
+/* Any broker's holdings export -> [{ ticker, qty, isin }], via a column map
+   { ticker?, isin?, quantity } the user (or a saved profile) supplies.
+   ISIN wins when the seed knows it — a Fidelity "Portfolio valuation" lists
+   funds by name and ISIN, not by the app's ticker — else the ticker column
+   as typed, upper-cased and stripped of a trailing exchange suffix so
+   "SMT.L" and "SMT" meet. Quantities are summed per ticker; empty and
+   non-numeric rows are dropped, never guessed. */
+export function shapeCsvPositions(rows = [], map = {}, { seedByIsin = {} } = {}) {
+  const by = new Map();
+  for (const r of rows || []) {
+    if (!r || typeof r !== "object") continue;
+    const qty = num(map.quantity ? r[map.quantity] : undefined);
+    if (qty == null || Math.abs(qty) < EPS) continue;
+    const isin = String(map.isin ? r[map.isin] ?? "" : "").trim().toUpperCase();
+    let ticker = String(map.ticker ? r[map.ticker] ?? "" : "").trim().toUpperCase().replace(/\.L$/, "");
+    if (isin && seedByIsin[isin]) ticker = seedByIsin[isin];
+    if (!ticker) continue;
+    const prev = by.get(ticker);
+    if (prev) prev.qty = r4(prev.qty + qty);
+    else by.set(ticker, { ticker, qty: r4(qty), isin: isin || null, currency: null, symbol: ticker });
+  }
+  return [...by.values()].sort((a, b) => a.ticker.localeCompare(b.ticker));
+}
+
+// Column guesses for a holdings export, by header name.
+export function guessPositionColumns(headers = []) {
+  const find = (re) => headers.find((h) => re.test(String(h)));
+  return {
+    ticker: find(/^(ticker|symbol|epic|code|stock|instrument|investment|fund|holding|security|name)$/i) || find(/ticker|symbol|epic|stock|instrument|investment|fund/i) || "",
+    isin: find(/isin/i) || "",
+    quantity: find(/^(quantity|qty|units|shares|nominal|units held|holding)$/i) || find(/quantity|qty|units|shares|nominal/i) || "",
+  };
+}

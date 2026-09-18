@@ -262,3 +262,33 @@ test("data health counts only real discrepancies", async () => {
   assert.ok(!health.issues.some((i) => i.id === "position-drift"),
     "another broker's holdings must not raise a high-severity data-health alert");
 });
+
+/* --------------- any broker's holdings export -> reconciliation --------- */
+
+test("a holdings CSV becomes broker positions, resolving ISINs to the app's tickers", async () => {
+  const { shapeCsvPositions, guessPositionColumns } = await import("../core/position-reconcile.mjs");
+  const headers = ["Investment", "ISIN", "Quantity", "Price", "Value"];
+  const map = guessPositionColumns(headers);
+  assert.equal(map.isin, "ISIN");
+  assert.equal(map.quantity, "Quantity");
+  assert.equal(map.ticker, "Investment");
+
+  const rows = [
+    { Investment: "Bankers Investment Trust", ISIN: "GB00BN4NDR39", Quantity: "5,187", Price: "1.19", Value: "6172" },
+    { Investment: "Scottish Mortgage", ISIN: "GB00BLDYK618", Quantity: "2280", Price: "10.5", Value: "23940" },
+    { Investment: "Cash", ISIN: "", Quantity: "", Price: "", Value: "1000" },       // no quantity -> dropped
+    { Investment: "SMT.L", ISIN: "", Quantity: "20", Price: "10.5", Value: "210" },  // suffix stripped, merged
+  ];
+  const broker = shapeCsvPositions(rows, map, { seedByIsin: { GB00BN4NDR39: "BNKR", GB00BLDYK618: "SMT" } });
+  const by = Object.fromEntries(broker.map((b) => [b.ticker, b.qty]));
+  assert.equal(by.BNKR, 5187, "ISIN resolved to the app's ticker, thousands separator parsed");
+  assert.equal(by.SMT, 2300, "the ISIN row and the 'SMT.L' row are the same holding");
+  assert.ok(!("CASH" in by), "a row with no quantity is not a position");
+
+  // …and it feeds the same reconciliation as an IBKR statement.
+  const { rows: rec, summary } = reconcilePositions({
+    broker, positions: [{ ticker: "BNKR", wrapper: "GIA", qty: 5187 }, { ticker: "SMT", wrapper: "GIA", qty: 2280 }],
+  });
+  assert.equal(summary.missingInLedger, 1, "the 20 extra SMT the broker reports");
+  assert.equal(rec.find((r) => r.ticker === "BNKR").status, "match");
+});

@@ -129,6 +129,7 @@ const useAppStore = create((set) => {
     brokerScope: ls.get("cgt.brokerscope", {}), setBrokerScope: upd("brokerScope"),
     accounts: ls.get("cgt.accounts", []), setAccounts: upd("accounts"),
     importLog: ls.get("cgt.importlog", []), setImportLog: upd("importLog"),
+    importProfiles: ls.get("cgt.importprofiles", {}), setImportProfiles: upd("importProfiles"),
     ibkrQueryId: ls.get("cgt.ibkrqueryid", ""), setIbkrQueryId: upd("ibkrQueryId"),
     ibkrToken: ls.get("cgt.ibkrtoken", ""), setIbkrToken: upd("ibkrToken"),
     // Credit cards (Wealth tab) — named revolving-debt balances subtracted

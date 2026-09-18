@@ -62,6 +62,9 @@ export const PERSIST_KEYS = {
   // One entry per import batch; rows carry the batchId so an import can be
   // undone whole. See core/import-log.mjs.
   importLog: "cgt.importlog",
+  // Saved column mappings for generic CSV imports, keyed by profile name and
+  // matched by header signature next time. See core/import-detect.mjs.
+  importProfiles: "cgt.importprofiles",
   ibkrQueryId: "cgt.ibkrqueryid",
   ibkrToken: "cgt.ibkrtoken",
   creditCards: "cgt.creditcards",

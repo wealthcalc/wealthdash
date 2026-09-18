@@ -295,3 +295,12 @@ test("PlanHealthCard renders the no-plan prompt and a real projection", () => {
   const none = renderToString(React.createElement(PlanHealthCard, { planInputs: null, onOpenPlan: () => {} }));
   assert.ok(none.includes("No retirement plan set up yet"));
 });
+
+test("ImportTab renders one drop zone above the source pills, with the new modes", async () => {
+  const { default: ImportTab } = await import("../../features/ImportTab.jsx");
+  const html = renderToString(React.createElement(ImportTab, { setTab: () => {}, recomputeProviderCost: () => {} })).replaceAll("&amp;", "&").replaceAll("&#x27;", "'");
+  assert.ok(html.includes("Drop any broker export here"), "the universal entry point");
+  assert.ok(html.indexOf("Drop any broker export here") < html.indexOf("Interactive Brokers"), "drop zone comes first; pills are the override");
+  assert.ok(html.includes("Holdings snapshot"), "any broker's positions export can be reconciled");
+  assert.ok(html.includes("Account:"), "imports land in an account");
+});

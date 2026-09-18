@@ -11,6 +11,8 @@ import { reconcilePositions, mergeBrokerCoverage } from "../core/position-reconc
 import { partitionFxConversions, nearDuplicateGroups, crossCheckPositions, isFxConversion } from "../core/import-hygiene.mjs";
 import { newBatchId, stampBatch, recordImport, latestUndoable, removeBatch, dropLogEntry } from "../core/import-log.mjs";
 import { knownAccounts, accountPositions, accountHasRows, assignAccount, fromImportSource } from "../core/accounts.mjs";
+import { detectImportFormat, saveProfile, matchProfile, deleteProfile } from "../core/import-detect.mjs";
+import { shapeCsvPositions, guessPositionColumns } from "../core/position-reconcile.mjs";
 import { showUndo } from "../ui/undo.jsx";
 import { detectCorporateActions } from "../core/price-sanity.mjs";
 import { buildPositions } from "../core/portfolio.mjs";
@@ -271,6 +273,15 @@ function ImportTab({ setTab, recomputeProviderCost }) {
   const importLog = useAppStore((s) => s.importLog), setImportLog = useAppStore((s) => s.setImportLog);
   const [mode, setMode] = useState("ibkr");
   const [wrapper, setWrapper] = useState("GIA");
+  const importProfiles = useAppStore((s) => s.importProfiles), setImportProfiles = useAppStore((s) => s.setImportProfiles);
+  const [detected, setDetected] = useState(null);   // { kind, reason, filename } from the drop zone
+  const [dragOver, setDragOver] = useState(false);
+  const [wbFile, setWbFile] = useState(null);       // an .xlsx handed over by the drop zone
+  // Holdings snapshot (any broker's "portfolio"/"valuation" export) -> reconcile.
+  const [posRaw, setPosRaw] = useState("");
+  const [posParsed, setPosParsed] = useState(null);
+  const [posMap, setPosMap] = useState({ ticker: "", isin: "", quantity: "" });
+  const [profileName, setProfileName] = useState("");
   // The ACCOUNT an import lands in (its label goes on every row's `account`
   // field). Remembered per source so the second IBKR pull doesn't ask
   // again. Blank is allowed — everything still works, just unscoped.
@@ -343,6 +354,54 @@ function ImportTab({ setTab, recomputeProviderCost }) {
   const [wbBusy, setWbBusy] = useState(false);
 
   const readFile = (e, cb) => { const f = e.target.files?.[0]; if (!f) return; const r = new FileReader(); r.onload = () => cb(String(r.result)); r.readAsText(f); e.target.value = ""; };
+
+  // THE drop zone: look at the file, say what it is, and hand it to the
+  // right parser — instead of asking the user to pick a source, then a
+  // sub-mode, then paste. The pills remain as an override.
+  const routeText = (text, filename = "") => {
+    const d = detectImportFormat(text, { filename });
+    setDetected({ ...d, filename });
+    setNote("");
+    switch (d.kind) {
+      case "ibkr": setMode("ibkr"); setIbkrSource("paste"); setRaw(text); parseIb(text); break;
+      case "fidelity": setMode("fidelity"); setFidRaw(text); setIb(parseFidelity(text.trim())); break;
+      case "rsu": setMode("rsu"); setRsuRaw(text); parseRsu(text, filename); break;
+      case "dividends": setMode("dividends"); setRawDiv(text); parseDiv(text); break;
+      case "positions": setMode("positions"); setPosRaw(text); parsePositions(text); break;
+      case "trades": setMode("generic"); setRaw(text); parse(text); break;
+      case "statement": setMode("generic"); setRaw(text); break;   // shown with a pointer to Budget below
+      default: setMode("generic"); setRaw(text); parse(text);
+    }
+  };
+  const routeFile = (f) => {
+    if (!f) return;
+    if (/\.(xlsx|xls|xlsm)$/i.test(f.name)) { setMode("ishares"); setWbFile(f); setDetected({ kind: "workbook", reason: "Excel workbook — opened in the iShares ERI importer.", filename: f.name }); return; }
+    const r = new FileReader();
+    r.onload = () => routeText(String(r.result), f.name);
+    r.readAsText(f);
+  };
+  const onDrop = (e) => { e.preventDefault(); setDragOver(false); routeFile(e.dataTransfer?.files?.[0]); };
+  const onPasteAnywhere = (e) => {
+    const t = e.clipboardData?.getData("text") || "";
+    if (t && /\n/.test(t) && /,|\t/.test(t)) { e.preventDefault(); routeText(t.replace(/\t/g, ","), ""); }
+  };
+
+  // ---- saved column-mapping profiles (generic trades / dividends / positions) ----
+  const profileKindFor = (m) => (m === "generic" ? "trades" : m === "dividends" ? "dividends" : m === "positions" ? "positions" : null);
+  const saveCurrentProfile = () => {
+    const kind = profileKindFor(mode);
+    const headers = mode === "generic" ? Object.keys(parsed?.[0] || {}) : mode === "dividends" ? Object.keys(parsedDiv?.[0] || {}) : Object.keys(posParsed?.[0] || {});
+    const map = mode === "generic" ? mapRef : mode === "dividends" ? mapDivRef : posMap;
+    if (!kind || !headers.length || !profileName.trim()) return;
+    setImportProfiles((p) => saveProfile(p, { name: profileName.trim(), kind, headers, map }));
+    setNote(`Saved mapping “${profileName.trim()}” — files with these columns will map themselves next time.`);
+    setProfileName("");
+  };
+  const applyMatchedProfile = (kind, headers, setter) => {
+    const hit = matchProfile(importProfiles, headers, kind);
+    if (hit) { setter(hit.profile.map); setNote(`Columns mapped from your saved “${hit.profile.name}” profile${hit.exact ? "" : " (same columns, wider export)"}.`); return true; }
+    return false;
+  };
 
   // ISIN → the app's own ticker, so IBKR's raw symbols get remapped to the
   // names the price lookups know: gilts to TG31/TN28 (DMO prices by ISIN),
@@ -469,8 +528,9 @@ function ImportTab({ setTab, recomputeProviderCost }) {
   const removeIbIncome = (i) => setIb((r) => ({ ...r, income: r.income.filter((_, idx) => idx !== i) }));
 
   // ---- generic ----
-  const parse = () => {
-    const res = Papa.parse(raw.trim(), { header: true, skipEmptyLines: true });
+  const mapRef = map;
+  const parse = (text) => {
+    const res = Papa.parse(String(text ?? raw).trim(), { header: true, skipEmptyLines: true });
     if (!res.data?.length) { setNote("Nothing parsed — the paste needs a header row followed by at least one data row (use “Copy example format” for the shape)."); return; }
     const cols = res.meta.fields || [];
     const find = (re) => cols.find((c) => re.test(c));
@@ -480,6 +540,7 @@ function ImportTab({ setTab, recomputeProviderCost }) {
     guess.nativeCurrency = find(/currency|ccy/i); guess.nativeAmount = find(/amount|proceeds|cost|value|consideration|net/i);
     guess.fxRate = find(/fx|rate|exchange/i); guess.gbpAmount = find(/gbp|sterling/i);
     setParsed(res.data); setMap(guess);
+    applyMatchedProfile("trades", cols, setMap);
   };
   const normSide = (v) => /sell|^s$|sld|disp/i.test(v || "") ? "SELL" : "BUY";
   const preview = useMemo(() => (!parsed ? [] : parsed.slice(0, 5).map((r) => mapRow(r, map, normSide, wrapper))), [parsed, map, wrapper]);
@@ -497,8 +558,9 @@ function ImportTab({ setTab, recomputeProviderCost }) {
   const [rawDiv, setRawDiv] = useState("");
   const [parsedDiv, setParsedDiv] = useState(null);
   const [mapDiv, setMapDiv] = useState({});
-  const parseDiv = () => {
-    const res = Papa.parse(rawDiv.trim(), { header: true, skipEmptyLines: true });
+  const mapDivRef = mapDiv;
+  const parseDiv = (text) => {
+    const res = Papa.parse(String(text ?? rawDiv).trim(), { header: true, skipEmptyLines: true });
     if (!res.data?.length) { setNote("Nothing parsed — the paste needs a header row followed by at least one data row (use “Copy example format” for the shape)."); return; }
     const cols = res.meta.fields || [];
     const find = (re) => cols.find((c) => re.test(c));
@@ -511,6 +573,7 @@ function ImportTab({ setTab, recomputeProviderCost }) {
     guess.fxRate = find(/fx|rate|exchange/i);
     guess.gbpAmount = find(/gbp|sterling/i);
     setParsedDiv(res.data); setMapDiv(guess);
+    applyMatchedProfile("dividends", cols, setMapDiv);
   };
   const normKind = (v) => /interest|coupon/i.test(v || "") ? "interest" : "dividend";
   const previewDiv = useMemo(() => (!parsedDiv ? [] : parsedDiv.slice(0, 5).map((r) => mapDivRow(r, mapDiv, normKind, wrapper))), [parsedDiv, mapDiv, wrapper]);
@@ -523,6 +586,18 @@ function ImportTab({ setTab, recomputeProviderCost }) {
     logImport({ batchId, source: "Dividends CSV", account, wrapper, income: rows.length, skipped: divDedup.skipped });
     setTab("income");
   };
+
+  // ---- holdings snapshot (any broker) -> reconcile against the ledger ----
+  const parsePositions = (text) => {
+    const res = Papa.parse(String(text ?? posRaw).trim(), { header: true, skipEmptyLines: true });
+    if (!res.data?.length) { setNote("Nothing parsed — the paste needs a header row followed by at least one data row."); return; }
+    const cols = res.meta.fields || [];
+    setPosParsed(res.data);
+    const guess = guessPositionColumns(cols);
+    setPosMap(guess);
+    applyMatchedProfile("positions", cols, setPosMap);
+  };
+  const csvBroker = useMemo(() => (posParsed ? shapeCsvPositions(posParsed, posMap, { seedByIsin }) : []), [posParsed, posMap, seedByIsin]);
 
   // ---- pension contribution/switch CSV (Citi/L&G, Aviva, or any other provider) ----
   const [rawPension, setRawPension] = useState("");
@@ -565,8 +640,8 @@ function ImportTab({ setTab, recomputeProviderCost }) {
     const m = {}; for (const [tk, s] of Object.entries(secMeta || {})) if (s.isin) m[s.isin.toUpperCase()] = tk; return m;
   }, [secMeta]);
 
-  const readWorkbookFile = (e) => {
-    const f = e.target.files?.[0]; if (!f) return;
+  const loadWorkbookFile = (f) => {
+    if (!f) return;
     setWbBusy(true); setWb(null); setChecked({});
     const r = new FileReader();
     r.onload = async () => {
@@ -588,8 +663,10 @@ function ImportTab({ setTab, recomputeProviderCost }) {
       setWbBusy(false);
     };
     r.readAsArrayBuffer(f);
-    e.target.value = "";
   };
+  const readWorkbookFile = (e) => { loadWorkbookFile(e.target.files?.[0]); e.target.value = ""; };
+  // A workbook handed over by the drop zone.
+  React.useEffect(() => { if (wbFile) { loadWorkbookFile(wbFile); setWbFile(null); } }, [wbFile]);
 
   const sheet = wb?.sheets?.[activeSheet];
   const allRows = sheet?.rows || [];
@@ -693,9 +770,32 @@ function ImportTab({ setTab, recomputeProviderCost }) {
   );
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4" onPaste={onPasteAnywhere}>
+      {/* One entry point. Drop or choose ANY export and the format is read
+          off its header row; the source pills below are the override. */}
+      <label onDragOver={(e) => { e.preventDefault(); setDragOver(true); }} onDragLeave={() => setDragOver(false)} onDrop={onDrop}
+        className={"block rounded-xl border-2 border-dashed px-4 py-5 text-center cursor-pointer transition " +
+          (dragOver ? "border-[var(--accent)] bg-[color:color-mix(in_srgb,var(--accent)_8%,transparent)]" : "border-[var(--border)] bg-[var(--panel)] hover:border-[var(--accent)]")}>
+        <input type="file" className="hidden" accept=".csv,.txt,.tsv,.xlsx,.xls,text/csv" onChange={(e) => { routeFile(e.target.files?.[0]); e.target.value = ""; }} />
+        <div className="text-sm font-medium flex items-center justify-center gap-2"><Upload size={15} className="text-[var(--accent)]" /> Drop any broker export here, or click to choose</div>
+        <div className="text-xs text-[var(--muted)] mt-1">IBKR, Fidelity UK, a Shareworks RSU export, an iShares ERI workbook, a dividend list, a holdings snapshot, or any trade CSV — the format is read from the file. You can also paste a table anywhere on this screen.</div>
+        {detected && (
+          <div className="mt-2 inline-flex items-center gap-2 text-xs rounded-lg border border-[var(--border)] bg-[var(--panel2)] px-2.5 py-1">
+            <span className="font-semibold">{detected.filename || "pasted"}:</span>
+            <span>{detected.kind === "unknown" ? "couldn't tell what this is — opened in Generic CSV so you can map the columns." : detected.reason}</span>
+            <button onClick={(e) => { e.preventDefault(); setDetected(null); }} className="text-[var(--muted)] hover:text-[var(--fg)]" aria-label="Dismiss">×</button>
+          </div>
+        )}
+      </label>
+      {detected?.kind === "statement" && (
+        <div className="flex items-start gap-2 text-sm rounded-lg px-3 py-2 border border-[var(--border)] bg-[var(--panel)]">
+          <AlertTriangle size={15} className="mt-0.5 shrink-0 text-[var(--m-bb)]" />
+          <span>That looks like a bank or card statement — dated rows with a description and an amount, no instrument. Those belong to <button onClick={() => { store.set("cgt.budgetsubtab", "import"); setTab("budget"); }} className="text-[var(--accent)] underline underline-offset-2">Budget ▸ Import statements</button>, which knows the Amex/HSBC layouts and categorises spending.</span>
+        </div>
+      )}
+
       <div className="flex items-center gap-2 flex-wrap">
-        <Tab k="ibkr" label="Interactive Brokers" /><Tab k="fidelity" label="Fidelity UK" /><Tab k="generic" label="Generic CSV" /><Tab k="dividends" label="Dividends CSV" /><Tab k="pension" label="Pension contributions" /><Tab k="ishares" label="iShares ERI" /><Tab k="rsu" label="RSU vest history" />
+        <Tab k="ibkr" label="Interactive Brokers" /><Tab k="fidelity" label="Fidelity UK" /><Tab k="generic" label="Generic CSV" /><Tab k="dividends" label="Dividends CSV" /><Tab k="positions" label="Holdings snapshot" /><Tab k="pension" label="Pension contributions" /><Tab k="ishares" label="iShares ERI" /><Tab k="rsu" label="RSU vest history" />
       </div>
 
       {mode !== "ishares" && mode !== "pension" && mode !== "rsu" && mode !== "fidelity" && (
@@ -949,13 +1049,50 @@ function ImportTab({ setTab, recomputeProviderCost }) {
         </>
       )}
 
+      {mode === "positions" && (
+        <>
+          <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 space-y-3">
+            <p className="text-sm text-[var(--muted)]">
+              Paste or drop a broker&apos;s <strong>holdings</strong> export — Fidelity&apos;s portfolio valuation, an HL or AJ Bell portfolio download, anything with an instrument and a quantity. Nothing is imported: it&apos;s compared against what the ledger says the <strong>{account || "selected"}</strong> account holds, so a missing trade or an unrecorded sale shows up as a quantity difference. ISINs resolve to your tickers automatically.
+            </p>
+            <textarea value={posRaw} onChange={(e) => setPosRaw(e.target.value)} rows={5} placeholder={"Investment,ISIN,Quantity,Price,Value\nBankers Investment Trust,GB00BN4NDR39,5187,1.19,6172.53"} className="input num w-full font-mono text-xs" aria-label="Holdings CSV" />
+            <div className="flex items-center gap-2 flex-wrap">
+              <button onClick={() => parsePositions()} className="btn-accent"><Wand2 size={15} /> Parse &amp; map</button>
+              <label className="text-sm text-[var(--accent)] cursor-pointer flex items-center gap-1"><Upload size={14} /> Upload CSV<input type="file" accept=".csv,text/csv" className="hidden" onChange={(e) => readFile(e, (txt) => { setPosRaw(txt); parsePositions(txt); })} /></label>
+            </div>
+          </div>
+          {posParsed && (
+            <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 space-y-3">
+              <div className="grid grid-cols-3 gap-2">
+                {["ticker", "isin", "quantity"].map((f) => (
+                  <Field key={f} label={f === "isin" ? "ISIN (preferred)" : f === "ticker" ? "Ticker / name" : "Quantity"}>
+                    <select value={posMap[f] || ""} onChange={(e) => setPosMap((m) => ({ ...m, [f]: e.target.value }))} className="input w-full text-xs">
+                      <option value="">—</option>
+                      {Object.keys(posParsed[0] || {}).map((c) => <option key={c}>{c}</option>)}
+                    </select>
+                  </Field>
+                ))}
+              </div>
+              <ProfileSaver profileName={profileName} setProfileName={setProfileName} onSave={saveCurrentProfile} kind="positions" profiles={importProfiles} onDelete={(n) => setImportProfiles((p) => deleteProfile(p, n))} />
+              {!account && <p className="text-xs text-[var(--m-bb)]">Pick the account this snapshot belongs to (above) — otherwise it&apos;s compared against every {wrapper} holding, and other brokers&apos; lines will show as differences.</p>}
+              {csvBroker.length > 0 ? (
+                <PositionReconcilePanel broker={csvBroker}
+                  positions={account && accountHasRows(txns, account) ? accountPositions(txns, account, wrapper) : positions}
+                  scopeLabel={account && accountHasRows(txns, account) ? account : null}
+                  wrapper={wrapper} source={account ? `positions:${account}` : "positions"} />
+              ) : <p className="text-xs text-[var(--muted)]">No positions parsed yet — check the Quantity column mapping.</p>}
+            </div>
+          )}
+        </>
+      )}
+
       {mode === "generic" && (
         <>
           <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 space-y-3">
             <p className="text-sm text-[var(--muted)]">Paste a CSV from any broker. Columns are auto-mapped — adjust below if needed. Rows import into <strong>{wrapper}</strong>.</p>
             <textarea value={raw} onChange={(e) => setRaw(e.target.value)} rows={7} placeholder={GENERIC_EXAMPLE} className="input num w-full font-mono text-xs" />
             <div className="flex items-center gap-2">
-              <button onClick={parse} className="btn-accent"><Wand2 size={15} /> Parse & map</button>
+              <button onClick={() => parse()} className="btn-accent"><Wand2 size={15} /> Parse & map</button>
               <CopyExampleButton text={GENERIC_EXAMPLE} />
             </div>
           </div>
@@ -971,6 +1108,7 @@ function ImportTab({ setTab, recomputeProviderCost }) {
                   </Field>
                 ))}
               </div>
+              <ProfileSaver profileName={profileName} setProfileName={setProfileName} onSave={saveCurrentProfile} kind="trades" profiles={importProfiles} onDelete={(n) => setImportProfiles((p) => deleteProfile(p, n))} />
               <div className="overflow-x-auto">
                 <table className="w-full text-xs">
                   <thead className="text-[var(--muted)]"><tr>{["date", "ticker", "side", "qty", "ccy", "native", "fx", "gbp"].map((h) => <th key={h} className="px-2 py-1 text-left">{h}</th>)}</tr></thead>
@@ -1002,7 +1140,7 @@ function ImportTab({ setTab, recomputeProviderCost }) {
             </p>
             <textarea value={rawDiv} onChange={(e) => setRawDiv(e.target.value)} rows={7} placeholder={DIV_EXAMPLE} className="input num w-full font-mono text-xs" />
             <div className="flex items-center gap-2">
-              <button onClick={parseDiv} className="btn-accent"><Wand2 size={15} /> Parse & map</button>
+              <button onClick={() => parseDiv()} className="btn-accent"><Wand2 size={15} /> Parse & map</button>
               <CopyExampleButton text={DIV_EXAMPLE} />
             </div>
           </div>
@@ -1018,6 +1156,7 @@ function ImportTab({ setTab, recomputeProviderCost }) {
                   </Field>
                 ))}
               </div>
+              <ProfileSaver profileName={profileName} setProfileName={setProfileName} onSave={saveCurrentProfile} kind="dividends" profiles={importProfiles} onDelete={(n) => setImportProfiles((p) => deleteProfile(p, n))} />
               <div className="overflow-x-auto">
                 <table className="w-full text-xs">
                   <thead className="text-[var(--muted)]"><tr>{["date", "ticker", "kind", "GBP amount"].map((h) => <th key={h} className="px-2 py-1 text-left">{h}</th>)}</tr></thead>
@@ -1267,6 +1406,31 @@ function ImportTab({ setTab, recomputeProviderCost }) {
     </div>
   );
 }
+// "Remember this mapping as <broker>" — so the next export from the same
+// broker maps itself. Cheaper and more general than a hand-written parser
+// per broker; a native one is still worth it for the very common ones.
+function ProfileSaver({ profileName, setProfileName, onSave, kind, profiles = {}, onDelete }) {
+  const mine = Object.values(profiles || {}).filter((p) => p.kind === kind);
+  return (
+    <div className="flex items-center gap-2 flex-wrap text-xs">
+      <input value={profileName} onChange={(e) => setProfileName(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") onSave(); }}
+        placeholder="Save this mapping as… e.g. AJ Bell" className="input py-1 text-xs w-52" aria-label="Mapping profile name" />
+      <button onClick={onSave} disabled={!profileName.trim()} className="text-[var(--accent)] hover:underline disabled:opacity-50">save mapping</button>
+      {mine.length > 0 && (
+        <span className="text-[var(--muted)]">
+          Saved: {mine.map((p) => (
+            <span key={p.name} className="inline-flex items-center gap-1 ml-1 px-1.5 py-0.5 rounded border border-[var(--border)]">
+              {p.name}
+              <button onClick={() => onDelete(p.name)} className="text-[var(--muted)] hover:text-[var(--loss)]" aria-label={`Delete mapping ${p.name}`} title="Delete this saved mapping">×</button>
+            </span>
+          ))}
+          <span className="ml-1">— applied automatically when a file with the same columns arrives.</span>
+        </span>
+      )}
+    </div>
+  );
+}
+
 function mapRow(r, map, normSide, wrapper) {
   const g = (f) => (map[f] ? r[map[f]] : "");
   const ccy = (g("nativeCurrency") || "GBP").toUpperCase().trim();

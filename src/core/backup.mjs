@@ -66,7 +66,7 @@ const TYPES = {
   lgimIgnored: "array",
   allocationGroups: "array", allocationAssignments: "object",
   income: "number", carried: "number",
-  brokerScope: "object", accounts: "array", importLog: "array",
+  brokerScope: "object", accounts: "array", importLog: "array", importProfiles: "object",
   ibkrQueryId: "string", avKey: "string", ibkrToken: "string",
 };
 
