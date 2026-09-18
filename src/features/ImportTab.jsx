@@ -6,7 +6,7 @@ import { guessPensionColumns, mapPensionRow } from "../core/pension-import.mjs";
 import { parseIBKR } from "../core/ibkr-import.mjs";
 import { parseFidelity } from "../core/fidelity-import.mjs";
 import useAppStore from "../state/appStore.js";
-import { shapeFlexPull, shapeCashReport } from "../core/ibkr-flex.mjs";
+import { pullFromIbkr as pullFromIbkrShared, takePendingPull } from "../ui/ibkrPull.js";
 import { reconcilePositions, mergeBrokerCoverage } from "../core/position-reconcile.mjs";
 import { partitionFxConversions, nearDuplicateGroups, crossCheckPositions, isFxConversion } from "../core/import-hygiene.mjs";
 import { newBatchId, stampBatch, recordImport, latestUndoable, removeBatch, dropLogEntry } from "../core/import-log.mjs";
@@ -428,22 +428,21 @@ function ImportTab({ setTab, recomputeProviderCost }) {
     if (!ibkrQueryId.trim() || !ibkrToken.trim()) { setFlexError("Enter both your Flex Query ID and token first."); return; }
     setFlexBusy(true); setFlexError(""); setNote(""); setCashReport(null);
     try {
-      // POST body, not query string — a GET query puts the Flex token in
-      // Vercel's request logs (api/ibkr-flex.mjs rejects GET for this reason).
-      const r = await fetch("/api/ibkr-flex", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token: ibkrToken.trim(), queryId: ibkrQueryId.trim() }),
-      });
-      const j = await r.json();
-      if (!r.ok) { setFlexError(j.error || `IBKR pull failed (${r.status}).`); setFlexBusy(false); return; }
-      setIb(shapeFlexPull(j, { defaultWrapper: wrapper, seedByIsin }));
-      setCashReport(shapeCashReport(j));
+      const { ib: pulled, cashReport: cr } = await pullFromIbkrShared({ token: ibkrToken, queryId: ibkrQueryId, wrapper, seedByIsin });
+      setIb(pulled); setCashReport(cr);
     } catch (e) {
       setFlexError(e?.message || "Couldn't reach the IBKR proxy — is this running on the deployed app (not a local sandbox)?");
     }
     setFlexBusy(false);
   };
+  // A pull started from the Home tab lands here for review — same preview,
+  // same dedupe and cross-checks, as if the button on this tab had been used.
+  React.useEffect(() => {
+    const p = takePendingPull();
+    if (!p) return;
+    setMode("ibkr"); setIbkrSource("live"); setIb(p.ib); setCashReport(p.cashReport);
+    setNote("Pulled from IBKR via the Home tab — review below, then Import.");
+  }, []);
   const doImportIb = async () => {
     if (!ib) return; setImporting(true); setNote("");
     const cache = {};

@@ -22,7 +22,7 @@ import { concentration } from "./core/exposure.mjs";
 import { portfolioExposure } from "./core/lookthrough.mjs";
 import { pensionXirrByWrapper } from "./core/returns.mjs";
 import { renderAiSnapshot } from "./core/ai-snapshot.mjs";
-import { unitsHeldAt, uid, todayISO, IconBtn, store as lsStore } from "./ui/shared.jsx";
+import { unitsHeldAt, uid, todayISO, IconBtn, store as lsStore, TabSkeleton } from "./ui/shared.jsx";
 import { DesktopSidebar, MobileDrawer, SubTabBar, SCREENS, LEAF_LABELS } from "./ui/Sidebar.jsx";
 import ErrorBoundary from "./ui/ErrorBoundary.jsx";
 import CommandPalette from "./ui/CommandPalette.jsx";
@@ -658,7 +658,7 @@ export default function App() {
             {mobileSummaryMode ? (
               <div className="mt-5 space-y-4">
                 <ErrorBoundary resetKey="mobile-summary" label="The summary" onBackup={exportJSON}>
-                <Suspense fallback={<div className="text-sm text-[var(--muted)] py-6">Loading…</div>}>
+                <Suspense fallback={<TabSkeleton />}>
                   {/* PlanHealthCard now renders INSIDE HomeTab (it's on the
                       desktop Home too since the redesign) — no separate copy
                       here or the summary would show it twice. */}
@@ -696,7 +696,7 @@ export default function App() {
                 a recoverable panel there instead of blanking the whole app.
                 `resetKey={tab}` clears it as soon as the user navigates away. */}
             <ErrorBoundary resetKey={tab} label={LEAF_LABELS[tab] || "This screen"} onBackup={exportJSON}>
-            <Suspense fallback={<div className="text-sm text-[var(--muted)] py-6">Loading…</div>}>
+            <Suspense fallback={<TabSkeleton />}>
               {tab === "home" && <HomeTab {...homeTabProps} />}
               {tab === "plan" && <PlanTab {...{
                 dark,

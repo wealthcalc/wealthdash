@@ -115,7 +115,9 @@ export default function PlanTab({
   // Persisted, like every PanelSection inside it — collapsing the whole
   // assumptions strip is a deliberate "I'm done tuning, show me results"
   // gesture, and re-opening it on every visit undoes that each time.
-  const [panelOpen, setPanelOpen] = useState(() => store.get("plan.assumptionsOpen", true));
+  // Open by default only on a FIRST visit (no plan saved yet): once a plan
+  // exists, the verdict and charts are what a return visit is for.
+  const [panelOpen, setPanelOpen] = useState(() => store.get("plan.assumptionsOpen", !planInputs));
   React.useEffect(() => { store.set("plan.assumptionsOpen", panelOpen); }, [panelOpen]);
   const [mc, setMc] = useState(null);
   const [mcB, setMcB] = useState(null);
@@ -264,6 +266,40 @@ export default function PlanTab({
           </button>
         </div>
       </div>
+
+      {/* THE ANSWER FIRST. The verdict used to sit inside the Overview sub-tab,
+          below an assumptions panel that opened by default — you landed on
+          the questions and scrolled to the answer. */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 14,
+          background:
+            verdict.tone === "green" ? T.greenSoft : verdict.tone === "amber" ? T.amberSoft : T.redSoft,
+          border: `1px solid ${verdict.tone === "green" ? T.green : verdict.tone === "amber" ? T.amber : T.red}33`,
+          borderRadius: 12,
+          padding: "14px 18px",
+          marginBottom: 18,
+        }}
+      >
+        <div
+          style={{
+            fontSize: 12,
+            fontWeight: 700,
+            letterSpacing: ".05em",
+            textTransform: "uppercase",
+            color: verdict.tone === "green" ? T.green : verdict.tone === "amber" ? T.amber : T.red,
+            padding: "4px 10px",
+            borderRadius: 20,
+            background: T.surface,
+          }}
+        >
+          {verdict.label}
+        </div>
+        <div style={{ fontSize: 14, color: T.ink2 }}>{verdict.text}</div>
+      </div>
+
 
       {/* ---- Assumptions — a collapsible strip ABOVE the main content, laid
           out as a wrapping card grid, not a side panel: the app already has
@@ -576,37 +612,6 @@ export default function PlanTab({
           {/* ===== OVERVIEW ===== */}
           {tab === "overview" && (
             <div>
-              {/* verdict banner */}
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 14,
-                  background:
-                    verdict.tone === "green" ? T.greenSoft : verdict.tone === "amber" ? T.amberSoft : T.redSoft,
-                  border: `1px solid ${verdict.tone === "green" ? T.green : verdict.tone === "amber" ? T.amber : T.red}33`,
-                  borderRadius: 12,
-                  padding: "14px 18px",
-                  marginBottom: 18,
-                }}
-              >
-                <div
-                  style={{
-                    fontSize: 12,
-                    fontWeight: 700,
-                    letterSpacing: ".05em",
-                    textTransform: "uppercase",
-                    color: verdict.tone === "green" ? T.green : verdict.tone === "amber" ? T.amber : T.red,
-                    padding: "4px 10px",
-                    borderRadius: 20,
-                    background: T.surface,
-                  }}
-                >
-                  {verdict.label}
-                </div>
-                <div style={{ fontSize: 14, color: T.ink2 }}>{verdict.text}</div>
-              </div>
-
               {/* key stats */}
               <div
                 style={{

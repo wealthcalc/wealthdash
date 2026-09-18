@@ -2577,6 +2577,66 @@ made once would suppress a genuine discrepancy for ever.
 The preview now hides already-imported duplicates by default (they were 20 of
 34 rows in the real pull) with a one-click reveal.
 
+## Review pass 3: the things a third look turned up
+The numbers were right; findability and forgiveness hadn't kept up. Five
+commits, all on the same theme — the app should explain itself and let you
+undo yourself.
+
+**Forms that say why.** Fifteen add-forms shared one handler shape, a bare
+`return` on invalid input — click Add, nothing happens. `core/validate.mjs`
+plus shared `Field`/`FormField`/`FormErrors`/`EnterSubmits` give every
+rejected field a message, and Enter submits from any input (without a
+`<form>`, so the other buttons in a row don't silently become submit
+buttons). `currentTaxYear()` replaces two hardcoded "2025/26" fallbacks that
+would have gone stale every April.
+
+**Everything about one holding, in one place.** `ui/HoldingDrawer.jsx` —
+position per wrapper, price and source, S104 pool and gain-if-sold, income
+received and yields, upcoming gilt cashflows, trades, ISIN/name/tags — opened
+from any ticker in Holdings, Transactions, Gilts or the ⌘K palette (which
+used to just open the Holdings tab). Yahoo sends a name with every quote and
+it was discarded; it's kept now and shown under tickers. Holdings leads with
+the table (it sat under four utility panels), gains a Weight column, sorts by
+value, and moves set-once fields into the drawer. Transactions gains a note
+column, search, undoable bulk delete/re-tag, and locked rows for Pension/LISA
+unit snapshots. Both get card layouts on a phone.
+
+**Imports are batches.** `core/import-log.mjs` stamps every imported row
+with a `batchId` and logs the batch; "Undo last import" removes exactly those
+rows across txns, income, pension cashflows, ERI and RSU events, and is
+itself undoable. The Home freshness nudge reads the log.
+
+**Accounts are a thing.** `core/accounts.mjs`: a first-class account list
+whose label is written onto imported rows. Broker reconciliation compares a
+statement against *that account's* rows when it has any — the principled fix
+for the second-broker noise, with remembered coverage as the fallback. Cash
+becomes one list: the per-wrapper manual figure appears beside the named
+accounts with a one-click "name it".
+
+**Drop any file.** `core/import-detect.mjs` classifies IBKR (Flex and
+Activity), Fidelity UK, Shareworks RSU, bank/card statements (pointed at
+Budget), dividend lists, holdings snapshots, generic trade lists and Excel
+workbooks from the header row; one drop zone routes to the right parser.
+Any broker's holdings export reconciles like an IBKR statement (ISINs
+resolved to your tickers). Column mappings can be saved by name and are
+re-applied by header signature.
+
+**Home, Plan, polish.** The trend chart gains a Composition series (every
+daily snapshot already stored invested/cash/property/private/RSU/liabilities
+separately — it just never drew them; the gap between the stacked assets and
+the net-worth line is what you owe). A stale-IBKR item on Home can pull the
+Flex Query in place and hand the result to the Import tab for the same
+review — never an auto-import. Plan shows its verdict *above* the assumptions
+panel, which now opens by default only before a plan exists. Lazy tabs render
+a skeleton instead of "Loading…". A fresh install shows a valued sample
+portfolio with a "sample data" banner rather than "£0 · 2 holdings unpriced".
+
+Not done, and why: a Holdings *group-by-account* view needs cost basis per
+account, which the position engine keys by ticker+wrapper — search-by-account
+on Transactions and the account column in the drawer cover the need for now.
+The Plan tab's ~350 inline styles are unchanged beyond the verdict move; a
+restyle onto the shared components is a separate, deliberate pass.
+
 ## Tests
 ```
 npm test        # node --test: 611 core tests + 12 UI smoke tests (test:ui)

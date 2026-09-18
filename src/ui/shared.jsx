@@ -289,6 +289,11 @@ function NumberInput({ value, onChange, className = "", dp = 2, disabled = false
 const uid = () => Math.random().toString(36).slice(2, 9);
 const todayISO = () => new Date().toISOString().slice(0, 10);
 
+// Illustrative GBP-per-share prices for the SAMPLE ledger, so a fresh
+// install shows a valued portfolio rather than "£0 · 2 holdings unpriced"
+// with a warning triangle as its first impression. Replaced by the first
+// real refresh; never applied once the user has their own ledger.
+const SAMPLE_PRICES = { WFC: 56, AAPL: 172 };
 const SAMPLE = [
   { id: uid(), date: "2022-11-15", ticker: "WFC", side: "BUY", quantity: 120, nativeCurrency: "USD", nativeAmount: 5036, fxRate: 0.83, gbpAmount: 4180, note: "RSU vest" },
   { id: uid(), date: "2023-11-15", ticker: "WFC", side: "BUY", quantity: 140, nativeCurrency: "USD", nativeAmount: 6650, fxRate: 0.80, gbpAmount: 5320, note: "RSU vest" },
@@ -628,6 +633,29 @@ function MethodChip({ m }) {
   const d = METHOD[m];
   return <span className="text-xs font-medium px-2 py-0.5 rounded-full" style={{ color: `var(${d.v})`, background: "var(--chip)" }}>{d.label}</span>;
 }
+// Lazy-tab fallback: the SHAPE of a tab (stat strip, a panel, a table) in
+// placeholder grey, instead of the word "Loading…" on a blank page. The Plan
+// chunk is ~50 kB gzipped, so on a slow connection the blank was visible.
+function TabSkeleton() {
+  const bar = (w, h = "h-3") => <div className={`${h} rounded bg-[var(--panel2)] ${w}`} />;
+  return (
+    <div className="animate-pulse space-y-4" role="status" aria-label="Loading">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        {[0, 1, 2, 3].map((i) => (
+          <div key={i} className="rounded-xl border border-[var(--border)] bg-[var(--panel)] px-4 py-3 space-y-2">{bar("w-20")}{bar("w-28", "h-6")}</div>
+        ))}
+      </div>
+      <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 space-y-3">
+        {bar("w-40", "h-4")}{bar("w-full", "h-32")}
+      </div>
+      <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 space-y-2">
+        {[0, 1, 2, 3, 4].map((i) => <div key={i} className="flex gap-3">{bar("w-24")}{bar("w-16")}{bar("flex-1")}{bar("w-20")}</div>)}
+      </div>
+      <span className="sr-only">Loading…</span>
+    </div>
+  );
+}
+
 function Empty({ msg }) {
   return <div className="rounded-xl border border-dashed border-[var(--border)] py-12 text-center text-sm text-[var(--muted)]">{msg}</div>;
 }
@@ -666,10 +694,10 @@ export {
   store, downloadText, fmtRate, unitsHeldAt, SECURITY_SEED, gbp, gbp0,
   WRAPPER_CHIP_CLASS, wrapperChipClass, WrapperChip, SubTabs, SegmentedControl,
   dmoDateToIso, fetchDmoGiltPrices, fetchDmoGiltCatalogue, num, round2, CurrencyInput, NumberInput,
-  uid, todayISO, SAMPLE, METHOD,
+  uid, todayISO, SAMPLE, SAMPLE_PRICES, METHOD,
   AV_URL, avQuote, fxViaFrankfurter, fxViaYahoo, fxViaAlphaVantage, fxHistorical, fxToGBP, toGBP, avBudget, avBump, sleep,
   KIND_LABEL, ALLOC_COLORS, AllocBar, pct, pctPlain, toneOf, SHORT_SPAN, RateCell, rateIsDisplayable,
-  IconBtn, Field, FormField, FormErrors, EnterSubmits, Stat, Row, MethodChip, Empty, TwoStepDelete,
+  IconBtn, Field, FormField, FormErrors, EnterSubmits, Stat, Row, MethodChip, Empty, TabSkeleton, TwoStepDelete,
   useSort, sortRows, SortTh, dedupeAgainstExisting,
   useVirtualRows,
 };

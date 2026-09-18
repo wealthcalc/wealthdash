@@ -11,7 +11,7 @@
    verbatim.
    ====================================================================== */
 import { create } from "zustand";
-import { store as ls, SAMPLE, SECURITY_SEED, todayISO } from "../ui/shared.jsx";
+import { store as ls, SAMPLE, SAMPLE_PRICES, SECURITY_SEED, todayISO } from "../ui/shared.jsx";
 // state key -> localStorage key lives in durable.js (single source of truth
 // shared with the IndexedDB mirror, so new keys can't silently miss it).
 import { PERSIST_KEYS, LARGE_KEYS, saveDurable, saveDailySnapshot, loadDurable, keysWhereDurableIsAhead } from "./durable.js";
@@ -32,7 +32,12 @@ const useAppStore = create((set) => {
   const upd = (key) => (v) => set((s) => ({ [key]: typeof v === "function" ? v(s[key]) : v }));
   return {
     dark: ls.get("cgt.dark", prefersDark), setDark: upd("dark"),
-    txns: ls.get("cgt.txns", SAMPLE), setTxns: upd("txns"),
+    txns: ls.get("cgt.txns", SAMPLE),
+    // True until the user first writes their own ledger — drives the "these
+    // are sample figures" banner and the sample prices below. Not persisted:
+    // recomputed from whether cgt.txns exists.
+    sampleData: ls.get("cgt.txns", null) == null,
+    setTxns: (v) => set((s) => ({ txns: typeof v === "function" ? v(s.txns) : v, sampleData: false })),
     tab: ls.get("cgt.tab", "home"), setTab: upd("tab"),
     income: ls.get("cgt.income", 200000), setIncome: upd("income"),
     carried: ls.get("cgt.carried", 0), setCarried: upd("carried"),
@@ -51,7 +56,7 @@ const useAppStore = create((set) => {
     netWorthSnapshots: ls.get("cgt.networthsnapshots", []), setNetWorthSnapshots: upd("netWorthSnapshots"),
     incomeEntries: ls.get("cgt.incomeEntries", []), setIncomeEntries: upd("incomeEntries"), // dividends/interest ledger
     eriEntries: ls.get("cgt.eriEntries", []), setEriEntries: upd("eriEntries"), // excess reportable income
-    prices: ls.get("cgt.prices", {}), setPrices: upd("prices"),
+    prices: ls.get("cgt.prices", ls.get("cgt.txns", null) == null ? SAMPLE_PRICES : {}), setPrices: upd("prices"),
     avKey: ls.get("cgt.avkey", ""), setAvKey: upd("avKey"),
     avMeta: ls.get("cgt.avmeta", {}), setAvMeta: upd("avMeta"),           // { ticker: {symbol, currency} }
     priceMeta: ls.get("cgt.pricemeta", {}), setPriceMeta: upd("priceMeta"), // { ticker: {asOf, raw, ccy} }

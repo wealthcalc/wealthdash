@@ -21,6 +21,7 @@ import { refreshAllPrices } from "../ui/priceRefresh.js";
 import { getSyncConfig } from "../state/sync.js";
 import useAppStore from "../state/appStore.js";
 import { importAges as importAgesFromLog } from "../core/import-log.mjs";
+import { pullFromIbkr, stashPull } from "../ui/ibkrPull.js";
 
 // Labels for core/tax-year-end.mjs's checklist item ids — kept in the UI
 // layer (not the pure core module) so the core module stays plain data.
@@ -134,8 +135,8 @@ function TrendChart({ valuations, snapshots }) {
   React.useEffect(() => store.set("cgt.home.range", range), [range]);
   const [seriesMode, setSeriesMode] = useState(() => store.get("cgt.home.series", "networth"));
   React.useEffect(() => store.set("cgt.home.series", seriesMode), [seriesMode]);
-  const mode = canNetWorth && seriesMode === "networth" ? "networth" : "invested";
-  const source = mode === "networth" ? snapshots : valuations;
+  const mode = canNetWorth && (seriesMode === "networth" || seriesMode === "composition") ? seriesMode : "invested";
+  const source = mode === "invested" ? valuations : snapshots;
 
   const [showBench, setShowBench] = useState(() => store.get("cgt.home.bench", false));
   React.useEffect(() => store.set("cgt.home.bench", showBench), [showBench]);
@@ -224,7 +225,37 @@ function TrendChart({ valuations, snapshots }) {
 
   const modeLabel = mode === "networth"
     ? "Net worth (all assets − liabilities)"
-    : "Invested value (securities only — cash balances have no snapshot history)";
+    : mode === "composition"
+      ? "What net worth is made of — stacked assets; the gap to the line is liabilities"
+      : "Invested value (securities only — cash balances have no snapshot history)";
+
+  // COMPOSITION: every daily snapshot already stores invested, cash, property
+  // equity, private and RSU value separately (core/net-worth-series.mjs) —
+  // the chart just never drew them. Stacked from zero, with the net-worth
+  // line on top so the gap to the top of the stack IS the liabilities.
+  const LAYERS = [
+    ["invested", "Investments", "var(--accent)"],
+    ["cash", "Cash", "var(--m-same)"],
+    ["propertyEquity", "Property equity", "var(--gain)"],
+    ["privateValue", "Private", "var(--m-bb)"],
+    ["rsuValue", "RSUs", "var(--m-pool)"],
+  ];
+  const activeLayers = mode === "composition" ? LAYERS.filter(([k]) => series.some((p) => Math.abs(+p[k] || 0) > 0.5)) : [];
+  const stackTop = (p) => activeLayers.reduce((acc, [k]) => acc + Math.max(0, +p[k] || 0), 0);
+  const cLo = 0;
+  const cHi = mode === "composition" ? Math.max(1, ...series.map((p) => Math.max(stackTop(p), +p.value || 0))) * 1.06 : 1;
+  const cy = (v) => PAD_T + (1 - (v - cLo) / (cHi - cLo)) * (H - PAD_T - PAD_B);
+  const cTicks = mode === "composition" ? niceTicks(cLo, cHi, compact ? 3 : 4) : [];
+  const cTickStep = cTicks.length > 1 ? cTicks[1] - cTicks[0] : 0;
+  // Cumulative stacked bands, bottom-up: band i spans [sum(0..i-1), sum(0..i)].
+  const bands = activeLayers.map(([k, label, color], i) => {
+    const lowerOf = (p) => activeLayers.slice(0, i).reduce((acc, [kk]) => acc + Math.max(0, +p[kk] || 0), 0);
+    const upperOf = (p) => lowerOf(p) + Math.max(0, +p[k] || 0);
+    const top = series.map((p) => `${x(p.date).toFixed(1)},${cy(upperOf(p)).toFixed(1)}`);
+    const bottom = [...series].reverse().map((p) => `${x(p.date).toFixed(1)},${cy(lowerOf(p)).toFixed(1)}`);
+    return { k, label, color, d: `M${top.join("L")}L${bottom.join("L")}Z`, latest: Math.max(0, +last[k] || 0) };
+  });
+  const latestLiabilities = mode === "composition" ? Math.max(0, +last.liabilities || 0) : 0;
 
   return (
     <div>
@@ -242,7 +273,7 @@ function TrendChart({ valuations, snapshots }) {
         <div className="flex gap-1 items-center flex-wrap">
           {canNetWorth && (
             <div className="flex gap-1 mr-2" role="group" aria-label="Chart series">
-              {[["networth", "Net worth"], ["invested", "Invested"]].map(([k, lbl]) => (
+              {[["networth", "Net worth"], ["composition", "Composition"], ["invested", "Invested"]].map(([k, lbl]) => (
                 <button key={k} onClick={() => setSeriesMode(k)} aria-pressed={mode === k}
                   className={"px-2 py-0.5 text-xs rounded border " +
                     (mode === k ? "border-[var(--accent)] text-[var(--fg)]" : "border-[var(--border)] text-[var(--muted)] hover:text-[var(--fg)]")}>
@@ -269,31 +300,58 @@ function TrendChart({ valuations, snapshots }) {
         </div>
       </div>
       <svg viewBox={`0 0 ${W} ${H}`} className="w-full" role="img"
-        aria-label={`${mode === "networth" ? "Net worth" : "Invested value"} from ${gbp0(first.value)} on ${first.date} to ${gbp0(last.value)} on ${last.date}, a change of ${gbp0(periodChange)}${overlay.length ? `, with ${benchSymbol} overlay` : ""}`}>
+        aria-label={mode === "composition"
+          ? `Net worth composition from ${first.date} to ${last.date}: ${bands.map((b) => `${b.label} ${gbp0(b.latest)}`).join(", ")}${latestLiabilities ? `, liabilities ${gbp0(latestLiabilities)}` : ""}`
+          : `${mode === "networth" ? "Net worth" : "Invested value"} from ${gbp0(first.value)} on ${first.date} to ${gbp0(last.value)} on ${last.date}, a change of ${gbp0(periodChange)}${overlay.length ? `, with ${benchSymbol} overlay` : ""}`}>
         {/* Gridlines at round values, so the line can be read against a
             scale rather than just admired for its shape. */}
-        {ticks.map((t) => (
-          <g key={t}>
-            <line x1={PAD_L} x2={W - PAD_R} y1={y(t)} y2={y(t)} stroke="var(--border)" strokeWidth="1" vectorEffect="non-scaling-stroke" opacity="0.55" />
-            <text x={PAD_L - 6} y={y(t) + 3.5} fontSize={FS} textAnchor="end" fill="var(--muted)" className="num">{axisLabel(t, tickStep)}</text>
-          </g>
-        ))}
-        {/* Where the window STARTED — the reference the £ change is measured
-            from, so a rise above it is visible rather than inferred. */}
-        <line x1={PAD_L} x2={W - PAD_R} y1={y(first.value)} y2={y(first.value)}
-          stroke="var(--muted)" strokeWidth="1" strokeDasharray="3 3" vectorEffect="non-scaling-stroke" opacity="0.5" />
+        {mode === "composition" ? (
+          <>
+            {cTicks.map((t) => (
+              <g key={t}>
+                <line x1={PAD_L} x2={W - PAD_R} y1={cy(t)} y2={cy(t)} stroke="var(--border)" strokeWidth="1" vectorEffect="non-scaling-stroke" opacity="0.55" />
+                <text x={PAD_L - 6} y={cy(t) + 3.5} fontSize={FS} textAnchor="end" fill="var(--muted)" className="num">{axisLabel(t, cTickStep)}</text>
+              </g>
+            ))}
+            {bands.map((b) => <path key={b.k} d={b.d} fill={b.color} opacity="0.55" />)}
+            {/* Net worth on top: the gap to the top of the stack is what you owe. */}
+            <path d={series.map((p, i) => `${i ? "L" : "M"}${x(p.date).toFixed(1)},${cy(+p.value || 0).toFixed(1)}`).join("")} fill="none" stroke="var(--fg)" strokeWidth="1.8" vectorEffect="non-scaling-stroke" />
+          </>
+        ) : (
+          <>
+            {ticks.map((t) => (
+              <g key={t}>
+                <line x1={PAD_L} x2={W - PAD_R} y1={y(t)} y2={y(t)} stroke="var(--border)" strokeWidth="1" vectorEffect="non-scaling-stroke" opacity="0.55" />
+                <text x={PAD_L - 6} y={y(t) + 3.5} fontSize={FS} textAnchor="end" fill="var(--muted)" className="num">{axisLabel(t, tickStep)}</text>
+              </g>
+            ))}
+            {/* Where the window STARTED — the reference the £ change is measured
+                from, so a rise above it is visible rather than inferred. */}
+            <line x1={PAD_L} x2={W - PAD_R} y1={y(first.value)} y2={y(first.value)}
+              stroke="var(--muted)" strokeWidth="1" strokeDasharray="3 3" vectorEffect="non-scaling-stroke" opacity="0.5" />
 
-        <path d={area} fill={up ? "var(--gain)" : "var(--loss)"} opacity="0.12" />
-        <path d={line} fill="none" stroke={up ? "var(--gain)" : "var(--loss)"} strokeWidth="2" vectorEffect="non-scaling-stroke" />
-        {overlay.length >= 2 && (
-          <path d={pathOf(overlay)} fill="none" stroke="var(--m-same)" strokeWidth="1.5" strokeDasharray="5 4" vectorEffect="non-scaling-stroke" opacity="0.9" />
+            <path d={area} fill={up ? "var(--gain)" : "var(--loss)"} opacity="0.12" />
+            <path d={line} fill="none" stroke={up ? "var(--gain)" : "var(--loss)"} strokeWidth="2" vectorEffect="non-scaling-stroke" />
+            {overlay.length >= 2 && (
+              <path d={pathOf(overlay)} fill="none" stroke="var(--m-same)" strokeWidth="1.5" strokeDasharray="5 4" vectorEffect="non-scaling-stroke" opacity="0.9" />
+            )}
+            <circle cx={x(last.date)} cy={y(last.value)} r="3.5" fill={up ? "var(--gain)" : "var(--loss)"} />
+          </>
         )}
-        <circle cx={x(last.date)} cy={y(last.value)} r="3.5" fill={up ? "var(--gain)" : "var(--loss)"} />
 
         <text x={PAD_L} y={H - 5} fontSize={FS} fill="var(--muted)">{dateLabel(first.date)}</text>
         <text x={W - PAD_R} y={H - 5} fontSize={FS} textAnchor="end" fill="var(--muted)">{dateLabel(last.date)}</text>
       </svg>
-      {showBench && (
+      {mode === "composition" && (
+        <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-[var(--muted)] mt-1">
+          {bands.map((b) => (
+            <span key={b.k} className="inline-flex items-center gap-1.5"><span className="inline-block w-3 h-2 rounded-sm" style={{ background: b.color, opacity: 0.7 }} aria-hidden="true" />{b.label} <span className="num text-[var(--fg)]">{gbp0(b.latest)}</span></span>
+          ))}
+          <span className="inline-flex items-center gap-1.5"><span className="inline-block w-3 h-0.5 bg-[var(--fg)]" aria-hidden="true" />Net worth <span className="num text-[var(--fg)]">{gbp0(last.value)}</span></span>
+          {latestLiabilities > 0 && <span>· liabilities <span className="num text-[var(--loss)]">−{gbp0(latestLiabilities)}</span> (the gap)</span>}
+        </div>
+      )}
+      {showBench && mode !== "composition" && (
         <div className="text-xs text-[var(--muted)] mt-0.5">
           {bench?.error
             ? <>Couldn't load {benchSymbol}: {bench.error}</>
@@ -544,7 +602,7 @@ function HeartPulseIcon() {
   return <PieChart size={15} className="text-[var(--accent)]" aria-hidden="true" />;
 }
 
-function ActionQueueCard({ queue, setTab, dataLine }) {
+function ActionQueueCard({ queue, setTab, dataLine, onPullIbkr, pulling }) {
   return (
     <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 flex flex-col gap-2">
       <div className="text-sm font-semibold flex items-center gap-1.5">
@@ -558,13 +616,22 @@ function ActionQueueCard({ queue, setTab, dataLine }) {
       {queue.map((item) => {
         const { head, rest } = (ACTION_LABELS[item.id] || (() => ({ head: gbp0(item.amount), rest: ` — ${item.id}` })))(item);
         const urgent = item.score >= 80;
+        // A stale IBKR feed can be refreshed right here: the pull runs, then
+        // the Import tab opens with the result for review (never auto-imported).
+        const canPull = item.id === "import-stale" && /^ibkr/i.test(String(item.source || "")) && onPullIbkr;
         return (
-          <button key={item.id + (item.label || item.lender || item.ticker || "") + (item.date || "")}
-            onClick={() => { if (ACTION_SUBTAB[item.id]) store.set("cgt.cgtsubtab", ACTION_SUBTAB[item.id]); setTab && setTab(item.tab); }}
-            className="text-left text-xs rounded-lg border border-[var(--border)] bg-[var(--panel2)] px-3 py-2 hover:border-[var(--accent)]">
-            <span className={"font-semibold num " + (urgent ? "text-[var(--loss)]" : "text-[var(--accent)]")}>{head}</span>
-            <span className="text-[var(--muted)]">{rest}</span>
-          </button>
+          <div key={item.id + (item.label || item.lender || item.ticker || "") + (item.date || "")}
+            className="text-left text-xs rounded-lg border border-[var(--border)] bg-[var(--panel2)] px-3 py-2 hover:border-[var(--accent)] flex items-start gap-2">
+            <button onClick={() => { if (ACTION_SUBTAB[item.id]) store.set("cgt.cgtsubtab", ACTION_SUBTAB[item.id]); setTab && setTab(item.tab); }} className="text-left flex-1 min-w-0">
+              <span className={"font-semibold num " + (urgent ? "text-[var(--loss)]" : "text-[var(--accent)]")}>{head}</span>
+              <span className="text-[var(--muted)]">{rest}</span>
+            </button>
+            {canPull && (
+              <button onClick={onPullIbkr} disabled={pulling} className="shrink-0 font-medium px-2 py-1 rounded border border-[var(--accent)] text-[var(--accent)] hover:bg-[var(--panel)] disabled:opacity-50" title="Pull the latest Flex Query now and open the review on the Import tab">
+                {pulling ? "Pulling…" : "Pull now"}
+              </button>
+            )}
+          </div>
         );
       })}
       {dataLine}
@@ -656,6 +723,7 @@ export default function HomeTab({
   const txns = useAppStore((s) => s.txns);
   const secMeta = useAppStore((s) => s.secMeta), setSecMeta = useAppStore((s) => s.setSecMeta);
   const importLog = useAppStore((s) => s.importLog);
+  const sampleData = useAppStore((s) => s.sampleData);
   // Import freshness comes from the import LOG (which survives a browser
   // cleanup and travels with backups); the old device-local timestamp map
   // is only consulted for sources the log has never seen.
@@ -840,6 +908,27 @@ export default function HomeTab({
   if (!model) return <Empty msg="Couldn't build the portfolio model — check the Transactions tab for ledger errors." />;
   const { byWrapper, total } = model;
 
+  const ibkrQueryId = useAppStore((s) => s.ibkrQueryId), ibkrToken = useAppStore((s) => s.ibkrToken);
+  const [pulling, setPulling] = useState(false);
+  const seedByIsinForPull = useMemo(() => {
+    const m = {};
+    for (const [ticker, meta] of Object.entries(secMeta || {})) if (meta?.isin) m[String(meta.isin).toUpperCase()] = ticker;
+    return m;
+  }, [secMeta]);
+  const canPullIbkr = !!(ibkrQueryId && ibkrToken);
+  const doPullIbkr = async () => {
+    if (!canPullIbkr || pulling) return;
+    setPulling(true); setRefreshMsg("Pulling from IBKR…");
+    try {
+      const res = await pullFromIbkr({ token: ibkrToken, queryId: ibkrQueryId, wrapper: "GIA", seedByIsin: seedByIsinForPull });
+      stashPull(res);
+      setRefreshMsg("");
+      setTab && setTab("import");
+    } catch (e) {
+      setRefreshMsg(`IBKR: ${e?.message || "pull failed"}`);
+    }
+    setPulling(false);
+  };
   const openTickers = [...new Set(positions.filter((p) => p.qty > 1e-9).map((p) => p.ticker))];
   const canRefresh = !!setPrices && !!setPriceMeta && openTickers.length > 0;
   const doRefresh = async () => {
@@ -884,6 +973,13 @@ export default function HomeTab({
 
   return (
     <div className="grid gap-4">
+      {sampleData && (
+        <div className="rounded-xl border border-dashed border-[var(--accent)] bg-[color:color-mix(in_srgb,var(--accent)_6%,transparent)] px-4 py-2.5 text-sm flex items-center gap-3 flex-wrap">
+          <span><span className="font-semibold">Sample data.</span> These figures come from a demo ledger with illustrative prices, so you can see how the screens work. Nothing here is yours yet.</span>
+          <button onClick={() => setTab && setTab("import")} className="text-[var(--accent)] font-medium hover:underline">Import your own →</button>
+          <button onClick={() => setTab && setTab("ledger")} className="text-[var(--muted)] hover:underline">or enter trades by hand</button>
+        </div>
+      )}
       <TaxYearEndBanner taxYearEnd={taxYearEnd} setTab={setTab} />
       <SinceLastVisitCard summary={sinceVisit} setTab={setTab} />
 
@@ -930,7 +1026,7 @@ export default function HomeTab({
             click" are different classes of message. Gets the whole right
             column next to the headline — it's the one thing on this page
             that's actionable, so it earns the prime real estate. */}
-        <ActionQueueCard queue={queue} setTab={setTab} dataLine={
+        <ActionQueueCard queue={queue} setTab={setTab} onPullIbkr={canPullIbkr ? doPullIbkr : null} pulling={pulling} dataLine={
           <div className="mt-auto pt-2 border-t border-[var(--border)]">
             <div className="flex items-start justify-between gap-2">
               <div className="text-xs text-[var(--muted)] leading-snug">
