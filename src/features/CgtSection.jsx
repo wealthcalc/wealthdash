@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useCallback, useRef } from "react";
 import { AlertCircle, Download, Wand2, FlaskConical, Check, Printer, Info, Scale, TrendingDown, Plus, Trash2 } from "lucide-react";
 import { ukTaxYear } from "../core/cgt-engine.mjs";
-import { cfgFor, aeaForYear, paFor, liabilityForYear, sharesForTargetGain, nextTaxYear, optimiseDisposals } from "../core/uk-tax.mjs";
+import { cfgFor, aeaForYear, paFor, liabilityForYear, sharesForTargetGain, nextTaxYear, optimiseDisposals, currentTaxYear } from "../core/uk-tax.mjs";
 import { buildTaxPack, renderTaxPackHTML } from "../core/tax-pack.mjs";
 import { locationPlan } from "../core/asset-location.mjs";
 import { resolveAssumptions, kindAssumptionsFrom } from "../core/assumptions.mjs";
@@ -942,9 +942,9 @@ function MultiYearOptimiser({ pools, prices, income }) {
 
 /* ---------------------------- Report tab ---------------------------- */
 function ReportTab({ taxYears, disposals, income, carried, yearlyLiab = {} }) {
-  const [ry, setRy] = useState(taxYears[0] || "2025/26");
+  const [ry, setRy] = useState(taxYears[0] || currentTaxYear(todayISO()));
   const [msg, setMsg] = useState("");
-  const yr = taxYears.includes(ry) ? ry : (taxYears[0] || "2025/26");
+  const yr = taxYears.includes(ry) ? ry : (taxYears[0] || currentTaxYear(todayISO()));
   const yd = disposals.filter((d) => d.taxYear === yr);
   // Prefer the cross-year chained result (has carriedInto/carriedOut for box
   // 45/47 — losses brought forward can come from any earlier tracked year,

@@ -31,6 +31,21 @@ export const TAX_YEARS = {
 };
 export const LATEST_YEAR = "2026/27";
 export const cfgFor = (year) => TAX_YEARS[year] || { ...TAX_YEARS[LATEST_YEAR], assumed: true };
+
+// THE tax year the app is currently in, derived from the date rather than
+// typed anywhere. The UI previously fell back to a hardcoded "2025/26" in
+// two places when a screen had no data to infer a year from — which is
+// how a fallback silently goes a year stale every April. `today` is an
+// ISO date; it's a parameter (not read from the clock) so this stays pure
+// and testable, matching the rest of core/.
+export function currentTaxYear(today) {
+  const s = String(today || "");
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) throw new Error("currentTaxYear requires an ISO date (YYYY-MM-DD)");
+  const y = +m[1], md = `${m[2]}-${m[3]}`;
+  const start = md >= "04-06" ? y : y - 1;
+  return `${start}/${String((start + 1) % 100).padStart(2, "0")}`;
+}
 export const aeaForYear = (year) => cfgFor(year).aea;
 export const rateForDate = (cfg, dateStr) => { let p = cfg.rates[0]; for (const r of cfg.rates) if (r.from <= dateStr) p = r; return p; };
 // Personal allowance tapers by £1 for every £2 of income over £100,000.

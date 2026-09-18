@@ -545,8 +545,70 @@ function IconBtn({ children, as = "button", title, "aria-label": ariaLabel, ...p
   const C = as;
   return <C {...p} title={title} aria-label={ariaLabel || title} className="inline-flex items-center justify-center w-9 h-9 rounded-lg border border-[var(--border)] bg-[var(--panel)] hover:bg-[var(--panel2)] text-[var(--fg)] cursor-pointer">{children}</C>;
 }
-function Field({ label, children }) {
-  return <label className="flex flex-col gap-1"><span className="text-xs text-[var(--muted)]">{label}</span>{children}</label>;
+// `error` (optional) renders the field's own validation message beneath
+// it and marks the label — so a rejected value is explained where it was
+// typed, not just somewhere near the button.
+function Field({ label, children, error }) {
+  return (
+    <label className="flex flex-col gap-1">
+      <span className={"text-xs " + (error ? "text-[var(--loss)]" : "text-[var(--muted)]")}>{label}</span>
+      {children}
+      {error && <span role="alert" className="text-[11px] text-[var(--loss)] leading-snug">{error}</span>}
+    </label>
+  );
+}
+
+// A labelled control with an uppercase caption and an inline error — the
+// variant the Gilts tab introduced; now shared. `label={null}` reserves
+// the caption's height so a button lines up with the inputs beside it.
+function FormField({ label, error, children }) {
+  return (
+    <label className="block">
+      <span className="block text-[11px] uppercase tracking-wide text-[var(--muted)] mb-1" aria-hidden={label == null || undefined}>
+        {label == null ? " " : label}
+      </span>
+      {children}
+      {error && <span role="alert" className="block text-[11px] text-[var(--loss)] mt-1 leading-snug">{error}</span>}
+    </label>
+  );
+}
+
+// One inline summary of everything wrong with a form, for forms whose
+// fields aren't individually decorated. Renders nothing when clean.
+function FormErrors({ errors, className = "" }) {
+  const msgs = [...new Set(Object.values(errors || {}).filter(Boolean))];
+  if (!msgs.length) return null;
+  return (
+    <div role="alert" className={"text-xs text-[var(--loss)] leading-snug " + className}>
+      {msgs.join(" ")}
+    </div>
+  );
+}
+
+// Enter submits from any input or select inside — WITHOUT a <form>, so the
+// other buttons in the row ("More…", fetch-FX, a toggle) don't silently
+// become submit buttons, which is what a real <form> would do to them.
+// Textareas keep Enter for newlines; buttons keep their own click; an IME
+// composition in progress is left alone.
+function EnterSubmits({ onSubmit, children, className, ...rest }) {
+  const onKeyDown = (e) => {
+    if (e.key !== "Enter" || e.shiftKey || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.nativeEvent && e.nativeEvent.isComposing) return;
+    const t = e.target;
+    const tag = t && t.tagName;
+    if (tag !== "INPUT" && tag !== "SELECT") return;
+    if (t.type === "checkbox" || t.type === "radio" || t.type === "button" || t.type === "submit") return;
+    if (t.getAttribute && t.getAttribute("list")) {
+      // A datalist suggestion being picked with Enter shouldn't also submit.
+      // Browsers fire keydown before committing the pick, so we can't tell;
+      // erring towards not submitting on the first Enter in a datalist
+      // input keeps the pick from being lost. A second Enter submits.
+      if (t.dataset.enterArmed !== "1") { t.dataset.enterArmed = "1"; setTimeout(() => { delete t.dataset.enterArmed; }, 800); return; }
+    }
+    e.preventDefault();
+    onSubmit && onSubmit();
+  };
+  return <div className={className} onKeyDown={onKeyDown} {...rest}>{children}</div>;
 }
 function Stat({ label, value, sub, tone, big }) {
   const c = tone === "gain" ? "text-[var(--gain)]" : tone === "loss" ? "text-[var(--loss)]" : "text-[var(--fg)]";
@@ -607,7 +669,7 @@ export {
   uid, todayISO, SAMPLE, METHOD,
   AV_URL, avQuote, fxViaFrankfurter, fxViaYahoo, fxViaAlphaVantage, fxHistorical, fxToGBP, toGBP, avBudget, avBump, sleep,
   KIND_LABEL, ALLOC_COLORS, AllocBar, pct, pctPlain, toneOf, SHORT_SPAN, RateCell, rateIsDisplayable,
-  IconBtn, Field, Stat, Row, MethodChip, Empty, TwoStepDelete,
+  IconBtn, Field, FormField, FormErrors, EnterSubmits, Stat, Row, MethodChip, Empty, TwoStepDelete,
   useSort, sortRows, SortTh, dedupeAgainstExisting,
   useVirtualRows,
 };

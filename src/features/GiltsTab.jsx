@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useRef } from "react";
 import { Landmark, AlertTriangle, Plus, Search, X } from "lucide-react";
-import { gbp, WrapperChip, dmoDateToIso, fetchDmoGiltPrices, fetchDmoGiltCatalogue, num, uid, todayISO, Stat, Empty, SegmentedControl, useSort, sortRows, SortTh, TwoStepDelete } from "../ui/shared.jsx";
+import { gbp, WrapperChip, dmoDateToIso, fetchDmoGiltPrices, fetchDmoGiltCatalogue, num, uid, todayISO, Stat, Empty, SegmentedControl, useSort, sortRows, SortTh, TwoStepDelete, FormField, EnterSubmits } from "../ui/shared.jsx";
 import { buildGiltLadder } from "../core/gilt-ladder.mjs";
 import {
   validateGiltRegistration, unregisterGiltMeta, giltRegistryDiagnostics,
@@ -12,7 +12,7 @@ const BLANK_FORM = { ticker: "", name: "", coupon: "", maturity: "", isin: "", i
 
 // Raw persisted state from the store via selectors; only DERIVED data
 // (`data`, the shell's giltAnalytics output) arrives as a prop — Phase 2.8.
-function GiltsTab({ data }) {
+function GiltsTab({ data, onOpenHolding }) {
   const secMeta = useAppStore((s) => s.secMeta), setSecMeta = useAppStore((s) => s.setSecMeta);
   const prices = useAppStore((s) => s.prices), setPrices = useAppStore((s) => s.setPrices);
   const txns = useAppStore((s) => s.txns), setTxns = useAppStore((s) => s.setTxns);
@@ -228,7 +228,9 @@ function GiltsTab({ data }) {
                   <tr key={h.wrapper + h.ticker} className="hover:bg-[var(--panel2)] align-top">
                     <td className="px-2.5 py-2" title={`${h.name} · ${h.isin}`}>
                       <div className="font-medium whitespace-nowrap">
-                        {h.ticker}
+                        {onOpenHolding
+                          ? <button onClick={() => onOpenHolding(h.ticker)} className="hover:text-[var(--accent)] underline-offset-2 hover:underline" title={`Everything about ${h.ticker}`}>{h.ticker}</button>
+                          : h.ticker}
                         {h.indexLinked && <span className="ml-1.5 text-[10px] font-semibold px-1 py-0.5 rounded bg-[color:color-mix(in_srgb,var(--accent)_18%,transparent)] text-[var(--accent)] align-middle" title="Index-linked: quoted in real terms, uplifted by the index ratio. CGT-exempt including the whole inflation uplift (TCGA 1992 s115); only the coupon is taxable.">IL</span>}
                         {h.exDiv && <span className="ml-1.5 text-[10px] font-semibold px-1 py-0.5 rounded bg-[color:color-mix(in_srgb,var(--m-bb)_18%,transparent)] text-[var(--m-bb)] align-middle" title="In the ex-dividend window (7 business days before the coupon; bank holidays not modelled) — accrued is negative (rebate); the registered holder at ex-div gets the coupon">ex-div</span>}
                       </div>
@@ -381,7 +383,7 @@ function GiltsTab({ data }) {
           setErrors({});
         }} />
 
-        <div className="grid gap-2 sm:grid-cols-[7rem_1fr_7rem_10rem_11rem_auto] items-start">
+        <EnterSubmits onSubmit={registerGilt} className="grid gap-2 sm:grid-cols-[7rem_1fr_7rem_10rem_11rem_auto] items-start">
           <FormField label="Ticker" error={errors.ticker}>
             <input className="input w-full" placeholder="TG30" value={form.ticker} onChange={(e) => setForm({ ...form, ticker: e.target.value })} aria-invalid={!!errors.ticker} />
           </FormField>
@@ -405,7 +407,7 @@ function GiltsTab({ data }) {
               )}
             </div>
           </FormField>
-        </div>
+        </EnterSubmits>
 
         <div className="flex flex-wrap items-start gap-3 pt-1">
           <label className="flex items-center gap-2 text-sm">
@@ -441,22 +443,6 @@ function GiltsTab({ data }) {
 }
 
 /* ------------------------------ sub-views ----------------------------- */
-
-// A labelled control that shows WHY it was rejected. The whole point: the
-// old form's only response to a bad field was to do nothing at all.
-// `label={null}` reserves the same vertical space for a button, so controls
-// on the row still line up.
-function FormField({ label, error, children }) {
-  return (
-    <label className="block">
-      <span className="block text-[11px] uppercase tracking-wide text-[var(--muted)] mb-1" aria-hidden={label == null || undefined}>
-        {label == null ? " " : label}
-      </span>
-      {children}
-      {error && <span role="alert" className="block text-[11px] text-[var(--loss)] mt-1 leading-snug">{error}</span>}
-    </label>
-  );
-}
 
 // Why the ladder is empty, in the specific terms of this user's data. Silent
 // on a healthy setup.
@@ -619,7 +605,7 @@ function AddGiltTrade({ registered, onAdd }) {
   return (
     <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 space-y-2">
       <div className="text-sm font-medium flex items-center gap-2"><Plus size={15} className="text-[var(--accent)]" /> Add a gilt trade</div>
-      <div className="grid gap-2 sm:grid-cols-[8rem_9rem_6rem_6rem_8rem_9rem_7rem_auto] items-start">
+      <EnterSubmits onSubmit={submit} className="grid gap-2 sm:grid-cols-[8rem_9rem_6rem_6rem_8rem_9rem_7rem_auto] items-start">
         <FormField label="Gilt" error={errors.ticker}>
           <select className="input w-full" value={f.ticker} onChange={(e) => setF({ ...f, ticker: e.target.value })}>
             {registered.map(([tk, m]) => <option key={tk} value={tk}>{tk} — {m.coupon}% {String(m.maturity).slice(0, 4)}</option>)}
@@ -646,7 +632,7 @@ function AddGiltTrade({ registered, onAdd }) {
           <input className="input num w-full text-right" inputMode="decimal" placeholder="0" value={f.fees} onChange={(e) => setF({ ...f, fees: e.target.value })} />
         </FormField>
         <FormField label={null}><button className="btn-accent" onClick={submit}>Add</button></FormField>
-      </div>
+      </EnterSubmits>
       <p className="text-xs text-[var(--muted)] leading-relaxed">
         {preview.ok
           ? <>Cost recorded: <span className="num font-medium text-[var(--fg)]">{gbp(preview.row.gbpAmount)}</span> ({gbp(preview.consideration)} clean{+f.fees > 0 ? ` + ${gbp(+f.fees)} fees` : ""}). </>

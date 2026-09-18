@@ -1,7 +1,8 @@
 import React, { useState, useMemo } from "react";
 import { Banknote, PlusCircle, Info, ChevronDown, ChevronUp, CalendarClock } from "lucide-react";
 import { vestingSchedule, awardSummary, deferredCashTotals } from "../core/deferred-cash.mjs";
-import { gbp, gbp0, num, uid, todayISO, Field, Stat, Empty, TwoStepDelete } from "../ui/shared.jsx";
+import { gbp, gbp0, num, uid, todayISO, Field, FormErrors, EnterSubmits, Stat, Empty, TwoStepDelete } from "../ui/shared.jsx";
+import { validateFields, req, pos, isoDate } from "../core/validate.mjs";
 import useAppStore from "../state/appStore.js";
 
 /* ======================================================================
@@ -45,9 +46,13 @@ function DeferredCashTab() {
     return out.sort((x, y) => (x.date < y.date ? -1 : 1));
   }, [awards, tranches, today]);
 
+  const [aErr, setAErr] = useState({});
+  const [trErr, setTrErr] = useState({});
   const addAward = () => {
+    const v = validateFields(form, { label: [req("Label")], awardDate: [isoDate("Award date")] });
+    setAErr(v.errors);
+    if (!v.ok) return;
     const label = form.label.trim();
-    if (!label || !form.awardDate) return;
     setAwards((a) => [...a, { ...form, label, note: form.note.trim() }]);
     setForm(AWARD_BLANK());
   };
@@ -57,7 +62,9 @@ function DeferredCashTab() {
   const setTrancheForm = (awardId, patch) => setTrancheForms((f) => ({ ...f, [awardId]: { ...trancheForm(awardId), ...patch } }));
   const addTranche = (awardId) => {
     const tr = trancheForm(awardId);
-    if (!tr.date || !(+tr.amount > 0)) return;
+    const v = validateFields(tr, { date: [isoDate("Date")], amount: [pos("Amount")] });
+    setTrErr((m) => ({ ...m, [awardId]: v.errors }));
+    if (!v.ok) return;
     setTranches((t) => [...t, { ...tr, id: uid(), amount: +tr.amount }]);
     setTrancheForms((f) => ({ ...f, [awardId]: TRANCHE_BLANK(awardId) }));
   };
@@ -156,11 +163,12 @@ function DeferredCashTab() {
                         </table>
                       </div>
                     )}
-                    <div className="flex flex-wrap gap-1.5 items-end">
-                      <input type="date" value={tf.date} onChange={(e) => setTrancheForm(a.id, { date: e.target.value })} className="input num text-xs py-1 w-32" />
+                    <EnterSubmits onSubmit={() => addTranche(a.id)} className="flex flex-wrap gap-1.5 items-end">
+                      <input type="date" value={tf.date} onChange={(e) => setTrancheForm(a.id, { date: e.target.value })} className="input num text-xs py-1 w-32" aria-invalid={!!trErr[a.id]?.date} />
                       <input type="number" placeholder="Amount (£)" value={tf.amount} onChange={(e) => setTrancheForm(a.id, { amount: e.target.value })} className="input num text-xs py-1 w-28" />
                       <button onClick={() => addTranche(a.id)} className="btn-accent !h-auto !py-1 text-xs"><PlusCircle size={13} /> Add</button>
-                    </div>
+                      <FormErrors errors={trErr[a.id]} className="basis-full" />
+                    </EnterSubmits>
                     <p className="text-xs text-[var(--muted)]">Add one row per scheduled payout. A future-dated tranche IS the schedule — enter the date and amount now; it stays "Outstanding" (and in net worth) until its date passes, then flips to "Paid".</p>
                   </div>
                 )}
@@ -170,18 +178,19 @@ function DeferredCashTab() {
         </div>
 
         {/* add award */}
-        <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 space-y-2">
+        <EnterSubmits onSubmit={addAward} className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 space-y-2">
           <div className="text-sm font-medium">Add an award</div>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 items-end">
-            <Field label="Label"><input className="input w-full" placeholder="e.g. 2025 bonus — deferred" value={form.label} onChange={(e) => setForm({ ...form, label: e.target.value })} /></Field>
-            <Field label="Award date"><input type="date" className="input num w-full" value={form.awardDate} onChange={(e) => setForm({ ...form, awardDate: e.target.value })} /></Field>
+            <Field label="Label" error={aErr.label}><input className="input w-full" placeholder="e.g. 2025 bonus — deferred" value={form.label} onChange={(e) => setForm({ ...form, label: e.target.value })} aria-invalid={!!aErr.label} /></Field>
+            <Field label="Award date" error={aErr.awardDate}><input type="date" className="input num w-full" value={form.awardDate} onChange={(e) => setForm({ ...form, awardDate: e.target.value })} aria-invalid={!!aErr.awardDate} /></Field>
             <Field label="Note (optional)"><input className="input w-full" placeholder="e.g. 3-year deferral" value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} /></Field>
             <button onClick={addAward} className="btn-accent justify-center">Add award</button>
           </div>
+          <FormErrors errors={aErr} />
           <p className="text-xs text-[var(--muted)] leading-relaxed">
             After adding, log each payout tranche as a row on the award's card (expand it below its status) — the award itself just carries the label and award date. All amounts are in GBP.
           </p>
-        </div>
+        </EnterSubmits>
       </div>
     </div>
   );

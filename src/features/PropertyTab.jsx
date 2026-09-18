@@ -4,7 +4,8 @@ import {
   estimatedPropertyValue, propertyEquity, netPropertyWorth, mortgageBalance, totalOtherLiabilities,
   mortgagesEndingSoon, HPI_REGIONS, regionLabel, FOREIGN_CURRENCIES,
 } from "../core/property.mjs";
-import { gbp, gbp0, num, uid, todayISO, fxToGBP, Field, Stat, Empty, useSort, sortRows, SortTh, TwoStepDelete } from "../ui/shared.jsx";
+import { gbp, gbp0, num, uid, todayISO, fxToGBP, Field, FormErrors, EnterSubmits, Stat, Empty, useSort, sortRows, SortTh, TwoStepDelete } from "../ui/shared.jsx";
+import { validateFields, req, pos, nonNeg, isoDate, numberish } from "../core/validate.mjs";
 import useAppStore from "../state/appStore.js";
 
 const CURRENCIES = ["GBP", ...FOREIGN_CURRENCIES];
@@ -49,8 +50,11 @@ function PropertyTab() {
   const otherTotal = totalOtherLiabilities(otherLiabilities);
   const soon = useMemo(() => mortgagesEndingSoon(mortgages, todayISO(), 180), [mortgages]);
 
+  const [pErr, setPErr] = useState({}), [mErr, setMErr] = useState({}), [lErr, setLErr] = useState({});
   const addProperty = () => {
-    if (!form.label.trim() || !(+form.purchasePrice > 0) || !form.purchaseDate) return;
+    const v = validateFields(form, { label: [req("Label")], purchasePrice: [pos("Purchase price")], purchaseDate: [isoDate("Purchase date")] });
+    setPErr(v.errors);
+    if (!v.ok) return;
     // Land Registry HPI has no foreign coverage — a non-GBP property is
     // always manually valued, regardless of what the form's toggle says.
     // Its region is stored as the explicit "foreign" pseudo-region too
@@ -115,14 +119,18 @@ function PropertyTab() {
   };
 
   const addMortgage = () => {
-    if (!mForm.propertyId || !(+mForm.balance >= 0)) return;
+    const v = validateFields(mForm, { propertyId: [req("Property")], balance: [req("Balance"), nonNeg("Balance")], rate: [numberish("Rate")] });
+    setMErr(v.errors);
+    if (!v.ok) return;
     setMortgages((p) => [...p, { ...mForm, balance: +mForm.balance, rate: mForm.rate === "" ? null : +mForm.rate }]);
     setMForm(MORTGAGE_BLANK(mForm.propertyId));
   };
   const updateMortgage = (id, patch) => setMortgages((p) => p.map((x) => (x.id === id ? { ...x, ...patch } : x)));
 
   const addLiability = () => {
-    if (!lForm.label.trim() || !(+lForm.balance >= 0)) return;
+    const v = validateFields(lForm, { label: [req("Label")], balance: [req("Balance"), nonNeg("Balance")], rate: [numberish("Rate")] });
+    setLErr(v.errors);
+    if (!v.ok) return;
     setOtherLiabilities((p) => [...p, { ...lForm, label: lForm.label.trim(), balance: +lForm.balance, rate: lForm.rate === "" ? null : +lForm.rate }]);
     setLForm(LIABILITY_BLANK());
   };
@@ -241,10 +249,10 @@ function PropertyTab() {
             );
           })}
         </div>
-        <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 space-y-2">
+        <EnterSubmits onSubmit={addProperty} className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 space-y-2">
           <div className="text-sm font-medium">Add a property</div>
           <div className="grid grid-cols-2 sm:grid-cols-6 gap-2 items-end">
-            <Field label="Label"><input className="input w-full" placeholder="Main home" value={form.label} onChange={(e) => setForm({ ...form, label: e.target.value })} /></Field>
+            <Field label="Label" error={pErr.label}><input className="input w-full" placeholder="Main home" value={form.label} onChange={(e) => setForm({ ...form, label: e.target.value })} aria-invalid={!!pErr.label} /></Field>
             <Field label="Currency">
               <select className="input w-full" value={form.currency} onChange={(e) => setForm({ ...form, currency: e.target.value })}>
                 {CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}
@@ -263,8 +271,8 @@ function PropertyTab() {
                 </select>
               </Field>
             )}
-            <Field label="Purchase date"><input type="date" className="input num w-full" value={form.purchaseDate} onChange={(e) => setForm({ ...form, purchaseDate: e.target.value })} /></Field>
-            <Field label={`Purchase price (${form.currency})`}><input type="number" className="input num w-full" value={form.purchasePrice} onChange={(e) => setForm({ ...form, purchasePrice: e.target.value })} /></Field>
+            <Field label="Purchase date" error={pErr.purchaseDate}><input type="date" className="input num w-full" value={form.purchaseDate} onChange={(e) => setForm({ ...form, purchaseDate: e.target.value })} aria-invalid={!!pErr.purchaseDate} /></Field>
+            <Field label={`Purchase price (${form.currency})`} error={pErr.purchasePrice}><input type="number" className="input num w-full" value={form.purchasePrice} onChange={(e) => setForm({ ...form, purchasePrice: e.target.value })} aria-invalid={!!pErr.purchasePrice} /></Field>
             {form.currency === "GBP" ? (
               <Field label="Valuation">
                 <select className="input w-full" value={form.valuationMode} onChange={(e) => setForm({ ...form, valuationMode: e.target.value })}>
@@ -277,10 +285,11 @@ function PropertyTab() {
             )}
             <button onClick={addProperty} className="btn-accent justify-center">Add property</button>
           </div>
+          <FormErrors errors={pErr} />
           <p className="text-xs text-[var(--muted)] leading-relaxed">
             HPI-indexed uses HM Land Registry's official UK House Price Index: estimated value = purchase price × (latest regional index ÷ index at your purchase month). It's a regional average trend, not a valuation of your specific property — treat it as a reasonable estimate for net-worth tracking, not a RICS survey or a number to rely on for a sale/remortgage. Foreign properties are always valued manually and converted to GBP at a fetched FX rate (fetch it from the property card after adding).
           </p>
-        </div>
+        </EnterSubmits>
       </div>
 
       {/* mortgages */}
@@ -348,7 +357,7 @@ function PropertyTab() {
             </table>
           </div>
         )}
-        <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 space-y-2">
+        <EnterSubmits onSubmit={addMortgage} className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 space-y-2">
           <div className="text-sm font-medium">Add a mortgage</div>
           <div className="flex flex-wrap gap-2 items-end">
             <Field label="Property">
@@ -363,7 +372,7 @@ function PropertyTab() {
                 {CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}
               </select>
             </Field>
-            <Field label={`Balance (${mForm.currency})`}><input type="number" className="input num w-28" value={mForm.balance} onChange={(e) => setMForm({ ...mForm, balance: e.target.value })} /></Field>
+            <Field label={`Balance (${mForm.currency})`} error={mErr.balance}><input type="number" className="input num w-28" value={mForm.balance} onChange={(e) => setMForm({ ...mForm, balance: e.target.value })} aria-invalid={!!mErr.balance} /></Field>
             <Field label="Rate %"><input type="number" step="0.01" className="input num w-20" value={mForm.rate} onChange={(e) => setMForm({ ...mForm, rate: e.target.value })} /></Field>
             <Field label="Type">
               <select className="input" value={mForm.rateType} onChange={(e) => setMForm({ ...mForm, rateType: e.target.value })}>
@@ -373,8 +382,9 @@ function PropertyTab() {
             {mForm.rateType === "fixed" && <Field label="Fixed ends"><input type="date" className="input num" value={mForm.fixedEndDate} onChange={(e) => setMForm({ ...mForm, fixedEndDate: e.target.value })} /></Field>}
             <button onClick={addMortgage} disabled={!mForm.propertyId} className="btn-accent disabled:opacity-50">Add mortgage</button>
           </div>
+          <FormErrors errors={mErr} />
           <p className="text-xs text-[var(--muted)]">No amortisation is projected — enter the current balance from your latest statement and update it periodically; overpayments and rate changes are yours to track, not modelled. A foreign-currency mortgage (e.g. a EUR mortgage on a EUR property) needs its own FX rate fetched from the table above — it's converted independently of the property's own rate.</p>
-        </div>
+        </EnterSubmits>
       </div>
 
       {/* other liabilities */}
@@ -400,17 +410,18 @@ function PropertyTab() {
             </table>
           </div>
         )}
-        <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 space-y-2">
+        <EnterSubmits onSubmit={addLiability} className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 space-y-2">
           <div className="text-sm font-medium">Add a liability</div>
           <div className="flex flex-wrap gap-2 items-end">
-            <Field label="Label"><input className="input w-40" placeholder="Car loan" value={lForm.label} onChange={(e) => setLForm({ ...lForm, label: e.target.value })} /></Field>
-            <Field label="Balance"><input type="number" className="input num w-28" value={lForm.balance} onChange={(e) => setLForm({ ...lForm, balance: e.target.value })} /></Field>
+            <Field label="Label" error={lErr.label}><input className="input w-40" placeholder="Car loan" value={lForm.label} onChange={(e) => setLForm({ ...lForm, label: e.target.value })} aria-invalid={!!lErr.label} /></Field>
+            <Field label="Balance" error={lErr.balance}><input type="number" className="input num w-28" value={lForm.balance} onChange={(e) => setLForm({ ...lForm, balance: e.target.value })} aria-invalid={!!lErr.balance} /></Field>
             <Field label="Rate % (optional)"><input type="number" step="0.01" className="input num w-24" value={lForm.rate} onChange={(e) => setLForm({ ...lForm, rate: e.target.value })} /></Field>
             <Field label="Notes"><input className="input w-48" value={lForm.notes} onChange={(e) => setLForm({ ...lForm, notes: e.target.value })} /></Field>
             <button onClick={addLiability} className="btn-accent">Add liability</button>
           </div>
+          <FormErrors errors={lErr} />
           <p className="text-xs text-[var(--muted)]">Anything not a mortgage: personal loans, credit cards, student loans, car finance. Counted in net worth the same way — subtracted, not projected forward.</p>
-        </div>
+        </EnterSubmits>
       </div>
     </div>
   );

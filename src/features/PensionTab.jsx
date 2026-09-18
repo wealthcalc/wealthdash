@@ -3,7 +3,8 @@ import { Plus, Trash2, ClipboardPaste, Check } from "lucide-react";
 import { normWrapper } from "../core/portfolio.mjs";
 import { xirr } from "../core/returns.mjs";
 import { parseLgimPaste, parseLgimApi, matchLgimRows, suggestLgimMatch, lgimIgnoreKey } from "../core/lgim-import.mjs";
-import { gbp, gbp0, WrapperChip, num, round2, CurrencyInput, NumberInput, uid, todayISO, rateIsDisplayable, Field, Stat, Empty } from "../ui/shared.jsx";
+import { gbp, gbp0, WrapperChip, num, round2, CurrencyInput, NumberInput, uid, todayISO, rateIsDisplayable, Field, FormErrors, EnterSubmits, Stat, Empty } from "../ui/shared.jsx";
+import { validateFields, req, pos, isoDate } from "../core/validate.mjs";
 import useAppStore from "../state/appStore.js";
 import { removeWithUndo } from "../ui/undo.jsx";
 
@@ -371,10 +372,14 @@ function PensionTab({ recomputeProviderCost }) {
   // recomputeProviderCost is now passed in as a prop (shared with the Import
   // tab's bulk CSV path) so both use the exact same allocation logic.
 
+  const [rowErrors, setRowErrors] = useState({});
+  const [cfErrors, setCfErrors] = useState({});
   const addRow = () => {
+    const v = validateFields(form, { ticker: [req("Ticker / code")], units: [pos("Units")], price: [pos("Price per unit")] });
+    setRowErrors(v.errors);
+    if (!v.ok) return;
     const tk = form.ticker.toUpperCase().trim();
     const units = +form.units, price = +form.price;
-    if (!tk || !Number.isFinite(units) || !Number.isFinite(price) || units <= 0) return;
     setSecMeta((m) => ({ ...m, [tk]: { ...m[tk], name: form.name.trim() || tk, domicile: "GB", eri: false, kind: "fund", provider: form.provider.trim() || "Unassigned" } }));
     setUnits(form.wrapper, tk, units, price);
     setPrice(tk, price);
@@ -386,8 +391,10 @@ function PensionTab({ recomputeProviderCost }) {
   // identically. Immediately reallocates that provider's fund cost so it
   // shows up in the book cost right away, not just in XIRR.
   const addContribution = () => {
+    const v = validateFields(cfForm, { provider: [req("Provider")], date: [isoDate("Date")], amount: [pos("Amount")] });
+    setCfErrors(v.errors);
+    if (!v.ok) return;
     const amt = +cfForm.amount;
-    if (!cfForm.provider.trim() || !cfForm.date || !Number.isFinite(amt) || amt <= 0) return;
     const provider = cfForm.provider.trim();
     const newEntry = { id: uid(), date: cfForm.date, provider, type: cfForm.type, ccy: "GBP", nativeAmount: round2(amt), gbpAmount: round2(amt) };
     setPensionCashflows((p) => [...p, newEntry]);
@@ -547,31 +554,33 @@ function PensionTab({ recomputeProviderCost }) {
         </div>
       )}
 
-      <div className="flex items-end gap-2 flex-wrap rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3">
+      <EnterSubmits onSubmit={addRow} className="flex items-end gap-2 flex-wrap rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3">
         <Field label="Wrapper"><select value={form.wrapper} onChange={(e) => setForm({ ...form, wrapper: e.target.value })} className="input">{["SIPP", "LISA"].map((w) => <option key={w}>{w}</option>)}</select></Field>
         <Field label="Provider (existing or new)">
           <input list="pension-providers" value={form.provider} onChange={(e) => setForm({ ...form, provider: e.target.value })} className="input w-44" placeholder="e.g. L&G (Citi)" />
           <datalist id="pension-providers">{providers.map((p) => <option key={p} value={p} />)}</datalist>
         </Field>
-        <Field label="Ticker / code"><input value={form.ticker} onChange={(e) => setForm({ ...form, ticker: e.target.value.toUpperCase() })} className="input num w-28" placeholder="e.g. CITIUS" /></Field>
+        <Field label="Ticker / code" error={rowErrors.ticker}><input value={form.ticker} onChange={(e) => setForm({ ...form, ticker: e.target.value.toUpperCase() })} className="input num w-28" placeholder="e.g. CITIUS" aria-invalid={!!rowErrors.ticker} /></Field>
         <Field label="Fund name"><input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="input w-56" placeholder="e.g. L&G Global Equity" /></Field>
-        <Field label="Units"><input type="number" value={form.units} onChange={(e) => setForm({ ...form, units: e.target.value })} className="input num w-28" placeholder="0" /></Field>
-        <Field label="Price / unit (£)"><input type="number" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} className="input num w-28" placeholder="0.00" /></Field>
+        <Field label="Units" error={rowErrors.units}><input type="number" value={form.units} onChange={(e) => setForm({ ...form, units: e.target.value })} className="input num w-28" placeholder="0" aria-invalid={!!rowErrors.units} /></Field>
+        <Field label="Price / unit (£)" error={rowErrors.price}><input type="number" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} className="input num w-28" placeholder="0.00" aria-invalid={!!rowErrors.price} /></Field>
         <button onClick={addRow} className="btn-accent"><Plus size={15} /> Add fund</button>
-      </div>
+        <FormErrors errors={rowErrors} className="basis-full" />
+      </EnterSubmits>
 
       {/* One-off contribution — the alternative to bulk CSV import on the
           Import tab. Either path feeds the same XIRR calculation; use this
           for a single payslip, the CSV importer for a full history at once. */}
-      <div className="flex items-end gap-2 flex-wrap rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3">
-        <Field label="Provider">
+      <EnterSubmits onSubmit={addContribution} className="flex items-end gap-2 flex-wrap rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3">
+        <Field label="Provider" error={cfErrors.provider}>
           <input list="pension-providers" value={cfForm.provider} onChange={(e) => setCfForm({ ...cfForm, provider: e.target.value })} className="input w-44" placeholder="e.g. L&G (Citi)" />
         </Field>
-        <Field label="Date"><input type="date" value={cfForm.date} onChange={(e) => setCfForm({ ...cfForm, date: e.target.value })} className="input num" /></Field>
+        <Field label="Date" error={cfErrors.date}><input type="date" value={cfForm.date} onChange={(e) => setCfForm({ ...cfForm, date: e.target.value })} className="input num" aria-invalid={!!cfErrors.date} /></Field>
         <Field label="Type"><select value={cfForm.type} onChange={(e) => setCfForm({ ...cfForm, type: e.target.value })} className="input"><option>Regular Contribution</option><option>Employer Contribution</option><option>Adjustment</option></select></Field>
-        <Field label="Amount (£)"><input type="number" value={cfForm.amount} onChange={(e) => setCfForm({ ...cfForm, amount: e.target.value })} className="input num w-32" placeholder="0.00" /></Field>
+        <Field label="Amount (£)" error={cfErrors.amount}><input type="number" value={cfForm.amount} onChange={(e) => setCfForm({ ...cfForm, amount: e.target.value })} className="input num w-32" placeholder="0.00" aria-invalid={!!cfErrors.amount} /></Field>
         <button onClick={addContribution} className="btn-accent"><Plus size={15} /> Add contribution</button>
-      </div>
+        <FormErrors errors={cfErrors} className="basis-full" />
+      </EnterSubmits>
 
       <div className="flex items-end gap-3 flex-wrap rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3">
         <Field label="LISA invested — book cost (£)"><CurrencyInput value={lisaInvestedCost} onChange={(v) => setLisaInvested(v, lisaInvestedValue)} className="w-44" /></Field>

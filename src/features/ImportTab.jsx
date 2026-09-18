@@ -405,7 +405,7 @@ function ImportTab({ setTab, recomputeProviderCost }) {
   // ---- generic ----
   const parse = () => {
     const res = Papa.parse(raw.trim(), { header: true, skipEmptyLines: true });
-    if (!res.data?.length) return;
+    if (!res.data?.length) { setNote("Nothing parsed — the paste needs a header row followed by at least one data row (use “Copy example format” for the shape)."); return; }
     const cols = res.meta.fields || [];
     const find = (re) => cols.find((c) => re.test(c));
     const guess = {};
@@ -429,7 +429,7 @@ function ImportTab({ setTab, recomputeProviderCost }) {
   const [mapDiv, setMapDiv] = useState({});
   const parseDiv = () => {
     const res = Papa.parse(rawDiv.trim(), { header: true, skipEmptyLines: true });
-    if (!res.data?.length) return;
+    if (!res.data?.length) { setNote("Nothing parsed — the paste needs a header row followed by at least one data row (use “Copy example format” for the shape)."); return; }
     const cols = res.meta.fields || [];
     const find = (re) => cols.find((c) => re.test(c));
     const guess = {};
@@ -458,7 +458,7 @@ function ImportTab({ setTab, recomputeProviderCost }) {
   const existingProviders = useMemo(() => [...new Set(Object.values(secMeta || {}).map((m) => m.provider).filter(Boolean))].sort(), [secMeta]);
   const parsePension = () => {
     const res = Papa.parse(rawPension.trim(), { header: true, skipEmptyLines: true });
-    if (!res.data?.length) return;
+    if (!res.data?.length) { setNote("Nothing parsed — the paste needs a header row followed by at least one data row (use “Copy example format” for the shape)."); return; }
     setParsedPension(res.data); setMapPension(guessPensionColumns(res.meta.fields || []));
   };
   const previewPension = useMemo(
@@ -475,7 +475,7 @@ function ImportTab({ setTab, recomputeProviderCost }) {
   );
   const pensionDedup = useMemo(() => dedupeAgainstExisting(pensionParsedRows, pensionCashflows, pensionKey), [pensionParsedRows, pensionCashflows]);
   const doImportPension = () => {
-    if (!pensionProvider.trim()) return;
+    if (!pensionProvider.trim()) { setNote("Enter the provider name first — contributions are grouped and allocated by provider."); return; }
     const provider = pensionProvider.trim();
     const rows = pensionDedup.rows.map((r) => ({ id: uid(), ...r, gbpAmount: r.ccy === "GBP" ? r.nativeAmount : null }));
     setPensionCashflows((p) => [...p, ...rows]);
@@ -565,7 +565,7 @@ function ImportTab({ setTab, recomputeProviderCost }) {
   const parseRsu = (text, fileName) => {
     const t = (text ?? rsuRaw).trim(); if (!t) return;
     const res = Papa.parse(t, { header: true, skipEmptyLines: true });
-    if (!res.data?.length) return;
+    if (!res.data?.length) { setNote("Nothing parsed — the paste needs a header row followed by at least one data row (use “Copy example format” for the shape)."); return; }
     setRsuRows(res.data);
     const fn = fileName ?? rsuFileName;
     if (fn) setRsuFileName(fn);

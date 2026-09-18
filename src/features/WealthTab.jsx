@@ -9,8 +9,8 @@ import { currencyExposure } from "../core/currency-exposure.mjs";
 import LivePricesPanel from "../ui/LivePricesPanel.jsx";
 import {
   gbp, gbp0, num, pct, CurrencyInput, Stat, Empty,
-  uid, todayISO, Field, useSort, sortRows, SortTh, TwoStepDelete,
-} from "../ui/shared.jsx";
+  uid, todayISO, Field, useSort, sortRows, SortTh, TwoStepDelete, FormErrors, EnterSubmits } from "../ui/shared.jsx";
+import { validateFields, req, nonNeg, numberish } from "../core/validate.mjs";
 import useAppStore from "../state/appStore.js";
 
 const ACCOUNT_BLANK = () => ({
@@ -60,8 +60,13 @@ function WealthTab({ model, netWorth = null, setTab }) {
   const acctByWrapper = cashAccountsByWrapper(cashAccounts);
 
   // ---- cash accounts (named, with rate + maturity) ----
+  const [acctErr, setAcctErr] = useState({}), [cardErr, setCardErr] = useState({});
   const addAccount = () => {
-    if (!(+acctForm.balance >= 0)) return;
+    // A label is required now: an unnamed "£12,000 at —" row is what makes
+    // the cash list unreadable six months later.
+    const v = validateFields(acctForm, { label: [req("Label")], balance: [req("Balance"), nonNeg("Balance")], rate: [numberish("Rate")] });
+    setAcctErr(v.errors);
+    if (!v.ok) return;
     setCashAccounts((p) => [...p, { ...acctForm, balance: +acctForm.balance, rate: acctForm.rate === "" ? null : +acctForm.rate }]);
     setAcctForm(ACCOUNT_BLANK());
   };
@@ -70,7 +75,9 @@ function WealthTab({ model, netWorth = null, setTab }) {
 
   // ---- credit cards (named, subtracted from net worth) ----
   const addCard = () => {
-    if (!(+cardForm.balance >= 0)) return;
+    const v = validateFields(cardForm, { label: [req("Card")], balance: [nonNeg("Balance owed")] });
+    setCardErr(v.errors);
+    if (!v.ok) return;
     setCreditCards((p) => [...p, { ...cardForm, balance: +cardForm.balance }]);
     setCardForm(CARD_BLANK());
   };
@@ -294,7 +301,7 @@ function WealthTab({ model, netWorth = null, setTab }) {
           </div>
         )}
 
-        <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 space-y-2">
+        <EnterSubmits onSubmit={addAccount} className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 space-y-2">
           <div className="text-sm font-medium">Add a cash account</div>
           <div className="flex flex-wrap gap-2 items-end">
             <Field label="Wrapper">
@@ -302,9 +309,9 @@ function WealthTab({ model, netWorth = null, setTab }) {
                 {WRAPPERS.map((w) => <option key={w} value={w}>{w}</option>)}
               </select>
             </Field>
-            <Field label="Label"><input className="input w-32" placeholder="Emergency fund" value={acctForm.label} onChange={(e) => setAcctForm({ ...acctForm, label: e.target.value })} /></Field>
+            <Field label="Label" error={acctErr.label}><input className="input w-32" placeholder="Emergency fund" value={acctForm.label} onChange={(e) => setAcctForm({ ...acctForm, label: e.target.value })} aria-invalid={!!acctErr.label} /></Field>
             <Field label="Institution"><input className="input w-32" placeholder="Marcus" value={acctForm.institution} onChange={(e) => setAcctForm({ ...acctForm, institution: e.target.value })} /></Field>
-            <Field label="Balance"><input type="number" className="input num w-28" value={acctForm.balance} onChange={(e) => setAcctForm({ ...acctForm, balance: e.target.value })} /></Field>
+            <Field label="Balance" error={acctErr.balance}><input type="number" className="input num w-28" value={acctForm.balance} onChange={(e) => setAcctForm({ ...acctForm, balance: e.target.value })} aria-invalid={!!acctErr.balance} /></Field>
             <Field label="Rate %"><input type="number" step="0.01" className="input num w-20" value={acctForm.rate} onChange={(e) => setAcctForm({ ...acctForm, rate: e.target.value })} /></Field>
             <Field label="Type">
               <select className="input" value={acctForm.rateType} onChange={(e) => setAcctForm({ ...acctForm, rateType: e.target.value })}>
@@ -314,10 +321,11 @@ function WealthTab({ model, netWorth = null, setTab }) {
             {acctForm.rateType === "fixed" && <Field label="Maturity"><input type="date" className="input num" value={acctForm.maturityDate} onChange={(e) => setAcctForm({ ...acctForm, maturityDate: e.target.value })} /></Field>}
             <button onClick={addAccount} className="btn-accent">Add account</button>
           </div>
+          <FormErrors errors={acctErr} />
           <p className="text-xs text-[var(--muted)] leading-relaxed">
             Additive on top of the manual "Cash" figure per wrapper above — a wrapper's true cash total is the manual/unallocated amount PLUS everything entered here, same principle as the LISA cash/fund-table split on the Pension tab. No compounding or reinvestment is projected: balances and rates are what you last entered, not a forecast.
           </p>
-        </div>
+        </EnterSubmits>
       </div>
 
       {/* credit cards — named revolving-debt balances, subtracted from net worth */}
@@ -354,19 +362,20 @@ function WealthTab({ model, netWorth = null, setTab }) {
           </div>
         )}
 
-        <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 space-y-2">
+        <EnterSubmits onSubmit={addCard} className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 space-y-2">
           <div className="text-sm font-medium">Add a credit card</div>
           <div className="flex flex-wrap gap-2 items-end">
-            <Field label="Card"><input className="input w-32" placeholder="Everyday Amex" value={cardForm.label} onChange={(e) => setCardForm({ ...cardForm, label: e.target.value })} /></Field>
+            <Field label="Card" error={cardErr.label}><input className="input w-32" placeholder="Everyday Amex" value={cardForm.label} onChange={(e) => setCardForm({ ...cardForm, label: e.target.value })} aria-invalid={!!cardErr.label} /></Field>
             <Field label="Issuer"><input className="input w-32" placeholder="Amex" value={cardForm.issuer} onChange={(e) => setCardForm({ ...cardForm, issuer: e.target.value })} /></Field>
             <Field label="Balance owed (£)"><CurrencyInput value={cardForm.balance === "" ? 0 : cardForm.balance} onChange={(v) => setCardForm({ ...cardForm, balance: v })} className="w-32" /></Field>
             <Field label="Notes"><input className="input w-36" placeholder="optional" value={cardForm.notes} onChange={(e) => setCardForm({ ...cardForm, notes: e.target.value })} /></Field>
             <button onClick={addCard} className="btn-accent">Add card</button>
           </div>
+          <FormErrors errors={cardErr} />
           <p className="text-xs text-[var(--muted)] leading-relaxed">
             Balances here are subtracted from net worth on the Home tab, same as property mortgages and other liabilities. No interest/APR modelling — a balance is what you last entered, not a forecast; update it as statements come in.
           </p>
-        </div>
+        </EnterSubmits>
       </div>
 
       {/* Per-position detail (the Wrapper/Ticker/Qty/cost/price/value table)

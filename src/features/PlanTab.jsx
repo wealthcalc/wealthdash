@@ -38,6 +38,7 @@ import { effectiveCashByWrapper } from "../core/cash.mjs";
 import { planSpendFromBudget, mergedSpend } from "../core/budget.mjs";
 import { store, uid, todayISO } from "../ui/shared.jsx";
 import useAppStore from "../state/appStore.js";
+import { LATEST_YEAR } from "../core/uk-tax.mjs";
 
 import { T, THEME_CSS, MONO, SANS, hdrBtn, gbp, gbpK, pct, tooltipStyle } from "./plan/theme.js";
 import { Card, Stat, Field, Segmented, Toggle, PANEL_OPEN_DEFAULT, PanelSection, Legendlet, Note, Barline, Row } from "./plan/controls.jsx";
@@ -237,7 +238,7 @@ export default function PlanTab({
         }}
       >
         <div style={{ fontSize: 11.5, color: T.muted }}>
-          Pre &amp; post-retirement projections · 2025/26 tax rules · educational model, not advice
+          Pre &amp; post-retirement projections · {LATEST_YEAR} tax rules · educational model, not advice
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           <Segmented

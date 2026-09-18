@@ -99,7 +99,25 @@ export async function refreshAllPrices({
   try {
     onProgress("Fetching from Yahoo…");
     const by = await yahooFetch(otherTickers.map((tk) => meta(tk).yahoo));
-    for (const tk of otherTickers) { const q = by[meta(tk).yahoo]; if (q && q.price != null) { const fx = await getFx(q.currency); if (applyQuote(tk, q.price, q.currency, fx, "Yahoo")) done[tk] = true; } }
+    const names = {};
+    for (const tk of otherTickers) {
+      const q = by[meta(tk).yahoo];
+      if (q && q.price != null) {
+        const fx = await getFx(q.currency);
+        if (applyQuote(tk, q.price, q.currency, fx, "Yahoo")) done[tk] = true;
+      }
+      // Yahoo sends a human name with every quote. It was being thrown away,
+      // which is why the Holdings table showed only tickers — a memory test.
+      // Only fills a gap: a name the user typed or an issuer supplied wins.
+      if (q && q.name && !secMeta[tk]?.name) names[tk] = String(q.name).trim();
+    }
+    if (setSecMeta && Object.keys(names).length) {
+      setSecMeta((m) => {
+        const n = { ...m };
+        for (const [tk, name] of Object.entries(names)) if (!n[tk]?.name) n[tk] = { ...n[tk], name, nameSource: "Yahoo" };
+        return n;
+      });
+    }
   } catch { warn = "Yahoo function unreachable — trying Alpha Vantage fallback. "; }
   // /api/quotes now batches all symbols into one upstream Yahoo request and
   // does its own isolated retry server-side for anything the batch omitted,

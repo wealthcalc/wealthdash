@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from "react";
-import { AlertTriangle, PieChart } from "lucide-react";
+import { AlertTriangle, PieChart, Wrench } from "lucide-react";
 import { isWrapperTaxable } from "../core/portfolio.mjs";
 import { parseExposurePaste, portfolioExposure, overlapMatrix } from "../core/lookthrough.mjs";
 import LivePricesPanel from "../ui/LivePricesPanel.jsx";
@@ -83,7 +83,7 @@ function ExposureEditor({ tickers, secMeta, setSecMeta }) {
 // — the "how am I invested" views moved here from the Net worth ▸ Balance
 // sheet tab, since concentration and region/sector exposure are a portfolio
 // question, not a balance-sheet one. Part of the Phase 2.8 de-drilling pass.
-function HoldingsTab({ positions, model = null, concentration = null, aiSnapshot = null }) {
+function HoldingsTab({ positions, model = null, concentration = null, aiSnapshot = null, onOpenHolding }) {
   const [snapMsg, setSnapMsg] = React.useState("");
   const flashSnap = (m) => { setSnapMsg(m); setTimeout(() => setSnapMsg(""), 3500); };
   // AI snapshot (core/ai-snapshot.mjs, assembled by the shell): a Markdown
@@ -106,7 +106,7 @@ function HoldingsTab({ positions, model = null, concentration = null, aiSnapshot
   const prices = useAppStore((s) => s.prices), setPrices = useAppStore((s) => s.setPrices);
   const secMeta = useAppStore((s) => s.secMeta), setSecMeta = useAppStore((s) => s.setSecMeta);
   const open = positions.filter((p) => p.qty > 1e-6);
-  const [sort, toggleSort] = useSort("wrapper", "asc");
+  const [sort, toggleSort] = useSort("value", "desc");
   // Look-through v1 (core/lookthrough.mjs) — blends pasted factsheet exposure
   // tables over hand tags over untagged, coverage reported. Kept above the
   // early return so hook order is stable whether or not there are open
@@ -125,12 +125,6 @@ function HoldingsTab({ positions, model = null, concentration = null, aiSnapshot
   );
   if (!open.length) return <Empty msg="No open holdings yet. Add buy transactions (any wrapper) to see your positions and unrealised gains." />;
 
-  const setISIN = (tk, v) => setSecMeta((m) => ({ ...m, [tk]: { ...m[tk], isin: v.toUpperCase().trim() } }));
-  // Region/sector tags — look-through v0, read by the Wealth tab's
-  // exposure bars (core/exposure.mjs). Free text with suggestions;
-  // whatever the user types is their own claim about what a fund holds.
-  const setTag = (tk, field, v) => setSecMeta((m) => ({ ...m, [tk]: { ...m[tk], [field]: v } }));
-
   // Sorted by ticker first so that when the user's chosen sort key ties
   // (e.g. every row shares a wrapper), the stable sort below keeps a
   // sensible secondary order instead of falling back to insertion order.
@@ -148,6 +142,7 @@ function HoldingsTab({ positions, model = null, concentration = null, aiSnapshot
   const rows = sortRows(baseRows, sort, {
     wrapper: (r) => r.wrapper, tk: (r) => r.tk, qty: (r) => r.qty, avg: (r) => r.avg, cost: (r) => r.cost,
     price: (r) => (r.price === "" ? null : +r.price), value: (r) => r.value, unreal: (r) => r.unreal, pct: (r) => r.pct,
+    weight: (r) => r.value,   // weight sorts as value: same order, no divide-by-total needed
   });
 
   // Windowed rendering past VIRTUALIZE_THRESHOLD rows (see ui/shared.jsx) —
@@ -163,6 +158,10 @@ function HoldingsTab({ positions, model = null, concentration = null, aiSnapshot
   const priced = rows.filter((r) => r.value != null);
   const totCost = priced.reduce((s, r) => s + r.cost, 0);
   const totValue = priced.reduce((s, r) => s + r.value, 0);
+  // Weight = share of PRICED market value. The most basic field a holdings
+  // table has, and it was missing while three set-once inputs had columns.
+  const weightOf = (r) => (r.value != null && totValue > 0 ? r.value / totValue : null);
+  const maxWeight = Math.max(0, ...rows.map((r) => weightOf(r) || 0));
   const totUnreal = totValue - totCost;
   const missingIsin = rows.filter((r) => !r.sec.isin).length;
   const tickers = [...new Set(rows.map((r) => r.tk))];
@@ -170,6 +169,30 @@ function HoldingsTab({ positions, model = null, concentration = null, aiSnapshot
   // makes the CGT-relevant portion obvious at a glance.
   const taxableCost = rows.filter((r) => !r.sheltered).reduce((s, r) => s + r.cost, 0);
   const shelteredCost = rows.filter((r) => r.sheltered).reduce((s, r) => s + r.cost, 0);
+
+  const TickerCell = ({ r }) => (
+    <div className="min-w-0">
+      <div className="flex items-center gap-1.5">
+        {onOpenHolding
+          ? <button onClick={() => onOpenHolding(r.tk)} className="font-medium hover:text-[var(--accent)] hover:underline underline-offset-2" title={`Everything about ${r.tk}`}>{r.tk}</button>
+          : <span className="font-medium">{r.tk}</span>}
+        {r.sec.eri === true && <span title="Offshore reporting fund — generates excess reportable income (ERI) while held unsheltered" className="text-[10px] font-semibold px-1 py-0.5 rounded bg-[color:color-mix(in_srgb,var(--m-bb)_18%,transparent)] text-[var(--m-bb)]">ERI</span>}
+      </div>
+      {r.sec.name && <div className="text-[11px] text-[var(--muted)] truncate max-w-[14rem] leading-tight" title={r.sec.name}>{r.sec.name}</div>}
+    </div>
+  );
+  const WeightCell = ({ r }) => {
+    const w = weightOf(r);
+    if (w == null) return <span className="text-[var(--muted)]">—</span>;
+    return (
+      <div className="flex items-center justify-end gap-2" title={`${pct(w)} of priced market value`}>
+        <div className="h-1.5 w-16 rounded bg-[var(--panel2)] overflow-hidden" aria-hidden="true">
+          <div className="h-full bg-[var(--accent)]" style={{ width: `${maxWeight > 0 ? (w / maxWeight) * 100 : 0}%` }} />
+        </div>
+        <span className="num w-12 text-right">{pct(w)}</span>
+      </div>
+    );
+  };
 
   return (
     <div className="space-y-4">
@@ -180,32 +203,93 @@ function HoldingsTab({ positions, model = null, concentration = null, aiSnapshot
         <Stat label="Unrealised %" value={priced.length && totCost ? `${totUnreal >= 0 ? "+" : ""}${num((totUnreal / totCost) * 100)}%` : "—"} tone={totUnreal >= 0 ? "gain" : "loss"} />
       </div>
 
-      {/* AI snapshot — the whole portfolio as one Markdown document for LLM prompts */}
-      {aiSnapshot && (
-        <div className="flex items-center gap-2 flex-wrap">
-          <button onClick={copySnapshot}
-            className="inline-flex items-center gap-1.5 text-sm font-medium px-3 h-9 rounded-lg border border-[var(--accent)] text-[var(--accent)] hover:bg-[var(--panel2)]"
-            title="Copy a Markdown snapshot of the whole portfolio — every holding with values, weights, allocation, concentration, returns and data-quality caveats — written to be pasted into an AI chat for analysis or allocation discussion. Contains no account numbers or credentials.">
-            Copy AI snapshot
-          </button>
-          <button onClick={downloadSnapshot}
-            className="inline-flex items-center gap-1.5 text-sm font-medium px-3 h-9 rounded-lg border border-[var(--border)] text-[var(--fg)] hover:bg-[var(--panel2)]"
-            title="Download the same snapshot as a .md file for attaching to a prompt">
-            ↓ .md
-          </button>
-          {snapMsg && <span role="status" className="text-xs text-[var(--muted)]">{snapMsg}</span>}
-        </div>
+      {/* THE TABLE — first, because it's what the tab is named for. It used
+          to sit below four utility panels, starting under the fold. ISIN and
+          the region/sector tags moved into the holding drawer (click a
+          ticker): set-once fields don't belong on every row of a daily view.
+          Past VIRTUALIZE_THRESHOLD rows this becomes a capped-height scroll
+          region — see ui/shared.jsx's useVirtualRows. */}
+      <div ref={virtualHoldings ? holdingsScrollRef : undefined} className="hidden sm:block rounded-xl border border-[var(--border)] overflow-x-auto" style={virtualHoldings ? { maxHeight: "70vh", overflowY: "auto" } : undefined}>
+        <table className="w-full text-sm">
+          <thead className="bg-[var(--panel2)] text-[var(--muted)] text-xs uppercase tracking-wide">
+            <tr>
+              <SortTh id="tk" label="Holding" sort={sort} onSort={toggleSort} className="px-3 py-2 font-medium sticky top-0 z-10 bg-[var(--panel2)]" />
+              <SortTh id="wrapper" label="Wrapper" sort={sort} onSort={toggleSort} className="px-3 py-2 font-medium sticky top-0 z-10 bg-[var(--panel2)]" />
+              <SortTh id="qty" label="Quantity" sort={sort} onSort={toggleSort} align="right" className="px-3 py-2 font-medium sticky top-0 z-10 bg-[var(--panel2)]" />
+              <SortTh id="avg" label="Avg cost" sort={sort} onSort={toggleSort} align="right" className="px-3 py-2 font-medium sticky top-0 z-10 bg-[var(--panel2)] hidden lg:table-cell" />
+              <SortTh id="cost" label="Pool cost" sort={sort} onSort={toggleSort} align="right" className="px-3 py-2 font-medium sticky top-0 z-10 bg-[var(--panel2)]" />
+              <SortTh id="price" label="Price now" sort={sort} onSort={toggleSort} align="right" className="px-3 py-2 font-medium sticky top-0 z-10 bg-[var(--panel2)]" />
+              <SortTh id="value" label="Market value" sort={sort} onSort={toggleSort} align="right" className="px-3 py-2 font-medium sticky top-0 z-10 bg-[var(--panel2)]" />
+              <SortTh id="weight" label="Weight" sort={sort} onSort={toggleSort} align="right" className="px-3 py-2 font-medium sticky top-0 z-10 bg-[var(--panel2)]" />
+              <SortTh id="unreal" label="Unrealised" sort={sort} onSort={toggleSort} align="right" className="px-3 py-2 font-medium sticky top-0 z-10 bg-[var(--panel2)]" />
+              <SortTh id="pct" label="%" sort={sort} onSort={toggleSort} align="right" className="px-3 py-2 font-medium sticky top-0 z-10 bg-[var(--panel2)]" />
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-[var(--border)] bg-[var(--panel)]">
+            {holdingsTopPad > 0 && <tr aria-hidden="true"><td colSpan={10} style={{ height: holdingsTopPad, padding: 0, border: 0 }} /></tr>}
+            {visibleRows.map((r) => (
+              <tr key={r.wrapper + r.tk} className="hover:bg-[var(--panel2)]">
+                <td className="px-3 py-2"><TickerCell r={r} /></td>
+                <td className="px-3 py-2"><WrapperChip wrapper={r.wrapper} /></td>
+                <td className="px-3 py-2 num text-right">{num(r.qty, r.qty % 1 ? 2 : 0)}</td>
+                <td className="px-3 py-2 num text-right text-[var(--muted)] hidden lg:table-cell">{gbp(r.avg)}</td>
+                <td className="px-3 py-2 num text-right">{gbp(r.cost)}</td>
+                <td className="px-3 py-2 text-right">
+                  <input type="number" value={r.price} placeholder="—"
+                    onChange={(e) => setPrices((p) => ({ ...p, [r.tk]: e.target.value === "" ? undefined : +e.target.value }))}
+                    className="input num w-24 text-right py-1" aria-label={`Price for ${r.tk}`} />
+                </td>
+                <td className="px-3 py-2 num text-right">{r.value != null ? gbp(r.value) : "—"}</td>
+                <td className="px-3 py-2"><WeightCell r={r} /></td>
+                <td className={"px-3 py-2 num text-right font-medium " + (r.unreal == null ? "text-[var(--muted)]" : r.unreal >= 0 ? "text-[var(--gain)]" : "text-[var(--loss)]")}>{r.unreal != null ? gbp(r.unreal) : "—"}</td>
+                <td className={"px-3 py-2 num text-right " + (r.pct == null ? "text-[var(--muted)]" : r.pct >= 0 ? "text-[var(--gain)]" : "text-[var(--loss)]")}>{r.pct != null ? `${r.pct >= 0 ? "+" : ""}${num(r.pct)}%` : "—"}</td>
+              </tr>
+            ))}
+            {holdingsBottomPad > 0 && <tr aria-hidden="true"><td colSpan={10} style={{ height: holdingsBottomPad, padding: 0, border: 0 }} /></tr>}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Phone: one card per holding instead of a ten-column sideways scroll. */}
+      <div className="sm:hidden space-y-2">
+        {rows.map((r) => (
+          <div key={r.wrapper + r.tk} className="rounded-xl border border-[var(--border)] bg-[var(--panel)] px-3 py-2.5">
+            <div className="flex items-start justify-between gap-2">
+              <TickerCell r={r} />
+              <WrapperChip wrapper={r.wrapper} />
+            </div>
+            <div className="mt-1.5 grid grid-cols-3 gap-x-3 gap-y-1 text-xs">
+              <div><div className="text-[var(--muted)]">Qty</div><div className="num">{num(r.qty, r.qty % 1 ? 2 : 0)}</div></div>
+              <div><div className="text-[var(--muted)]">Value</div><div className="num">{r.value != null ? gbp0(r.value) : "unpriced"}</div></div>
+              <div><div className="text-[var(--muted)]">Weight</div><div className="num">{weightOf(r) != null ? pct(weightOf(r)) : "—"}</div></div>
+              <div><div className="text-[var(--muted)]">Cost</div><div className="num">{gbp0(r.cost)}</div></div>
+              <div className="col-span-2"><div className="text-[var(--muted)]">Unrealised</div>
+                <div className={"num font-medium " + (r.unreal == null ? "text-[var(--muted)]" : r.unreal >= 0 ? "text-[var(--gain)]" : "text-[var(--loss)]")}>
+                  {r.unreal != null ? `${gbp0(r.unreal)} (${r.pct >= 0 ? "+" : ""}${num(r.pct, 1)}%)` : "—"}
+                </div>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+      {virtualHoldings && (
+        <p className="text-xs text-[var(--muted)]">
+          Showing {visibleRows.length} of {rows.length} positions in view — scroll for more (rendering all {rows.length} at once past {VIRTUALIZE_THRESHOLD} rows gets sluggish, so only the visible window is in the page).
+        </p>
       )}
+      <p className="text-xs text-[var(--muted)]">
+        All holdings across every wrapper (GIA, ISA, SIPP, LISA, VCT). The same price per share applies to a ticker wherever it&apos;s held; prices save locally. Click a ticker for its trades, income, pool, ISIN and tags.
+        Unrealised gain = current value − Section 104 pool cost; it&apos;s an indicator, not a taxable event. Only <span className="font-semibold">GIA</span> holdings are subject to CGT — ISA/SIPP/LISA/VCT are sheltered.
+        {missingIsin > 0 && ` ISIN is set for ${rows.length - missingIsin}/${rows.length} holdings — it's the join key for issuer ERI reports and broker imports; fill the rest in from each holding's drawer.`}
+      </p>
 
       <LivePricesPanel tickers={tickers} />
-
-      <ExposureEditor tickers={tickers} secMeta={secMeta} setSecMeta={setSecMeta} />
 
       {/* allocation & exposure — moved here from the Net worth ▸ Balance sheet
           tab: "how am I invested" (concentration, region/sector mix, fund
           overlap) is a portfolio question. Driven by the same priced market
           value as the table above; the region/sector bars read the factsheet
-          tables pasted in the editor directly above. */}
+          tables pasted in the Tools section below. */}
       {model && (
         <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 space-y-4">
           <div className="text-sm font-medium flex items-center gap-2"><PieChart size={15} className="text-[var(--accent)]" /> Allocation &amp; exposure <span className="text-xs font-normal text-[var(--muted)]">— by priced market value; unpriced holdings excluded</span></div>
@@ -222,7 +306,7 @@ function HoldingsTab({ positions, model = null, concentration = null, aiSnapshot
               {concentration.alerts.length > 0 && (
                 <p className="text-xs mt-2 text-[var(--m-bb)]">
                   <AlertTriangle size={12} className="inline mr-1 -mt-0.5" aria-hidden="true" />
-                  Single-company risk: {concentration.alerts.map((a) => `${a.ticker} is ${pct(a.weight)} (${gbp0(a.value)})`).join(", ")} — diversified funds are exempt from this flag; one company isn't.
+                  Single-company risk: {concentration.alerts.map((a) => `${a.ticker} is ${pct(a.weight)} (${gbp0(a.value)})`).join(", ")} — diversified funds are exempt from this flag; one company isn&apos;t.
                 </p>
               )}
             </div>
@@ -257,88 +341,40 @@ function HoldingsTab({ positions, model = null, concentration = null, aiSnapshot
           )}
 
           <p className="text-xs text-[var(--muted)] leading-relaxed">
-            Currency is each line's native trading currency (a proxy for listing, not look-through exposure — a USD-quoted S&amp;P 500 ETF and a GBP-quoted one hold the same underlying). Domicile comes from the ISIN registry (IE = Irish-domiciled fund, GB = UK).
-            {" "}Region/sector bars blend the factsheet tables pasted above over your single tags over untagged:
+            Currency is each line&apos;s native trading currency (a proxy for listing, not look-through exposure — a USD-quoted S&amp;P 500 ETF and a GBP-quoted one hold the same underlying). Domicile comes from the ISIN registry (IE = Irish-domiciled fund, GB = UK).
+            {" "}Region/sector bars blend pasted factsheet tables over each holding&apos;s tags over untagged:
             {" "}{pct(regionExposure.coverage.lookthroughPct)} of value has factsheet-grade exposure, {pct(regionExposure.coverage.taggedPct)} rides a hand tag, {pct(regionExposure.coverage.untaggedPct)} is untagged.
-            {" "}Constituent-level look-through (real holdings files) remains a future feature — these are the issuers' own published breakdowns.
           </p>
         </div>
       )}
 
-      {/* Past VIRTUALIZE_THRESHOLD rows this becomes a capped-height scroll
-          region with a sticky header and only the visible rows (plus
-          overscan) actually in the DOM — see ui/shared.jsx's useVirtualRows. */}
-      <div ref={virtualHoldings ? holdingsScrollRef : undefined} className="rounded-xl border border-[var(--border)] overflow-x-auto" style={virtualHoldings ? { maxHeight: "70vh", overflowY: "auto" } : undefined}>
-        <table className="w-full text-sm">
-          <thead className="bg-[var(--panel2)] text-[var(--muted)] text-xs uppercase tracking-wide">
-            <tr>
-              <SortTh id="wrapper" label="Wrapper" sort={sort} onSort={toggleSort} className="px-3 py-2 font-medium sticky top-0 z-10 bg-[var(--panel2)]" />
-              <SortTh id="tk" label="Ticker" sort={sort} onSort={toggleSort} className="px-3 py-2 font-medium sticky top-0 z-10 bg-[var(--panel2)]" />
-              <th className="px-3 py-2 font-medium text-left sticky top-0 z-10 bg-[var(--panel2)]">ISIN</th>
-              <th className="px-3 py-2 font-medium text-left sticky top-0 z-10 bg-[var(--panel2)]" title="Where the holding's underlying exposure actually is — your judgement, powers the Wealth tab's region bar">Region</th>
-              <th className="px-3 py-2 font-medium text-left sticky top-0 z-10 bg-[var(--panel2)]" title="Sector of the underlying exposure — 'Diversified' is the honest tag for a broad fund">Sector</th>
-              <SortTh id="qty" label="Quantity" sort={sort} onSort={toggleSort} align="right" className="px-3 py-2 font-medium sticky top-0 z-10 bg-[var(--panel2)]" />
-              <SortTh id="avg" label="Avg cost" sort={sort} onSort={toggleSort} align="right" className="px-3 py-2 font-medium sticky top-0 z-10 bg-[var(--panel2)]" />
-              <SortTh id="cost" label="Pool cost" sort={sort} onSort={toggleSort} align="right" className="px-3 py-2 font-medium sticky top-0 z-10 bg-[var(--panel2)]" />
-              <SortTh id="price" label="Price now" sort={sort} onSort={toggleSort} align="right" className="px-3 py-2 font-medium sticky top-0 z-10 bg-[var(--panel2)]" />
-              <SortTh id="value" label="Market value" sort={sort} onSort={toggleSort} align="right" className="px-3 py-2 font-medium sticky top-0 z-10 bg-[var(--panel2)]" />
-              <SortTh id="unreal" label="Unrealised" sort={sort} onSort={toggleSort} align="right" className="px-3 py-2 font-medium sticky top-0 z-10 bg-[var(--panel2)]" />
-              <SortTh id="pct" label="%" sort={sort} onSort={toggleSort} align="right" className="px-3 py-2 font-medium sticky top-0 z-10 bg-[var(--panel2)]" />
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-[var(--border)] bg-[var(--panel)]">
-            {holdingsTopPad > 0 && <tr aria-hidden="true"><td colSpan={12} style={{ height: holdingsTopPad, padding: 0, border: 0 }} /></tr>}
-            {visibleRows.map((r) => (
-              <tr key={r.wrapper + r.tk} className="hover:bg-[var(--panel2)]">
-                <td className="px-3 py-2"><WrapperChip wrapper={r.wrapper} /></td>
-                <td className="px-3 py-2 font-medium">
-                  {r.tk}
-                  {r.sec.eri === true && <span title="Offshore reporting fund — generates excess reportable income (ERI) while held unsheltered" className="ml-1.5 text-[11px] font-semibold px-1.5 py-0.5 rounded bg-[color:color-mix(in_srgb,var(--m-bb)_18%,transparent)] text-[var(--m-bb)] align-middle">ERI</span>}
-                </td>
-                <td className="px-3 py-2">
-                  <input value={r.sec.isin || ""} onChange={(e) => setISIN(r.tk, e.target.value)} placeholder="IE00…" className="input font-mono text-xs w-36 py-1" />
-                </td>
-                <td className="px-3 py-2">
-                  <input list="holdings-region-tags" value={r.sec.region || ""} onChange={(e) => setTag(r.tk, "region", e.target.value)} placeholder="—" className="input text-xs w-24 py-1" aria-label={`Region tag for ${r.tk}`} />
-                </td>
-                <td className="px-3 py-2">
-                  <input list="holdings-sector-tags" value={r.sec.sector || ""} onChange={(e) => setTag(r.tk, "sector", e.target.value)} placeholder="—" className="input text-xs w-24 py-1" aria-label={`Sector tag for ${r.tk}`} />
-                </td>
-                <td className="px-3 py-2 num text-right">{num(r.qty, r.qty % 1 ? 2 : 0)}</td>
-                <td className="px-3 py-2 num text-right text-[var(--muted)]">{gbp(r.avg)}</td>
-                <td className="px-3 py-2 num text-right">{gbp(r.cost)}</td>
-                <td className="px-3 py-2 text-right">
-                  <input type="number" value={r.price} placeholder="—"
-                    onChange={(e) => setPrices((p) => ({ ...p, [r.tk]: e.target.value === "" ? undefined : +e.target.value }))}
-                    className="input num w-24 text-right py-1" />
-                </td>
-                <td className="px-3 py-2 num text-right">{r.value != null ? gbp(r.value) : "—"}</td>
-                <td className={"px-3 py-2 num text-right font-medium " + (r.unreal == null ? "text-[var(--muted)]" : r.unreal >= 0 ? "text-[var(--gain)]" : "text-[var(--loss)]")}>{r.unreal != null ? gbp(r.unreal) : "—"}</td>
-                <td className={"px-3 py-2 num text-right " + (r.pct == null ? "text-[var(--muted)]" : r.pct >= 0 ? "text-[var(--gain)]" : "text-[var(--loss)]")}>{r.pct != null ? `${r.pct >= 0 ? "+" : ""}${num(r.pct)}%` : "—"}</td>
-              </tr>
-            ))}
-            {holdingsBottomPad > 0 && <tr aria-hidden="true"><td colSpan={12} style={{ height: holdingsBottomPad, padding: 0, border: 0 }} /></tr>}
-          </tbody>
-        </table>
-      </div>
-      {virtualHoldings && (
-        <p className="text-xs text-[var(--muted)]">
-          Showing {visibleRows.length} of {rows.length} positions in view — scroll for more (rendering all {rows.length} at once past {VIRTUALIZE_THRESHOLD} rows gets sluggish, so only the visible window is in the page).
-        </p>
-      )}
-      <p className="text-xs text-[var(--muted)]">
-        All holdings across every wrapper (GIA, ISA, SIPP, LISA, VCT). The same price per share applies to a ticker wherever it's held. Prices save locally on your device.
-        Unrealised gain = current value − Section 104 pool cost; it's an indicator, not a taxable event. Only <span className="font-semibold">GIA</span> holdings are subject to CGT — ISA/SIPP/LISA/VCT are sheltered.
-        {missingIsin > 0 && ` ISIN is set for ${rows.length - missingIsin}/${rows.length} rows — it's the join key for matching issuer ERI reports, so fill in the rest when you get the chance.`}
-        {" "}The <span className="text-[var(--m-bb)] font-semibold">ERI</span> badge flags offshore reporting funds.
-        {" "}Region/Sector are YOUR look-through tags (a ticker's tags apply wherever it's held) — they feed the Wealth tab's exposure bars, so a world ETF tagged "Global" stops reporting as Irish. Tag a broad fund's sector "Diversified".
-      </p>
-      <datalist id="holdings-region-tags">
-        {["Global", "UK", "US", "Europe ex-UK", "Japan", "Asia ex-Japan", "Emerging markets", "Global ex-US"].map((v) => <option key={v} value={v} />)}
-      </datalist>
-      <datalist id="holdings-sector-tags">
-        {["Diversified", "Technology", "Financials", "Healthcare", "Energy", "Consumer", "Industrials", "Utilities", "Materials", "Telecoms", "Property", "Government bonds"].map((v) => <option key={v} value={v} />)}
-      </datalist>
+      {/* Tools — the setup and export utilities that used to sit ABOVE the
+          table. Collapsed by default: none of them is a daily action. */}
+      <details className="rounded-xl border border-[var(--border)] bg-[var(--panel)] group">
+        <summary className="cursor-pointer select-none px-4 py-3 text-sm font-medium flex items-center gap-2 list-none">
+          <Wrench size={15} className="text-[var(--accent)]" /> Tools
+          <span className="text-xs font-normal text-[var(--muted)]">— AI snapshot export, factsheet exposure tables</span>
+          <span className="ml-auto text-xs text-[var(--muted)] group-open:hidden">show</span><span className="ml-auto text-xs text-[var(--muted)] hidden group-open:inline">hide</span>
+        </summary>
+        <div className="px-4 pb-4 space-y-3 border-t border-[var(--border)] pt-3">
+          {aiSnapshot && (
+            <div className="flex items-center gap-2 flex-wrap">
+              <button onClick={copySnapshot}
+                className="inline-flex items-center gap-1.5 text-sm font-medium px-3 h-9 rounded-lg border border-[var(--accent)] text-[var(--accent)] hover:bg-[var(--panel2)]"
+                title="Copy a Markdown snapshot of the whole portfolio — every holding with values, weights, allocation, concentration, returns and data-quality caveats — written to be pasted into an AI chat for analysis or allocation discussion. Contains no account numbers or credentials.">
+                Copy AI snapshot
+              </button>
+              <button onClick={downloadSnapshot}
+                className="inline-flex items-center gap-1.5 text-sm font-medium px-3 h-9 rounded-lg border border-[var(--border)] text-[var(--fg)] hover:bg-[var(--panel2)]"
+                title="Download the same snapshot as a .md file for attaching to a prompt">
+                ↓ .md
+              </button>
+              {snapMsg && <span role="status" className="text-xs text-[var(--muted)]">{snapMsg}</span>}
+            </div>
+          )}
+          <ExposureEditor tickers={tickers} secMeta={secMeta} setSecMeta={setSecMeta} />
+        </div>
+      </details>
     </div>
   );
 }

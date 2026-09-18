@@ -100,6 +100,7 @@ function LivePricesPanel({ tickers }) {
     const m = meta(tk);
     try {
       const q = (await yahooFetch([m.yahoo]))[m.yahoo];
+      if (q && q.name && !secMeta[tk]?.name && setSecMeta) setSecMeta((sm) => ({ ...sm, [tk]: { ...sm[tk], name: String(q.name).trim(), nameSource: "Yahoo" } }));
       if (q && q.price != null) {
         const fx = await fxToGBP(q.currency);
         if (applyQuote(tk, q.price, q.currency, fx, "Yahoo")) { setMsg(`${tk}: ${num(q.price, 2)} ${q.currency} to ${gbp(toGBP(q.price, q.currency, fx))} (Yahoo)`); setBusy(false); setProg(""); return; }

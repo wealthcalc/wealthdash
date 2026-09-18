@@ -1,7 +1,8 @@
 import React, { useState, useMemo } from "react";
 import { Award, PlusCircle, Info, ChevronDown, ChevronUp, CalendarClock } from "lucide-react";
 import { vestingSchedule, grantSummary, rsuTotals, reconcileLedgerDates } from "../core/rsu.mjs";
-import { gbp, gbp0, num, uid, todayISO, Field, Stat, Empty, TwoStepDelete } from "../ui/shared.jsx";
+import { gbp, gbp0, num, uid, todayISO, Field, FormErrors, EnterSubmits, Stat, Empty, TwoStepDelete } from "../ui/shared.jsx";
+import { validateFields, req, pos, isoDate, nonNeg } from "../core/validate.mjs";
 import LivePricesPanel from "../ui/LivePricesPanel.jsx";
 import useAppStore from "../state/appStore.js";
 
@@ -55,9 +56,13 @@ function RsuTab() {
     return out.sort((a, b) => (a.date < b.date ? -1 : 1));
   }, [grants, events, today]);
 
+  const [gErr, setGErr] = useState({});
+  const [evErr, setEvErr] = useState({});
   const addGrant = () => {
+    const v = validateFields(form, { ticker: [req("Ticker")], grantDate: [isoDate("Grant date")] });
+    setGErr(v.errors);
+    if (!v.ok) return;
     const ticker = form.ticker.trim().toUpperCase();
-    if (!ticker || !form.grantDate) return;
     setGrants((g) => [...g, { ...form, ticker, note: form.note.trim() }]);
     setForm(GRANT_BLANK());
   };
@@ -67,7 +72,9 @@ function RsuTab() {
   const setEventForm = (grantId, patch) => setEventForms((f) => ({ ...f, [grantId]: { ...eventForm(grantId), ...patch } }));
   const addEvent = (grantId) => {
     const ev = eventForm(grantId);
-    if (!ev.date || !(+ev.shares > 0)) return;
+    const v = validateFields(ev, { date: [isoDate("Date")], shares: [pos("Shares")], priceNative: [nonNeg("Price")], fxRate: [nonNeg("FX rate")] });
+    setEvErr((m) => ({ ...m, [grantId]: v.errors }));
+    if (!v.ok) return;
     setEvents((e) => [...e, {
       ...ev, id: uid(), shares: +ev.shares,
       priceNative: ev.priceNative === "" ? null : +ev.priceNative,
@@ -210,8 +217,8 @@ function RsuTab() {
                         </table>
                       </div>
                     )}
-                    <div className="flex flex-wrap gap-1.5 items-end">
-                      <input type="date" value={ef.date} onChange={(e) => setEventForm(g.id, { date: e.target.value })} className="input num text-xs py-1 w-32" />
+                    <EnterSubmits onSubmit={() => addEvent(g.id)} className="flex flex-wrap gap-1.5 items-end">
+                      <input type="date" value={ef.date} onChange={(e) => setEventForm(g.id, { date: e.target.value })} className="input num text-xs py-1 w-32" aria-invalid={!!evErr[g.id]?.date} />
                       <select value={ef.type} onChange={(e) => setEventForm(g.id, { type: e.target.value })} className="input text-xs py-1">
                         {Object.entries(EVENT_LABEL).map(([k, label]) => <option key={k} value={k}>{label}</option>)}
                       </select>
@@ -219,7 +226,8 @@ function RsuTab() {
                       <input type="number" placeholder={`FMV/price (${g.ticker || "native"})`} value={ef.priceNative} onChange={(e) => setEventForm(g.id, { priceNative: e.target.value })} className="input num text-xs py-1 w-32" />
                       <input type="number" placeholder="FX→GBP" value={ef.fxRate} onChange={(e) => setEventForm(g.id, { fxRate: e.target.value })} className="input num text-xs py-1 w-20" disabled={ef.priceNative === ""} />
                       <button onClick={() => addEvent(g.id)} className="btn-accent !h-auto !py-1 text-xs"><PlusCircle size={13} /> Add</button>
-                    </div>
+                      <FormErrors errors={evErr[g.id]} className="basis-full" />
+                    </EnterSubmits>
                     <p className="text-xs text-[var(--muted)]">Price/FX are optional for a future-dated vest (no FMV exists yet) — leave them blank and the schedule still shows the date and share count; fill them in once the shares actually vest, for a cost basis.</p>
                   </div>
                 )}
@@ -229,18 +237,19 @@ function RsuTab() {
         </div>
 
         {/* add grant */}
-        <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 space-y-2">
+        <EnterSubmits onSubmit={addGrant} className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 space-y-2">
           <div className="text-sm font-medium">Add a grant</div>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 items-end">
-            <Field label="Ticker"><input className="input w-full" placeholder="e.g. WFC" value={form.ticker} onChange={(e) => setForm({ ...form, ticker: e.target.value.toUpperCase() })} /></Field>
-            <Field label="Grant date"><input type="date" className="input num w-full" value={form.grantDate} onChange={(e) => setForm({ ...form, grantDate: e.target.value })} /></Field>
+            <Field label="Ticker" error={gErr.ticker}><input className="input w-full" placeholder="e.g. WFC" value={form.ticker} onChange={(e) => setForm({ ...form, ticker: e.target.value.toUpperCase() })} aria-invalid={!!gErr.ticker} /></Field>
+            <Field label="Grant date" error={gErr.grantDate}><input type="date" className="input num w-full" value={form.grantDate} onChange={(e) => setForm({ ...form, grantDate: e.target.value })} aria-invalid={!!gErr.grantDate} /></Field>
             <Field label="Note (optional)"><input className="input w-full" placeholder="e.g. 2024 annual grant" value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} /></Field>
             <button onClick={addGrant} className="btn-accent justify-center">Add grant</button>
           </div>
+          <FormErrors errors={gErr} />
           <p className="text-xs text-[var(--muted)] leading-relaxed">
             After adding, log each vest tranche as an event on the grant's card (expand it below its status) — the grant itself just carries the ticker and grant date. A future-dated vest tranche IS the schedule: add it now with just the date and share count, and fill in the FMV once it actually vests.
           </p>
-        </div>
+        </EnterSubmits>
       </div>
     </div>
   );

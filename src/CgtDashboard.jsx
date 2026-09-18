@@ -5,7 +5,7 @@ import { buildWealthModel, classifyInstrument, normWrapper } from "./core/portfo
 import { computeReturns } from "./core/returns.mjs";
 import { giltAnalytics } from "./core/gilts.mjs";
 import { allocateCostByValueWeight } from "./core/pension-import.mjs";
-import { liabilityForYear, liabilityAllYears } from "./core/uk-tax.mjs";
+import { liabilityForYear, liabilityAllYears, currentTaxYear } from "./core/uk-tax.mjs";
 import { householdNetWorth } from "./core/property.mjs";
 import { totalCreditCardDebt } from "./core/credit-cards.mjs";
 import { privateTotals } from "./core/private-investments.mjs";
@@ -26,6 +26,7 @@ import { unitsHeldAt, uid, todayISO, IconBtn, store as lsStore } from "./ui/shar
 import { DesktopSidebar, MobileDrawer, SubTabBar, SCREENS, LEAF_LABELS } from "./ui/Sidebar.jsx";
 import ErrorBoundary from "./ui/ErrorBoundary.jsx";
 import CommandPalette from "./ui/CommandPalette.jsx";
+import HoldingDrawer from "./ui/HoldingDrawer.jsx";
 import { UndoToast } from "./ui/undo.jsx";
 import { useIsMobile } from "./ui/useIsMobile.js";
 import useAppStore from "./state/appStore.js";
@@ -118,6 +119,9 @@ export default function App() {
 
   // ---- Phase 2.4: hash deep links + command palette -------------------
   const [paletteOpen, setPaletteOpen] = useState(false);
+  // One drawer for the whole app — any ticker anywhere opens it (see ui/HoldingDrawer.jsx).
+  const [drawerTicker, setDrawerTicker] = useState(null);
+  const openHolding = useCallback((tk) => setDrawerTicker(tk ? String(tk).toUpperCase() : null), []);
   // #/<leaf>(/<subtab>) — leaf keys are the SAME strings tab state has
   // always used, so old muscle memory and new URLs agree. A subtab segment
   // pre-selects an inner tab by writing its localStorage key before the
@@ -407,7 +411,8 @@ export default function App() {
     return [...s].sort().reverse();
   }, [taxableDisposals]);
   const [year, setYear] = useState(null);
-  const activeYear = year && taxYears.includes(year) ? year : taxYears[0] || "2025/26";
+  // No disposals yet -> the year we are actually in, never a typed-in one.
+  const activeYear = year && taxYears.includes(year) ? year : taxYears[0] || currentTaxYear(todayISO());
 
   // Chain CGT losses across all tracked years (initial b/f losses = `carried`).
   const allYears = useMemo(() => {
@@ -583,8 +588,14 @@ export default function App() {
       <div className="root min-h-screen bg-[var(--bg)] text-[var(--fg)] flex" style={{ fontFamily: "ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif" }}>
         {!mobileSummaryMode && <DesktopSidebar tab={tab} setTab={setTab} onOpenPalette={() => setPaletteOpen(true)} />}
         {!mobileSummaryMode && <MobileDrawer tab={tab} setTab={setTab} open={mobileNavOpen} onClose={() => setMobileNavOpen(false)} onOpenPalette={() => setPaletteOpen(true)} />}
-        <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} setTab={setTab}
+        <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} setTab={setTab} onOpenHolding={openHolding}
+          names={Object.fromEntries(Object.entries(secMeta || {}).filter(([, m]) => m && m.name).map(([tk, m]) => [tk, m.name]))}
           tickers={wealthModel ? [...new Set(wealthModel.positions.filter((p) => p.qty > 1e-9).map((p) => p.ticker))].sort() : []} />
+        {drawerTicker && (
+          <HoldingDrawer ticker={drawerTicker} onClose={() => setDrawerTicker(null)}
+            positions={wealthModel ? wealthModel.positions : []} pools={taxablePools}
+            giltCashflows={giltData ? giltData.cashflows : []} setTab={setTab} />
+        )}
         {/* One host for the whole app — deletes anywhere surface here. */}
         <UndoToast />
         <main id="main-content" tabIndex={-1} className="flex-1 min-w-0">
@@ -727,7 +738,7 @@ export default function App() {
               }} />}
               {tab === "wealth" && <WealthTab model={wealthModel} netWorth={netWorth} setTab={setTab} />}
               {tab === "returns" && <ReturnsTab returns={returns} />}
-              {tab === "gilts" && <GiltsTab data={giltData} />}
+              {tab === "gilts" && <GiltsTab data={giltData} onOpenHolding={openHolding} />}
               {tab === "pension" && <PensionTab recomputeProviderCost={recomputeProviderCost} />}
               {tab === "cgt" && <CgtSection {...{
                 taxYears, activeYear, setYear, yearDisposals, liab,
@@ -739,12 +750,12 @@ export default function App() {
               {tab === "allowances" && <AllowancesTab eriTxns={eriTxns} taxableDisposals={taxableDisposals} />}
               {tab === "income" && <IncomeTab {...{ eriTxns, incomeByYear, incomeAllWrappers, txns: giaTxns, incomeCalendar }} />}
               {tab === "budget" && <BudgetTab setTab={setTab} projectedIncome={projectedInvestmentIncome} />}
-              {tab === "holdings" && <HoldingsTab positions={wealthModel ? wealthModel.positions : []} model={wealthModel} concentration={exposureConcentration} aiSnapshot={aiSnapshot} />}
+              {tab === "holdings" && <HoldingsTab positions={wealthModel ? wealthModel.positions : []} model={wealthModel} concentration={exposureConcentration} aiSnapshot={aiSnapshot} onOpenHolding={openHolding} />}
               {tab === "property" && <PropertyTab />}
               {tab === "private" && <PrivateTab />}
               {tab === "rsu" && <RsuTab />}
               {tab === "deferredcash" && <DeferredCashTab />}
-              {tab === "ledger" && <LedgerTab />}
+              {tab === "ledger" && <LedgerTab onOpenHolding={openHolding} />}
               {tab === "sync" && <SyncTab />}
               {tab === "import" && <ImportTab setTab={setTab} recomputeProviderCost={recomputeProviderCost} />}
               {tab === "assumptions" && <AssumptionsTab setTab={setTab} />}

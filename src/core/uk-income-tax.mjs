@@ -1,5 +1,6 @@
 /* ======================================================================
-   UK INCOME TAX ENGINE — 2025/26 bands. Pure and node-tested
+   UK INCOME TAX ENGINE — bands as published for BANDS_YEAR (exported
+   below, so a label can never drift from the numbers). Pure and node-tested
    (uk-income-tax.test.mjs).
 
    Extracted out of PlanTab.jsx (where it lived as component-local
@@ -27,6 +28,10 @@
    higher bands as nominal income rises with inflation.
    ====================================================================== */
 
+// The tax year these thresholds were taken from. rUK bands are unchanged
+// into 2026/27 (frozen to 2028); the Scottish bands below are the last set
+// verified against gov.scot, and are labelled rather than guessed forward.
+export const BANDS_YEAR = "2025/26";
 export const PA_BASE = 12570;
 export const PA_TAPER_FROM = 100000;
 

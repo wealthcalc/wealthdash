@@ -8,7 +8,8 @@ import { addMonthsISO } from "../core/ishares-eri.mjs";
 import { summariseBySource, certaintySplit } from "../core/income-calendar.mjs";
 import { dividendChanges, incomeConcentration, incomeByGroup } from "../core/income-analysis.mjs";
 import { vctHoldings } from "../core/vct.mjs";
-import { store, unitsHeldAt, gbp, gbp0, SubTabs, SegmentedControl, num, uid, todayISO, fxToGBP, Field, Empty, useSort, sortRows, SortTh, CurrencyInput, downloadText } from "../ui/shared.jsx";
+import { store, unitsHeldAt, gbp, gbp0, SubTabs, SegmentedControl, num, uid, todayISO, fxToGBP, Field, FormErrors, EnterSubmits, Empty, useSort, sortRows, SortTh, CurrencyInput, downloadText } from "../ui/shared.jsx";
+import { validateFields, req, pos, isoDate, nonNeg } from "../core/validate.mjs";
 import { taxSummaryText } from "../core/export-csv.mjs";
 import useAppStore from "../state/appStore.js";
 import { removeWithUndo } from "../ui/undo.jsx";
@@ -106,9 +107,20 @@ function IncomeTab({ eriTxns, incomeByYear, incomeAllWrappers = {}, txns, income
   React.useEffect(() => store.set("cgt.income.wrapper", incWrapper), [incWrapper]);
   React.useEffect(() => { if (presentWrappers.length && !presentWrappers.includes(incWrapper)) setIncWrapper(presentWrappers[0]); }, [presentWrappers]);
 
-  const addDiv = () => { if (!dv.date || !(+dv.amount)) return; setIncomeEntries((p) => [...p, { ...dv, amount: +dv.amount }]); setDv(DIV_BLANK()); };
+  const [dvErr, setDvErr] = useState({}), [erErr, setErErr] = useState({});
+  const addDiv = () => {
+    const v = validateFields(dv, { date: [isoDate("Date")], amount: [pos("Amount")] });
+    setDvErr(v.errors);
+    if (!v.ok) return;
+    setIncomeEntries((p) => [...p, { ...dv, amount: +dv.amount }]); setDv(DIV_BLANK());
+  };
   const setEriF = (k, v) => setEr((e) => { const n = { ...e, [k]: v }; if (k === "periodEnd") n.distributionDate = addMonthsISO(v, 6); if (k === "currency" && (v === "GBP" || v === "GBp")) n.fxRate = 1; return n; });
-  const addEri = () => { if (!er.ticker || !er.periodEnd || !er.distributionDate || !(+er.perShare)) return; setEriEntries((p) => [...p, { ...er, ticker: er.ticker.toUpperCase(), perShare: +er.perShare, fxRate: +er.fxRate || 0 }]); setEr(ERI_BLANK()); };
+  const addEri = () => {
+    const v = validateFields(er, { ticker: [req("Ticker")], periodEnd: [isoDate("Reporting period end")], distributionDate: [isoDate("Fund distribution date")], perShare: [pos("Reportable income per share")], fxRate: [nonNeg("FX rate")] });
+    setErErr(v.errors);
+    if (!v.ok) return;
+    setEriEntries((p) => [...p, { ...er, ticker: er.ticker.toUpperCase(), perShare: +er.perShare, fxRate: +er.fxRate || 0 }]); setEr(ERI_BLANK());
+  };
   const fetchEriFx = async () => {
     if (er.currency === "GBP" || er.currency === "GBp") return;
     setFxBusy(true);
@@ -254,14 +266,15 @@ function IncomeTab({ eriTxns, incomeByYear, incomeAllWrappers = {}, txns, income
       {sub === "divint" && (
         <div className="space-y-2">
           <h3 className="font-semibold text-sm">Dividends & interest</h3>
-          <div className="flex items-end gap-2 flex-wrap rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3">
-            <Field label="Date"><input type="date" value={dv.date} onChange={(e) => setDv({ ...dv, date: e.target.value })} className="input num" /></Field>
+          <EnterSubmits onSubmit={addDiv} className="flex items-end gap-2 flex-wrap rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3">
+            <Field label="Date" error={dvErr.date}><input type="date" value={dv.date} onChange={(e) => setDv({ ...dv, date: e.target.value })} className="input num" aria-invalid={!!dvErr.date} /></Field>
             <Field label="Ticker (optional)"><input value={dv.ticker} onChange={(e) => setDv({ ...dv, ticker: e.target.value.toUpperCase() })} className="input num w-24" placeholder="—" /></Field>
             <Field label="Type"><select value={dv.kind} onChange={(e) => setDv({ ...dv, kind: e.target.value })} className="input"><option value="dividend">Dividend</option><option value="interest">Interest</option></select></Field>
             <Field label="Wrapper"><select value={dv.wrapper} onChange={(e) => setDv({ ...dv, wrapper: e.target.value })} className="input">{WRAPPERS.map((w) => <option key={w}>{w}</option>)}</select></Field>
-            <Field label="Amount (£, GBP)"><input type="number" value={dv.amount} onChange={(e) => setDv({ ...dv, amount: e.target.value })} className="input num w-32" placeholder="0.00" /></Field>
+            <Field label="Amount (£, GBP)" error={dvErr.amount}><input type="number" value={dv.amount} onChange={(e) => setDv({ ...dv, amount: e.target.value })} className="input num w-32" placeholder="0.00" aria-invalid={!!dvErr.amount} /></Field>
             <button onClick={addDiv} className="btn-accent"><Plus size={15} /> Add</button>
-          </div>
+            <FormErrors errors={dvErr} className="basis-full" />
+          </EnterSubmits>
           {incomeEntries.length > 0 && (
             <div className="rounded-xl border border-[var(--border)] overflow-x-auto">
               <table className="w-full text-sm">
@@ -331,11 +344,11 @@ function IncomeTab({ eriTxns, incomeByYear, incomeAllWrappers = {}, txns, income
         <div className="space-y-2">
           <h3 className="font-semibold text-sm">Excess reportable income (offshore reporting funds)</h3>
           <p className="text-xs text-[var(--muted)] max-w-3xl">For accumulating ETFs and other offshore reporting funds. Enter the reportable income per share from the fund's report and its reporting-period end. It's taxed on the fund distribution date (period end + 6 months), in that tax year, as dividend (equity funds) or interest (bond funds &gt;60% debt) — and the taxed amount is added to the Section 104 pool, lowering the gain on later disposals.</p>
-          <div className="grid gap-2 rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(120px,1fr))", alignItems: "end" }}>
-            <Field label="Ticker"><input value={er.ticker} onChange={(e) => setEriF("ticker", e.target.value.toUpperCase())} className="input num w-full" placeholder="e.g. XNAQ" /></Field>
-            <Field label="Reporting period end"><input type="date" value={er.periodEnd} onChange={(e) => setEriF("periodEnd", e.target.value)} className="input num w-full" /></Field>
-            <Field label="Fund distribution date"><input type="date" value={er.distributionDate} onChange={(e) => setEriF("distributionDate", e.target.value)} className="input num w-full" /></Field>
-            <Field label="Reportable income / share"><input type="number" value={er.perShare} onChange={(e) => setEriF("perShare", e.target.value)} className="input num w-full" placeholder="0.00" /></Field>
+          <EnterSubmits onSubmit={addEri} className="grid gap-2 rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(120px,1fr))", alignItems: "end" }}>
+            <Field label="Ticker" error={erErr.ticker}><input value={er.ticker} onChange={(e) => setEriF("ticker", e.target.value.toUpperCase())} className="input num w-full" placeholder="e.g. XNAQ" aria-invalid={!!erErr.ticker} /></Field>
+            <Field label="Reporting period end" error={erErr.periodEnd}><input type="date" value={er.periodEnd} onChange={(e) => setEriF("periodEnd", e.target.value)} className="input num w-full" aria-invalid={!!erErr.periodEnd} /></Field>
+            <Field label="Fund distribution date" error={erErr.distributionDate}><input type="date" value={er.distributionDate} onChange={(e) => setEriF("distributionDate", e.target.value)} className="input num w-full" aria-invalid={!!erErr.distributionDate} /></Field>
+            <Field label="Reportable income / share" error={erErr.perShare}><input type="number" value={er.perShare} onChange={(e) => setEriF("perShare", e.target.value)} className="input num w-full" placeholder="0.00" aria-invalid={!!erErr.perShare} /></Field>
             <Field label="Currency"><select value={er.currency} onChange={(e) => setEriF("currency", e.target.value)} className="input w-full">{["GBp", "GBP", "USD", "EUR"].map((c) => <option key={c} value={c}>{c}</option>)}</select></Field>
             <Field label="FX → GBP">
               <div className="flex gap-1"><input type="number" value={er.fxRate} onChange={(e) => setEriF("fxRate", e.target.value)} disabled={er.currency === "GBP" || er.currency === "GBp"} className="input num w-full disabled:opacity-50" />
@@ -343,7 +356,8 @@ function IncomeTab({ eriTxns, incomeByYear, incomeAllWrappers = {}, txns, income
             </Field>
             <Field label="Taxed as"><select value={er.treatment} onChange={(e) => setEriF("treatment", e.target.value)} className="input w-full"><option value="dividend">Dividend</option><option value="interest">Interest</option></select></Field>
             <div className="flex items-end"><button onClick={addEri} className="btn-accent w-full justify-center"><Plus size={15} /> Add</button></div>
-          </div>
+            <FormErrors errors={erErr} className="col-span-full" />
+          </EnterSubmits>
           {er.ticker && er.periodEnd && (
             <p className="text-xs text-[var(--muted)] num">Preview: {num(eriPreview.units, eriPreview.units % 1 ? 4 : 0)} units held at {er.periodEnd} → ERI {gbp(eriPreview.g || 0)} taxed in {er.distributionDate ? ukTaxYear(er.distributionDate) : "—"}.</p>
           )}

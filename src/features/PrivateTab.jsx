@@ -5,7 +5,8 @@ import {
   PRIVATE_TYPES, TYPE_LABEL, RELIEF_RATE, EIS_ANNUAL_CAP, EIS_ANNUAL_CAP_KI, SEIS_ANNUAL_CAP,
 } from "../core/private-investments.mjs";
 import { parseInvestmentCsv, parseDistributionPaste, reconcileImportRows } from "../core/private-import.mjs";
-import { gbp, gbp0, num, uid, todayISO, Field, Stat, Empty, TwoStepDelete, RateCell } from "../ui/shared.jsx";
+import { gbp, gbp0, num, uid, todayISO, Field, FormErrors, EnterSubmits, Stat, Empty, TwoStepDelete, RateCell } from "../ui/shared.jsx";
+import { validateFields, req, pos, isoDate } from "../core/validate.mjs";
 import useAppStore from "../state/appStore.js";
 
 /* ======================================================================
@@ -56,8 +57,12 @@ function PrivateTab() {
   const totals = useMemo(() => privateTotals(holdings, events, today), [holdings, events, today]);
   const relief = useMemo(() => reliefByYear(holdings, events), [holdings, events]);
 
+  const [hErr, setHErr] = useState({});
+  const [evErr, setEvErr] = useState({});   // keyed by holding id
   const addHolding = () => {
-    if (!form.name.trim()) return;
+    const v = validateFields(form, { name: [req("Name")] });
+    setHErr(v.errors);
+    if (!v.ok) return;
     setHoldings((h) => [...h, {
       ...form, name: form.name.trim(), entity: form.entity.trim(),
       reliefPct: form.reliefPct === "" ? null : +form.reliefPct,
@@ -73,8 +78,9 @@ function PrivateTab() {
   const setEventForm = (holdingId, patch) => setEventForms((f) => ({ ...f, [holdingId]: { ...eventForm(holdingId), ...patch } }));
   const addEvent = (holdingId) => {
     const ev = eventForm(holdingId);
-    if (!ev.date) return;
-    if (ev.type !== "write_off" && !(+ev.amount > 0)) return;
+    const v = validateFields(ev, { date: [isoDate("Date")], ...(ev.type !== "write_off" ? { amount: [pos("Amount")] } : {}) });
+    setEvErr((m) => ({ ...m, [holdingId]: v.errors }));
+    if (!v.ok) return;
     setEvents((e) => [...e, { ...ev, id: uid(), amount: ev.type === "write_off" ? 0 : +ev.amount, notes: ev.notes.trim() }]);
     setEventForms((f) => ({ ...f, [holdingId]: EVENT_BLANK(holdingId) }));
   };
@@ -272,8 +278,8 @@ function PrivateTab() {
                       )}
                     </div>
 
-                    <div className="flex flex-wrap gap-1.5 items-end">
-                      <input type="date" value={ef.date} onChange={(e) => setEventForm(h.id, { date: e.target.value })} className="input num text-xs py-1 w-32" />
+                    <EnterSubmits onSubmit={() => addEvent(h.id)} className="flex flex-wrap gap-1.5 items-end">
+                      <input type="date" value={ef.date} onChange={(e) => setEventForm(h.id, { date: e.target.value })} className="input num text-xs py-1 w-32" aria-invalid={!!evErr[h.id]?.date} />
                       <select value={ef.type} onChange={(e) => setEventForm(h.id, { type: e.target.value })} className="input text-xs py-1">
                         {Object.entries(EVENT_LABEL).map(([k, label]) => <option key={k} value={k}>{label}</option>)}
                       </select>
@@ -282,7 +288,8 @@ function PrivateTab() {
                       )}
                       <input placeholder="Notes (optional)" value={ef.notes} onChange={(e) => setEventForm(h.id, { notes: e.target.value })} className="input text-xs py-1 w-32" />
                       <button onClick={() => addEvent(h.id)} className="btn-accent !h-auto !py-1 text-xs"><PlusCircle size={13} /> Add</button>
-                    </div>
+                      <FormErrors errors={evErr[h.id]} className="basis-full" />
+                    </EnterSubmits>
                   </div>
                 )}
               </div>
@@ -291,10 +298,10 @@ function PrivateTab() {
         </div>
 
         {/* add holding */}
-        <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 space-y-2">
+        <EnterSubmits onSubmit={addHolding} className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4 space-y-2">
           <div className="text-sm font-medium">Add a private holding</div>
           <div className="grid grid-cols-2 sm:grid-cols-6 gap-2 items-end">
-            <Field label="Name"><input className="input w-full" placeholder="e.g. JamJar Fund II" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field>
+            <Field label="Name" error={hErr.name}><input className="input w-full" placeholder="e.g. JamJar Fund II" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} aria-invalid={!!hErr.name} /></Field>
             <Field label="Entity / manager"><input className="input w-full" placeholder="e.g. JamJar Investments" value={form.entity} onChange={(e) => setForm({ ...form, entity: e.target.value })} /></Field>
             <Field label="Type">
               <select className="input w-full" value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value, reliefPct: RELIEF_RATE[e.target.value] })}>
@@ -310,10 +317,11 @@ function PrivateTab() {
             </Field>
             <button onClick={addHolding} className="btn-accent justify-center">Add holding</button>
           </div>
+          <FormErrors errors={hErr} />
           <p className="text-xs text-[var(--muted)] leading-relaxed">
             After adding, log the initial subscription/first capital call as an event on the holding's card (expand "0 events" below its status chips) — the holding itself just carries identity, type, and the current manual valuation. For an LP/VC fund drawn down in tranches, add one "Capital call" event per drawdown as it happens.
           </p>
-        </div>
+        </EnterSubmits>
       </div>
 
       {/* EIS/SEIS relief by tax year */}

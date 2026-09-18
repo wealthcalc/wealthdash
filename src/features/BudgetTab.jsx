@@ -7,7 +7,8 @@ import { uncategorisedGroups, suggestRule, normaliseMerchant } from "../core/cat
 import { detectRecurring, topMerchants } from "../core/detect-recurring.mjs";
 import { parseStatement, dedupeStatement, PROFILES } from "../core/statement-import.mjs";
 import { expandRecurring, statementCoverage, annualCommitment, FREQUENCIES } from "../core/recurring.mjs";
-import { store, gbp, gbp0, SubTabs, SegmentedControl, uid, todayISO, Field, Empty, Stat, useSort, sortRows, SortTh } from "../ui/shared.jsx";
+import { store, gbp, gbp0, SubTabs, SegmentedControl, uid, todayISO, Field, FormErrors, EnterSubmits, Empty, Stat, useSort, sortRows, SortTh } from "../ui/shared.jsx";
+import { validateFields, req, pos, isoDate, isoDateOpt, notBefore, nonNeg } from "../core/validate.mjs";
 import useAppStore from "../state/appStore.js";
 import { removeWithUndo } from "../ui/undo.jsx";
 
@@ -589,8 +590,12 @@ function Transactions({ categories, catById, txns, spendTxns, setManual, setSpen
   }, [txns, filter, year]);
 
   const [nw, setNw] = useState(() => ({ date: todayISO(), description: "", amount: "", account: "", manualCategoryId: "" }));
+  const [nwErr, setNwErr] = useState({});
   const addOneOff = () => {
-    if (!nw.date || !(+nw.amount)) return;
+    // A refund is a negative amount, so "non-zero" is the rule, not "> 0".
+    const v = validateFields(nw, { date: [isoDate("Date")], amount: [(x) => (String(x ?? "").trim() === "" ? "Amount is required." : !Number.isFinite(+x) ? "Amount isn't a number." : +x === 0 ? "Amount can't be zero." : null)] });
+    setNwErr(v.errors);
+    if (!v.ok) return;
     setSpendTxns((p) => [...p, {
       id: uid(), date: nw.date, description: nw.description.trim() || "Manual entry",
       amount: +nw.amount, account: nw.account.trim(),
@@ -607,10 +612,10 @@ function Transactions({ categories, catById, txns, spendTxns, setManual, setSpen
 
   return (
     <div className="space-y-3">
-      <div className="flex items-end gap-2 flex-wrap rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3">
-        <Field label="Date"><input type="date" value={nw.date} onChange={(e) => setNw({ ...nw, date: e.target.value })} className="input num" /></Field>
+      <EnterSubmits onSubmit={addOneOff} className="flex items-end gap-2 flex-wrap rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3">
+        <Field label="Date" error={nwErr.date}><input type="date" value={nw.date} onChange={(e) => setNw({ ...nw, date: e.target.value })} className="input num" aria-invalid={!!nwErr.date} /></Field>
         <Field label="Description"><input value={nw.description} onChange={(e) => setNw({ ...nw, description: e.target.value })} className="input w-44" placeholder="e.g. Plumber" /></Field>
-        <Field label="Amount (£)"><input type="number" value={nw.amount} onChange={(e) => setNw({ ...nw, amount: e.target.value })} className="input num w-28" placeholder="0.00" /></Field>
+        <Field label="Amount (£)" error={nwErr.amount}><input type="number" value={nw.amount} onChange={(e) => setNw({ ...nw, amount: e.target.value })} className="input num w-28" placeholder="0.00" aria-invalid={!!nwErr.amount} /></Field>
         <Field label="Account"><input value={nw.account} onChange={(e) => setNw({ ...nw, account: e.target.value })} className="input w-32" placeholder="optional" /></Field>
         <Field label="Category">
           <select value={nw.manualCategoryId} onChange={(e) => setNw({ ...nw, manualCategoryId: e.target.value })} className="input">
@@ -619,8 +624,9 @@ function Transactions({ categories, catById, txns, spendTxns, setManual, setSpen
           </select>
         </Field>
         <button onClick={addOneOff} className="btn-accent"><Plus size={15} /> Add spend</button>
+        <FormErrors errors={nwErr} className="basis-full" />
         <p className="text-xs text-[var(--muted)] w-full">One-off cash or card spending that isn't in any statement you import. Enter the amount as a positive number; use a negative for a refund. For anything that repeats, use the Recurring sub-tab instead.</p>
-      </div>
+      </EnterSubmits>
 
       <div className="flex items-center gap-2 flex-wrap">
         <select value={filter} onChange={(e) => setFilter(e.target.value)} className="input">
@@ -863,8 +869,11 @@ function Recurring({ recurring, setRecurring, categories, catById, suppressed, g
     setDismissed((s) => new Set(s).add(d.key));
   };
 
+  const [rErr, setRErr] = useState({});
   const add = () => {
-    if (!r.label.trim() || !(+r.amount) || !r.startDate) return;
+    const v = validateFields(r, { label: [req("What")], amount: [pos("Amount")], startDate: [isoDate("First / next payment")], endDate: [isoDateOpt("Ends"), notBefore("Ends", "startDate", "the first payment")] });
+    setRErr(v.errors);
+    if (!v.ok) return;
     setRecurring((p) => [...p, { ...r, label: r.label.trim(), amount: +r.amount }]);
     setR(REC_BLANK());
   };
@@ -900,19 +909,20 @@ function Recurring({ recurring, setRecurring, categories, catById, suppressed, g
         <strong className="text-[var(--fg)]">No double counting:</strong> name the account each payment leaves from, and for any month where that account HAS imported statement rows, the estimate is suppressed — the statement wins, because it knows about the price rise you forgot. Estimates fill only the gaps: months you haven't imported, and the future.
       </p>
 
-      <div className="grid gap-2 rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(130px,1fr))" }}>
-        <Field label="What"><input value={r.label} onChange={(e) => setR({ ...r, label: e.target.value })} className="input w-full" placeholder="e.g. Mobile" /></Field>
-        <Field label="Amount (£)"><input type="number" value={r.amount} onChange={(e) => setR({ ...r, amount: e.target.value })} className="input num w-full" placeholder="0.00" /></Field>
+      <EnterSubmits onSubmit={add} className="grid gap-2 rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3" style={{ gridTemplateColumns: "repeat(auto-fit,minmax(130px,1fr))" }}>
+        <Field label="What" error={rErr.label}><input value={r.label} onChange={(e) => setR({ ...r, label: e.target.value })} className="input w-full" placeholder="e.g. Mobile" aria-invalid={!!rErr.label} /></Field>
+        <Field label="Amount (£)" error={rErr.amount}><input type="number" value={r.amount} onChange={(e) => setR({ ...r, amount: e.target.value })} className="input num w-full" placeholder="0.00" aria-invalid={!!rErr.amount} /></Field>
         <Field label="How often"><select value={r.frequency} onChange={(e) => setR({ ...r, frequency: e.target.value })} className="input w-full">{FREQUENCIES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></Field>
-        <Field label="First / next payment"><input type="date" value={r.startDate} onChange={(e) => setR({ ...r, startDate: e.target.value })} className="input num w-full" /></Field>
-        <Field label="Ends (optional)"><input type="date" value={r.endDate} onChange={(e) => setR({ ...r, endDate: e.target.value })} className="input num w-full" /></Field>
+        <Field label="First / next payment" error={rErr.startDate}><input type="date" value={r.startDate} onChange={(e) => setR({ ...r, startDate: e.target.value })} className="input num w-full" aria-invalid={!!rErr.startDate} /></Field>
+        <Field label="Ends (optional)" error={rErr.endDate}><input type="date" value={r.endDate} onChange={(e) => setR({ ...r, endDate: e.target.value })} className="input num w-full" aria-invalid={!!rErr.endDate} /></Field>
         <Field label="Category"><select value={r.categoryId} onChange={(e) => setR({ ...r, categoryId: e.target.value })} className="input w-full"><option value="">Choose…</option>{categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></Field>
         <Field label="Paid from">
           <input list="rec-accounts" value={r.account} onChange={(e) => setR({ ...r, account: e.target.value })} className="input w-full" placeholder="e.g. HSBC current" />
           <datalist id="rec-accounts">{knownAccounts.map((a) => <option key={a} value={a} />)}</datalist>
         </Field>
         <div className="flex items-end"><button onClick={add} className="btn-accent w-full justify-center"><Plus size={15} /> Add</button></div>
-      </div>
+        <FormErrors errors={rErr} className="col-span-full" />
+      </EnterSubmits>
 
       {recurring.length === 0 ? (
         <Empty msg="No recurring commitments yet. Add the direct debits and standing payments that don't arrive via a statement you import — mobile, broadband, council tax, service charge, building insurance." />
@@ -1050,14 +1060,20 @@ function Categories({ categories, setCategories, rules, setRules, catById, txns 
     return m;
   }, [txns]);
 
+  const [cErr, setCErr] = useState({});
+  const [ruleErr, setRuleErr] = useState({});
   const addCat = () => {
-    if (!c.name.trim()) return;
+    const v = validateFields(c, { name: [req("Name")], monthly: [nonNeg("£ / month")], annual: [nonNeg("£ / year")] });
+    setCErr(v.errors);
+    if (!v.ok) return;
     setCategories((p) => [...p, { ...c, name: c.name.trim(), monthly: +c.monthly || 0, annual: +c.annual || 0 }]);
     setC(CAT_BLANK());
   };
   const patchCat = (id, k, v) => setCategories((p) => p.map((x) => (x.id === id ? { ...x, [k]: v } : x)));
   const addRule = () => {
-    if (!r.value || !r.categoryId) return;
+    const v = validateFields(r, { value: [req("Value")], categoryId: [req("Category")] });
+    setRuleErr(v.errors);
+    if (!v.ok) return;
     setRules((p) => [...p, { ...r, id: uid(), enabled: true }]);
     setR({ field: "description", op: "contains", value: "", categoryId: "" });
   };
@@ -1074,14 +1090,15 @@ function Categories({ categories, setCategories, rules, setRules, catById, txns 
         <h3 className="text-sm font-semibold">Categories</h3>
         <SuggestBudgets categories={categories} setCategories={setCategories} txns={txns} />
         <p className="text-xs text-[var(--muted)] max-w-3xl">Give a category EITHER a monthly limit or an annual one. Annual-only categories (insurance, holidays, one big trip) are excluded from monthly budget comparisons and reconciled over the year instead — spreading them across 12 months would invent an overspend in the month they land and phantom headroom in the other eleven. "Essential" marks needs over wants: that split is what the retirement plan's income floor uses.</p>
-        <div className="flex items-end gap-2 flex-wrap rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3">
-          <Field label="Name"><input value={c.name} onChange={(e) => setC({ ...c, name: e.target.value })} className="input w-40" placeholder="e.g. Groceries" /></Field>
+        <EnterSubmits onSubmit={addCat} className="flex items-end gap-2 flex-wrap rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3">
+          <Field label="Name" error={cErr.name}><input value={c.name} onChange={(e) => setC({ ...c, name: e.target.value })} className="input w-40" placeholder="e.g. Groceries" aria-invalid={!!cErr.name} /></Field>
           <Field label="£ / month"><input type="number" value={c.monthly} onChange={(e) => setC({ ...c, monthly: e.target.value, annual: "" })} className="input num w-28" placeholder="0" /></Field>
           <Field label="or £ / year"><input type="number" value={c.annual} onChange={(e) => setC({ ...c, annual: e.target.value, monthly: "" })} className="input num w-28" placeholder="0" /></Field>
           <label className="flex items-center gap-1.5 text-xs pb-2"><input type="checkbox" checked={c.essential} onChange={(e) => setC({ ...c, essential: e.target.checked })} /> Essential</label>
           <label className="flex items-center gap-1.5 text-xs pb-2" title="Transfers and card payments aren't spending — excluded from every total"><input type="checkbox" checked={c.transfer} onChange={(e) => setC({ ...c, transfer: e.target.checked })} /> Transfer</label>
           <button onClick={addCat} className="btn-accent"><Plus size={15} /> Add</button>
-        </div>
+          <FormErrors errors={cErr} className="basis-full" />
+        </EnterSubmits>
         {categories.length > 0 && (
           <div className="rounded-xl border border-[var(--border)] overflow-x-auto">
             <table className="w-full text-sm">
@@ -1108,12 +1125,13 @@ function Categories({ categories, setCategories, rules, setRules, catById, txns 
       <div className="space-y-2">
         <h3 className="text-sm font-semibold">Rules</h3>
         <p className="text-xs text-[var(--muted)] max-w-3xl">Checked in order, first match wins — drag the important ones up with the arrows. Rules apply to ALL history the moment you save them, not just future imports, so fixing a rule fixes the past too. Anything you categorise by hand always beats a rule.</p>
-        <div className="flex items-end gap-2 flex-wrap rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3">
+        <EnterSubmits onSubmit={addRule} className="flex items-end gap-2 flex-wrap rounded-xl border border-[var(--border)] bg-[var(--panel)] p-3">
           <Field label="When description"><select value={r.op} onChange={(e) => setR({ ...r, op: e.target.value })} className="input">{OPS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></Field>
-          <Field label="Value"><input value={r.value} onChange={(e) => setR({ ...r, value: e.target.value })} className="input w-44" placeholder="e.g. TESCO" /></Field>
-          <Field label="Category"><select value={r.categoryId} onChange={(e) => setR({ ...r, categoryId: e.target.value })} className="input"><option value="">Choose…</option>{categories.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</select></Field>
+          <Field label="Value" error={ruleErr.value}><input value={r.value} onChange={(e) => setR({ ...r, value: e.target.value })} className="input w-44" placeholder="e.g. TESCO" aria-invalid={!!ruleErr.value} /></Field>
+          <Field label="Category" error={ruleErr.categoryId}><select value={r.categoryId} onChange={(e) => setR({ ...r, categoryId: e.target.value })} className="input" aria-invalid={!!ruleErr.categoryId}><option value="">Choose…</option>{categories.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</select></Field>
           <button onClick={addRule} className="btn-accent"><Plus size={15} /> Add rule</button>
-        </div>
+          <FormErrors errors={ruleErr} className="basis-full" />
+        </EnterSubmits>
         {rules.length === 0 ? (
           <Empty msg="No rules yet. The fastest way to make them: go to Transactions, categorise a merchant group, and use the '+ rule…' column — it writes the rule for you." />
         ) : (

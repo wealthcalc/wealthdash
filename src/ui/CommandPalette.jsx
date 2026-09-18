@@ -34,7 +34,7 @@ const TOOL_ITEMS = [
   { label: "Plan · Buy-to-let", leaf: "plan", subKey: "plan.subtab", subVal: "btl", hint: "rental modelling" },
 ];
 
-export default function CommandPalette({ open, onClose, setTab, tickers = [] }) {
+export default function CommandPalette({ open, onClose, setTab, tickers = [], onOpenHolding, names = {} }) {
   const [q, setQ] = useState("");
   const [sel, setSel] = useState(0);
   const inputRef = useRef(null);
@@ -54,9 +54,12 @@ export default function CommandPalette({ open, onClose, setTab, tickers = [] }) 
       }
     }
     const tools = TOOL_ITEMS;
-    const holds = tickers.map((tk) => ({ label: tk, hint: "holding — open Portfolio", leaf: "holdings" }));
+    // A ticker hit opens the holding DRAWER (everything about it, in place)
+    // rather than merely navigating to the Holdings tab and leaving the
+    // user to find the row. Names are searchable too, so "scottish" finds SMT.
+    const holds = tickers.map((tk) => ({ label: names[tk] ? `${tk} · ${names[tk]}` : tk, hint: "holding — open details", ticker: tk, leaf: "holdings" }));
     return [...nav, ...tools, ...holds];
-  }, [tickers]);
+  }, [tickers, names]);
 
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
@@ -74,6 +77,7 @@ export default function CommandPalette({ open, onClose, setTab, tickers = [] }) 
 
   const go = (item) => {
     if (!item) return;
+    if (item.ticker && onOpenHolding) { onClose(); onOpenHolding(item.ticker); return; }
     if (item.subKey) store.set(item.subKey, item.subVal);
     setTab(item.leaf);
     onClose();

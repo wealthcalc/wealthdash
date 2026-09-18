@@ -303,3 +303,16 @@ test("TAX_YEARS table spot checks against GOV.UK", () => {
   assert.equal(TAX_YEARS["2025/26"].rates[0].basic, 0.18);
   assert.equal(TAX_YEARS["2025/26"].rates[0].higher, 0.24);
 });
+
+test("currentTaxYear is derived from the date, never typed", async () => {
+  const { currentTaxYear, LATEST_YEAR } = await import("../core/uk-tax.mjs");
+  assert.equal(currentTaxYear("2026-09-18"), "2026/27");
+  assert.equal(currentTaxYear("2026-04-05"), "2025/26", "5 April is the last day of the old year");
+  assert.equal(currentTaxYear("2026-04-06"), "2026/27", "6 April starts the new one");
+  assert.equal(currentTaxYear("2029-12-31"), "2029/30");
+  assert.equal(currentTaxYear("2099-04-06"), "2099/00", "century roll-over keeps two digits");
+  assert.throws(() => currentTaxYear(), /ISO date/);
+  // The rates table must actually cover the year we're in — a table that
+  // stops a year short quietly serves "assumed" rates for every live figure.
+  assert.equal(currentTaxYear("2026-09-18"), LATEST_YEAR);
+});

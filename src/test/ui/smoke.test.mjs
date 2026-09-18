@@ -190,10 +190,29 @@ test("HoldingsTab renders positions, tag inputs, and the allocation & exposure p
     concentration: { total: 12000, rows: [], top1: { ticker: "VWRL", weight: 0.8 }, top5Weight: 1, hhi: 0.68, effectiveN: 1.47, alerts: [] },
   })).replaceAll("&amp;", "&");
   assert.ok(html.includes("VWRL"));
-  assert.ok(html.includes("Region"));
-  assert.ok(html.includes("Sector"));
+  // Region/sector tag inputs moved off the table into the holding drawer;
+  // the table now leads with the holdings themselves and a Weight column.
+  assert.ok(html.includes("Weight"));
+  assert.ok(!html.includes('aria-label="Region tag for VWRL"'), "set-once tag inputs no longer occupy every row");
   assert.ok(html.includes("Allocation & exposure"));
   assert.ok(html.includes("Effective holdings"));
+  // The table comes BEFORE the tools section now, not under four panels.
+  assert.ok(html.indexOf("Weight") < html.indexOf("Tools"), "holdings table renders above the Tools disclosure");
+});
+
+test("HoldingDrawer renders a holding's position, pool, income and trades in one place", async () => {
+  const { default: HoldingDrawer } = await import("../../ui/HoldingDrawer.jsx");
+  const html = renderToString(React.createElement(HoldingDrawer, {
+    ticker: "VWRL", onClose: () => {},
+    positions: model.positions, pools: { VWRL: { qty: 100, cost: 8000 } }, giltCashflows: [], setTab: () => {},
+  })).replaceAll("&amp;", "&");
+  assert.ok(html.includes("holding details"), "it's a labelled dialog");
+  assert.ok(html.includes("Position"));
+  assert.ok(html.includes("Section 104 pool"));
+  assert.ok(html.includes("Income received"));
+  assert.ok(html.includes("Trades"));
+  assert.ok(html.includes("Identity & tags"));
+  assert.ok(html.includes("ISIN"));
 });
 
 test("WealthTab renders the net-worth headline and balance-sheet breakdown", () => {
