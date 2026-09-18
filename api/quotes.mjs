@@ -39,11 +39,26 @@ const MAX_SYMBOLS = 50;
 // over that would reintroduce exactly the all-or-nothing this removes.
 const OPTS = { validateResult: false };
 
+// Declared dividend data rides along with the price. It's what lets a
+// holding with no payment history yet (bought last month) appear in the
+// forward income forecast at units x declared annual rate, instead of at
+// zero. Rate is per share in the quote's currency; dates are ISO.
+const isoDay = (d) => {
+  if (!d) return null;
+  const t = d instanceof Date ? d : new Date(typeof d === "number" && d < 1e12 ? d * 1000 : d);
+  return Number.isFinite(t.getTime()) ? t.toISOString().slice(0, 10) : null;
+};
 const shape = (q) => ({
   symbol: q.symbol,
   price: q.regularMarketPrice,
   currency: q.currency || null,        // e.g. "GBp", "GBP", "USD"
   name: q.shortName || q.longName || null,
+  dividendRate: Number.isFinite(q.trailingAnnualDividendRate) ? q.trailingAnnualDividendRate
+    : Number.isFinite(q.dividendRate) ? q.dividendRate : null,
+  dividendYield: Number.isFinite(q.trailingAnnualDividendYield) ? q.trailingAnnualDividendYield
+    : Number.isFinite(q.dividendYield) ? q.dividendYield / 100 : null,
+  exDividendDate: isoDay(q.exDividendDate),
+  dividendDate: isoDay(q.dividendDate),
 });
 
 // One symbol, isolated — the rescue path for anything a batch didn't return.

@@ -256,3 +256,89 @@ test("certaintySplit separates contractual income from projected income", async 
   assert.equal(empty.total, 0);
   assert.equal(empty.scheduledPct, 0);
 });
+
+/* ---------------- forecast improvements (review pass 4) ---------------- */
+
+test("projected dividends SCALE with the units held now, not the units that last paid", () => {
+  // 100 units paid £50 a quarter; the holding has since been doubled.
+  const txns = [
+    { date: "2025-01-01", ticker: "XYZ", side: "BUY", quantity: 100, wrapper: "GIA" },
+    { date: "2026-08-01", ticker: "XYZ", side: "BUY", quantity: 100, wrapper: "GIA" },
+  ];
+  const incomeEntries = ["2025-10-01", "2026-01-01", "2026-04-01", "2026-07-01"].map((date) => ({ date, ticker: "XYZ", kind: "dividend", amount: 50, wrapper: "GIA" }));
+  const ev = buildIncomeCalendar({ incomeEntries, txns, today: "2026-09-01", horizonDays: 365 }).filter((e) => e.label === "XYZ");
+  assert.ok(ev.length >= 3);
+  assert.equal(ev[0].amount, 100, "twice the units, twice the payment");
+  assert.equal(ev[0].scaled, 2);
+
+  // …and a trimmed holding is scaled DOWN.
+  const trimmed = [...txns.slice(0, 1), { date: "2026-08-01", ticker: "XYZ", side: "SELL", quantity: 50, wrapper: "GIA" }];
+  const ev2 = buildIncomeCalendar({ incomeEntries, txns: trimmed, today: "2026-09-01", horizonDays: 365 }).filter((e) => e.label === "XYZ");
+  assert.equal(ev2[0].amount, 25);
+});
+
+test("cash-account interest is forecast monthly from balance x rate, stopping at a fixed term's maturity", () => {
+  const ev = buildIncomeCalendar({
+    cashAccounts: [
+      { id: "a", label: "Marcus", wrapper: "GIA", balance: 60000, rate: 4, rateType: "variable" },
+      { id: "b", label: "1yr bond", wrapper: "GIA", balance: 20000, rate: 5, rateType: "fixed", maturityDate: "2026-12-15" },
+      { id: "c", label: "No rate", wrapper: "GIA", balance: 5000, rate: 0, rateType: "variable" },
+    ],
+    today: "2026-09-18", horizonDays: 365,
+  });
+  const marcus = ev.filter((e) => e.label === "Marcus" && e.source === "interest");
+  assert.equal(marcus.length, 12, "twelve month-ends inside the horizon");
+  assert.equal(marcus[0].amount, 200, "£60,000 x 4% / 12");
+  assert.equal(marcus[0].date, "2026-09-30");
+  assert.equal(marcus[0].certainty, "estimated");
+  const bond = ev.filter((e) => e.label === "1yr bond" && e.source === "interest");
+  assert.equal(bond.length, 3, "Sep, Oct, Nov month-ends only — it matures mid-December");
+  assert.ok(ev.some((e) => e.label === "1yr bond" && e.source === "cash-maturity"), "the maturity itself is still scheduled");
+  assert.ok(!ev.some((e) => e.label === "No rate"), "no rate, no interest invented");
+});
+
+test("a newly bought holding with no payment history is forecast from its declared rate", () => {
+  // Bought in July; zero dividends recorded; the quote feed says $0.80/share
+  // trailing. Previously this contributed £0 to the year ahead.
+  const txns = [{ date: "2026-07-14", ticker: "MNTNL", side: "BUY", quantity: 3150, wrapper: "GIA", nativeCurrency: "USD" }];
+  const secMeta = { MNTNL: { dividend: { rate: 0.8, currency: "USD", exDate: "2026-10-10", payDate: "2026-10-31" } } };
+  const ev = buildIncomeCalendar({
+    txns, secMeta, prices: { MNTNL: 1.53 }, priceMeta: { MNTNL: { raw: 2.05, ccy: "USD" } },   // fx = 1.53/2.05
+    today: "2026-09-18", horizonDays: 365,
+  }).filter((e) => e.label === "MNTNL");
+  assert.equal(ev.length, 4, "quarterly rhythm");
+  assert.equal(ev[0].date, "2026-10-31", "anchored on the next pay date");
+  assert.equal(ev[0].cadence, "declared rate");
+  assert.equal(ev[0].declared, true);
+  const annual = ev.reduce((s, e) => s + e.amount, 0);
+  const expected = 3150 * 0.8 * (1.53 / 2.05);
+  assert.ok(Math.abs(annual - expected) < 1, `annual ${annual} vs ${expected}`);
+});
+
+test("the declared-rate fallback never overrides real history, gilts or fund units", () => {
+  const txns = [
+    { date: "2025-01-01", ticker: "ABC", side: "BUY", quantity: 100, wrapper: "GIA" },
+    { date: "2025-01-01", ticker: "TG30", side: "BUY", quantity: 10000, wrapper: "GIA" },
+    { date: "2025-01-01", ticker: "CITIUS", side: "BUY", quantity: 500, wrapper: "SIPP" },
+  ];
+  const incomeEntries = ["2026-01-05", "2026-04-05", "2026-07-05"].map((date) => ({ date, ticker: "ABC", kind: "dividend", amount: 10, wrapper: "GIA" }));
+  const secMeta = {
+    ABC: { dividend: { rate: 9, currency: "GBP" } },              // would be £900/yr — history says £40
+    TG30: { kind: "gilt", coupon: 0.375, maturity: "2030-10-22", dividend: { rate: 1, currency: "GBP" } },
+    CITIUS: { kind: "fund", dividend: { rate: 1, currency: "GBP" } },
+  };
+  const ev = buildIncomeCalendar({ incomeEntries, txns, secMeta, giltCashflows: [{ date: "2026-10-22", ticker: "TG30", type: "coupon", amount: 18.75, realAmount: 18.75, wrapper: "GIA" }], today: "2026-09-18", horizonDays: 365 });
+  const abc = ev.filter((e) => e.label === "ABC");
+  assert.ok(abc.every((e) => e.cadence !== "declared rate"), "real history wins");
+  assert.ok(!ev.some((e) => e.label === "TG30" && e.cadence === "declared rate"), "gilts have a schedule");
+  assert.ok(!ev.some((e) => e.label === "CITIUS"), "fund units have no feed");
+});
+
+test("declaredRateGBP handles pence, pounds and foreign quotes, and refuses to guess", async () => {
+  const { declaredRateGBP } = await import("../core/income-calendar.mjs");
+  assert.equal(declaredRateGBP({ rate: 25, currency: "GBp" }), 0.25);
+  assert.equal(declaredRateGBP({ rate: 0.25, currency: "GBP" }), 0.25);
+  assert.ok(Math.abs(declaredRateGBP({ rate: 1, currency: "USD" }, 0.75, { raw: 1, ccy: "USD" }) - 0.75) < 1e-9);
+  assert.equal(declaredRateGBP({ rate: 1, currency: "USD" }, 0.75, { raw: 1, ccy: "EUR" }), null, "mismatched FX basis is not a conversion");
+  assert.equal(declaredRateGBP({ rate: 0 }), null);
+});

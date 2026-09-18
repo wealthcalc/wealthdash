@@ -295,8 +295,10 @@ export default function App() {
         .filter((v) => !v.vested)
         .map((v) => ({ date: v.date, amount: (+v.shares || 0) * price, label: `${g.ticker} vest` }));
     }),
+    // Declared-rate fallback for holdings with thin history + FX basis.
+    secMeta, prices, priceMeta,
     today: todayISO(), horizonDays: 365,
-  }), [incomeEntries, txns, cashAccounts, giltData, deferredCashAwards, deferredCashVests, rsuGrants, rsuEvents, prices]);
+  }), [incomeEntries, txns, cashAccounts, giltData, deferredCashAwards, deferredCashVests, rsuGrants, rsuEvents, prices, secMeta, priceMeta]);
 
   // Forward investment income over the next 12 months for the Budget tab's
   // projected-coverage line: recurring INVESTMENT income only — forecast
@@ -749,7 +751,7 @@ export default function App() {
               }} />}
               {tab === "allowances" && <AllowancesTab eriTxns={eriTxns} taxableDisposals={taxableDisposals} />}
               {tab === "income" && <IncomeTab {...{ eriTxns, incomeByYear, incomeAllWrappers, txns: giaTxns, incomeCalendar }} />}
-              {tab === "budget" && <BudgetTab setTab={setTab} projectedIncome={projectedInvestmentIncome} />}
+              {tab === "budget" && <BudgetTab setTab={setTab} projectedIncome={projectedInvestmentIncome} incomeCalendar={incomeCalendar} />}
               {tab === "holdings" && <HoldingsTab positions={wealthModel ? wealthModel.positions : []} model={wealthModel} concentration={exposureConcentration} aiSnapshot={aiSnapshot} onOpenHolding={openHolding} />}
               {tab === "property" && <PropertyTab />}
               {tab === "private" && <PrivateTab />}

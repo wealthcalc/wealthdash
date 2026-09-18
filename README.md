@@ -2637,6 +2637,57 @@ on Transactions and the account column in the drawer cover the need for now.
 The Plan tab's ~350 inline styles are unchanged beyond the verdict move; a
 restyle onto the shared components is a separate, deliberate pass.
 
+## 12-month cashflow forecast
+The forward view used to be an income *calendar* (dated events) and a single
+forward spend *number* (trailing average × inflation), compared as annual
+totals. That answers "does income cover spend over a year" and nothing about
+*when*. Budget ▸ **Forecast** puts both on the same monthly axis.
+
+**Income side (core/income-calendar.mjs).** Three gaps closed:
+- **Units scaling.** Each projected payment is scaled by units held now ÷
+  units held on the last payment date. Topped up since the last dividend and
+  the old forecast understated for a year; trimmed, and it overstated.
+- **Cash-account interest.** Balance × rate, credited monthly, stopping at a
+  fixed term's maturity. Only the maturities were being forecast before.
+- **Declared-rate fallback.** The engine refuses to project anything it
+  hasn't seen paid twice — correct for a ledger that *is* the history, but it
+  meant a holding bought last month contributed £0 to the year ahead however
+  large. `/api/quotes` now returns the trailing annual dividend rate, yield
+  and ex/pay dates alongside the price (stored on `secMeta[ticker].dividend`
+  at refresh); holdings section 2 skipped are projected at units × rate on a
+  quarterly rhythm anchored to the next pay date, marked `declared`. Never
+  overrides real history; gilts (own schedule) and fund units (no feed) are
+  excluded.
+
+**Spend side (core/cashflow-forecast.mjs).** Per future month:
+committed + variable + goals. *Committed* is the recurring definitions
+expanded onto their real dates, so a renewal lands in its month rather than
+being smeared over twelve. *Variable* is the median of the **same calendar
+month** in history — December from Decembers — after subtracting what
+recurring *would have* cost that month (expanded with no statement-coverage
+suppression, which is the double-counting guard: a covered month has its
+direct debits inside the statement rows), uprated by the plan's inflation for
+the years ahead. *Goals* are the Plan tab's dated one-offs falling inside the
+window (age-based; converted via current age). A P25–P75 band comes from the
+dispersion of historical variable months.
+
+`forecastMonthlyIncome()` buckets the calendar's events by month, split by
+certainty, capital flows (redemptions, maturities) excluded unless asked; a
+**net-of-tax** pass runs GIA dividends and interest through an injected tax
+function (the UI passes `investmentIncomeTax` bound to the stored salary and
+`currentTaxYear()`), apportioned to months by taxable share.
+`combineCashflow()` gives net and cumulative per month, names the shortfall
+months and the worst one.
+
+## Import preview: opt-in
+The IBKR/Fidelity preview showed every row and asked the user to *delete the
+noise* — twenty duplicates and seven FX rows, every pull, before the one new
+trade could be imported. It's now opt-in: nothing imports unless ticked, and
+the default tick is exactly "what's new" — not a duplicate, not a currency
+conversion, and where the statement's own position report says a trade was
+reported several times over, only the first of that group. "Tick what's new /
+tick none" controls; the button says how many.
+
 ## Tests
 ```
 npm test        # node --test: 611 core tests + 12 UI smoke tests (test:ui)

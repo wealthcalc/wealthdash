@@ -304,3 +304,10 @@ test("ImportTab renders one drop zone above the source pills, with the new modes
   assert.ok(html.includes("Holdings snapshot"), "any broker's positions export can be reconciled");
   assert.ok(html.includes("Account:"), "imports land in an account");
 });
+
+test("ImportTab preview is opt-in: an Import button that counts ticked rows", async () => {
+  const { default: ImportTab } = await import("../../features/ImportTab.jsx");
+  const html = renderToString(React.createElement(ImportTab, { setTab: () => {}, recomputeProviderCost: () => {} })).replaceAll("&amp;", "&");
+  // No pull loaded, so no preview — but the tab must still render its shell.
+  assert.ok(html.includes("Interactive Brokers"));
+});

@@ -54,6 +54,40 @@ function unitsHeldAt(txns, dateStr, ticker) {
   return q;
 }
 
+const endOfMonthISO = (dateISO) => {
+  const d = new Date(dateISO + "T00:00:00Z");
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)).toISOString().slice(0, 10);
+};
+
+// units now ÷ units on the last payment date, clamped to sane bounds. A
+// holding that has since been fully sold is handled upstream; this is for
+// the partial cases (topped up, trimmed).
+function unitScale(txns, ticker, lastPaidISO, today) {
+  const then = unitsHeldAt(txns, lastPaidISO, ticker);
+  const now = unitsHeldAt(txns, today, ticker);
+  if (!(then > 1e-9) || !(now > 1e-9)) return 1;
+  const r = now / then;
+  return Math.max(0.05, Math.min(20, Math.round(r * 1e4) / 1e4));
+}
+
+const latestWrapper = (txns, ticker) => {
+  let best = null;
+  for (const t of txns) if (t && String(t.ticker || "").toUpperCase() === ticker && (!best || t.date > best.date)) best = t;
+  return best ? best.wrapper || null : null;
+};
+
+// A declared per-share rate in the quote's currency -> GBP per share, using
+// the same FX the price refresh applied (GBP price ÷ raw quote). GBp quotes
+// are pence. Returns null when there's no honest way to convert.
+export function declaredRateGBP(div, priceGBP, pm) {
+  if (!div || !(+div.rate > 0)) return null;
+  const ccy = div.currency || (pm && pm.ccy) || null;
+  if (ccy === "GBp") return +div.rate / 100;
+  if (ccy === "GBP") return +div.rate;
+  if (pm && +pm.raw > 0 && +priceGBP > 0 && (pm.ccy === ccy || !ccy)) return +div.rate * (+priceGBP / +pm.raw);
+  return null;
+}
+
 // Classifies the typical gap (in days) between consecutive dates in one
 // series into a payment cadence. Needs at least 2 dates (1 gap); returns
 // null if there's nothing to measure. Uses the MEDIAN gap, not the mean,
@@ -106,10 +140,16 @@ export function buildIncomeCalendar({
   // contractual. Sell-to-cover/withholding is NOT modelled — the gross
   // vest value is shown, and the UI says so.
   rsuVests = [],
+  // Declared-rate fallback for holdings with thin history (see section 2b):
+  // secMeta[ticker].dividend = { rate, currency, exDate, payDate } captured
+  // from the quote feed, plus the current GBP price / raw quote pair the
+  // price refresh stored, which gives the FX to bring the rate into GBP.
+  secMeta = {}, prices = {}, priceMeta = {},
   today, horizonDays = 365,
 } = {}) {
   if (!today) throw new Error("buildIncomeCalendar requires `today` (ISO date) — pure functions don't read the clock themselves.");
   const events = [];
+  const projectedTickers = new Set();   // tickers section 2 managed to forecast
   const horizonISO = addDaysISO(today, horizonDays);
 
   // 0. RSU vests — scheduled DATES, estimated VALUE (today's price).
@@ -208,14 +248,23 @@ export function buildIncomeCalendar({
       }
       const sortedYT = yearTotals.sort((a, b) => a - b);
       const annualRate = sortedYT.length ? sortedYT[Math.floor(sortedYT.length / 2)] : 0;
-      const per = Math.round((annualRate / projDates.length) * 100) / 100;
+      const scaleIrr = s.ticker ? unitScale(txns, s.ticker, dates[dates.length - 1], today) : 1;
+      const per = Math.round((annualRate * scaleIrr / projDates.length) * 100) / 100;
+      if (s.ticker) projectedTickers.add(s.ticker);
       for (const d of projDates) {
         events.push({ date: d, source: s.kind === "interest" ? "interest" : "dividend", label: s.ticker || "Interest", amount: per, certainty: "estimated", cadence: "annual (est.)", wrapper });
       }
       continue;
     }
+    // UNITS SCALING. The recent average is what the LAST holding size paid.
+    // Bought more since, and it understates; sold half, and it overstates
+    // — for the whole year ahead. Scale by units held now over units held
+    // on the last payment date. Un-attributed interest (blank ticker) has
+    // no unit count and passes through unscaled.
+    const scale = s.ticker ? unitScale(txns, s.ticker, dates[dates.length - 1], today) : 1;
     const recent = amounts.slice(-3);
-    const avgAmount = Math.round((recent.reduce((a, b) => a + b, 0) / recent.length) * 100) / 100;
+    const avgAmount = Math.round((recent.reduce((a, b) => a + b, 0) / recent.length) * scale * 100) / 100;
+    if (s.ticker) projectedTickers.add(s.ticker);
     // Wrapper attribution: the most recent entry's wrapper — a holding can
     // move accounts (rare, but a re-registration onto ISA/SIPP is real), so
     // the LATEST recorded wrapper is the best guide to where future payments
@@ -223,7 +272,43 @@ export function buildIncomeCalendar({
     // defaults to taxable" convention as core/portfolio.mjs).
     const wrapper = wrappers[wrappers.length - 1] || "GIA";
     for (const d of nextOccurrences(dates[dates.length - 1], cadence.medianDays, today, horizonDays)) {
-      events.push({ date: d, source: s.kind === "interest" ? "interest" : "dividend", label: s.ticker || "Interest", amount: avgAmount, certainty: "estimated", cadence: cadence.label, wrapper });
+      events.push({ date: d, source: s.kind === "interest" ? "interest" : "dividend", label: s.ticker || "Interest", amount: avgAmount, certainty: "estimated", cadence: cadence.label, wrapper, scaled: scale !== 1 ? scale : undefined });
+    }
+  }
+
+  // 2b. DECLARED-RATE fallback. Section 2 refuses to forecast anything it
+  // hasn't seen paid twice — correct for a ledger that IS the history, but
+  // it means a holding bought last month contributes nothing to the year
+  // ahead, however large. Where the quote feed supplied a declared annual
+  // dividend rate, project units x rate for any open holding section 2
+  // skipped, on a quarterly rhythm anchored to the next known ex-div date
+  // (or spread evenly if none). Lower certainty than history, and labelled
+  // as such; gilts and pension funds are excluded (gilts have a schedule,
+  // fund units have no feed).
+  const heldNow = new Map();
+  for (const t of txns) {
+    if (!t || !t.ticker || (t.side !== "BUY" && t.side !== "SELL") || t.date > today) continue;
+    const tk = String(t.ticker).toUpperCase();
+    heldNow.set(tk, (heldNow.get(tk) || 0) + (t.side === "BUY" ? +t.quantity || 0 : -(+t.quantity || 0)));
+  }
+  for (const [tk, units] of heldNow) {
+    if (units <= 1e-9 || projectedTickers.has(tk) || giltTickers.has(tk)) continue;
+    const m = secMeta[tk];
+    if (!m || m.kind === "gilt" || m.kind === "fund" || !m.dividend || !(+m.dividend.rate > 0)) continue;
+    const gbpRate = declaredRateGBP(m.dividend, prices[tk], priceMeta[tk]);
+    if (!(gbpRate > 0)) continue;
+    const annual = units * gbpRate;
+    // Cadence: quarterly by default (most ETFs/ITs), anchored on the next
+    // ex-div date if the feed gave one and it's in the future.
+    const dates = [];
+    let anchor = m.dividend.payDate && m.dividend.payDate > today ? m.dividend.payDate
+      : m.dividend.exDate && m.dividend.exDate > today ? addDaysISO(m.dividend.exDate, 30) : addDaysISO(today, 45);
+    for (let i = 0; i < 4 && anchor <= horizonISO; i++) { dates.push(anchor); anchor = addDaysISO(anchor, 91); }
+    if (!dates.length) continue;
+    const wrapper = latestWrapper(txns, tk) || "GIA";
+    const per = Math.round((annual / 4) * 100) / 100;
+    for (const d of dates) {
+      events.push({ date: d, source: "dividend", label: tk, amount: per, certainty: "estimated", cadence: "declared rate", wrapper, declared: true });
     }
   }
 
@@ -232,6 +317,25 @@ export function buildIncomeCalendar({
     if (a.rateType !== "fixed" || !a.maturityDate) continue;
     if (a.maturityDate > today && a.maturityDate <= horizonISO) {
       events.push({ date: a.maturityDate, source: "cash-maturity", label: a.label || a.institution || a.wrapper, amount: +a.balance || 0, certainty: "scheduled", wrapper: a.wrapper || "GIA" });
+    }
+  }
+
+  // 3b. Cash-account INTEREST. Every named account carries a balance and a
+  // rate, and only the maturities were being forecast — the interest itself
+  // wasn't, which for a large cash allocation is a visible hole in the
+  // year's income. Simple interest, credited monthly, on the balance as
+  // entered (no compounding, no rate forecast); a fixed-term account stops
+  // accruing at its maturity date. "estimated": rates move and balances
+  // get spent.
+  for (const a of cashAccounts) {
+    const rate = +a.rate, bal = +a.balance;
+    if (!(rate > 0) || !(bal > 0)) continue;
+    const stop = a.rateType === "fixed" && a.maturityDate ? a.maturityDate : horizonISO;
+    const perMonth = Math.round(((bal * rate) / 100 / 12) * 100) / 100;
+    let d = endOfMonthISO(today);
+    for (let i = 0; i < 13 && d <= horizonISO && d <= stop; i++, d = endOfMonthISO(addDaysISO(d, 1))) {
+      if (d <= today) continue;
+      events.push({ date: d, source: "interest", label: a.label || a.institution || `${a.wrapper || "GIA"} cash`, amount: perMonth, certainty: "estimated", cadence: "monthly", wrapper: a.wrapper || "GIA", cashAccount: true });
     }
   }
 

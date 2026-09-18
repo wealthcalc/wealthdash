@@ -99,7 +99,7 @@ export async function refreshAllPrices({
   try {
     onProgress("Fetching from Yahoo…");
     const by = await yahooFetch(otherTickers.map((tk) => meta(tk).yahoo));
-    const names = {};
+    const names = {}, divs = {};
     for (const tk of otherTickers) {
       const q = by[meta(tk).yahoo];
       if (q && q.price != null) {
@@ -110,11 +110,17 @@ export async function refreshAllPrices({
       // which is why the Holdings table showed only tickers — a memory test.
       // Only fills a gap: a name the user typed or an issuer supplied wins.
       if (q && q.name && !secMeta[tk]?.name) names[tk] = String(q.name).trim();
+      // Declared dividend rate (per share, quote currency) + dates: the
+      // forward income forecast uses it for holdings with thin history.
+      if (q && (q.dividendRate != null || q.exDividendDate)) {
+        divs[tk] = { rate: q.dividendRate ?? null, yield: q.dividendYield ?? null, currency: q.currency || null, exDate: q.exDividendDate || null, payDate: q.dividendDate || null, asOf: new Date().toISOString().slice(0, 10), source: "Yahoo" };
+      }
     }
-    if (setSecMeta && Object.keys(names).length) {
+    if (setSecMeta && (Object.keys(names).length || Object.keys(divs).length)) {
       setSecMeta((m) => {
         const n = { ...m };
         for (const [tk, name] of Object.entries(names)) if (!n[tk]?.name) n[tk] = { ...n[tk], name, nameSource: "Yahoo" };
+        for (const [tk, d] of Object.entries(divs)) n[tk] = { ...n[tk], dividend: d };
         return n;
       });
     }

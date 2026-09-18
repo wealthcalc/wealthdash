@@ -26,6 +26,7 @@ const TOOL_ITEMS = [
   { label: "CGT · Asset location", leaf: "cgt", subKey: "cgt.cgtsubtab", subVal: "location", hint: "which asset in which wrapper" },
   { label: "CGT · Report (SA108)", leaf: "cgt", subKey: "cgt.cgtsubtab", subVal: "report", hint: "tax return pack" },
   { label: "CGT · What-if", leaf: "cgt", subKey: "cgt.cgtsubtab", subVal: "whatif", hint: "model a sale" },
+  { label: "Budget · 12-month forecast", leaf: "budget", subKey: "cgt.budgetsubtab", subVal: "forecast", hint: "income vs spend, month by month" },
   { label: "Plan · Income floor", leaf: "plan", subKey: "plan.subtab", subVal: "floor", hint: "guaranteed income vs essentials" },
   { label: "Plan · Run-off", leaf: "plan", subKey: "plan.subtab", subVal: "runoff", hint: "when does the selling start?" },
   { label: "Plan · Monte Carlo", leaf: "plan", subKey: "plan.subtab", subVal: "adequacy", hint: "success probability" },

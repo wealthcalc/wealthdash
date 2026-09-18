@@ -457,8 +457,10 @@ function ImportTab({ setTab, recomputeProviderCost }) {
     // "GBP.USD" row would create a security with a quantity, a cost basis
     // and a place in the CGT pool. Dropped here rather than filtered in the
     // preview so the rows stay visible and explained.
-    const { trades: realTrades, fxConversions } = partitionFxConversions(ib.trades);
-    const trades = realTrades.map((t) => ({ ...t })), income = ib.income.map((t) => ({ ...t }));
+    const picked = ib.trades.filter((_, i) => selTrades.has(i));
+    const { trades: realTrades, fxConversions } = partitionFxConversions(picked);
+    const trades = realTrades.map((t) => ({ ...t })), income = ib.income.filter((_, i) => selIncome.has(i)).map((t) => ({ ...t }));
+    const unticked = (ib.trades.length - picked.length) + (ib.income.length - income.length);
     for (const t of trades) await resolve(t, "gbpAmount");
     for (const t of income) await resolve(t, "amount");
     const batchId = newBatchId();
@@ -482,7 +484,8 @@ function ImportTab({ setTab, recomputeProviderCost }) {
     if (dupSkipped) parts.push(`${dupSkipped} duplicate row(s) already in your ledger — skipped.`);
     if (fxSkipped) parts.push(`${fxSkipped} row(s) skipped — FX could not be resolved; add them manually.`);
     if (fxConversions.length) parts.push(`${fxConversions.length} currency conversion(s) skipped — cash movement, not holdings.`);
-    if (dupSkipped || fxSkipped || fxConversions.length) setNote(parts.join(" "));
+    if (unticked) parts.push(`${unticked} unticked row(s) left out.`);
+    if (dupSkipped || fxSkipped || fxConversions.length || unticked) setNote(parts.join(" "));
     else setTab(dedTxns.rows.length ? "ledger" : "income");
   };
 
@@ -523,8 +526,46 @@ function ImportTab({ setTab, recomputeProviderCost }) {
     [ib, ibNewTrades, existingQtyByTicker]
   );
   const [hideDups, setHideDups] = useState(true);
-  const removeIbTrade = (i) => setIb((r) => ({ ...r, trades: r.trades.filter((_, idx) => idx !== i) }));
-  const removeIbIncome = (i) => setIb((r) => ({ ...r, income: r.income.filter((_, idx) => idx !== i) }));
+
+  // OPT-IN selection. The preview used to show everything and ask the user
+  // to delete the noise — twenty duplicates and seven FX rows, every pull,
+  // before the one genuinely new trade could be imported. Now nothing is
+  // imported unless ticked, and the default tick is exactly "what's new":
+  // not a duplicate, not a currency conversion, and where the statement's
+  // own position report says a trade was reported several times over, only
+  // the FIRST of that group. Duplicates stay hidden by default; showing
+  // them shows them unticked.
+  const [selTrades, setSelTrades] = useState(() => new Set());
+  const [selIncome, setSelIncome] = useState(() => new Set());
+  const defaultSelection = useMemo(() => {
+    if (!ib) return { trades: new Set(), income: new Set() };
+    const repeated = new Set(crossCheck.conflicts.filter((c) => c.looksLikeRepeatedRows).map((c) => c.ticker));
+    const seenGroup = new Set();
+    const groupOf = new Map();
+    for (const g of nearDups) for (const r of g.rows) groupOf.set(r.index, `${g.ticker}|${g.date}|${g.side}|${g.quantity}`);
+    const trades = new Set();
+    // nearDups indexes refer to ibNewTrades; map back to ib.trades indexes.
+    const newIndexByRow = new Map(ibNewTrades.map((t, i) => [t, i]));
+    ib.trades.forEach((t, i) => {
+      if (isDupTrade(t) || isFxConversion(t.ticker)) return;
+      const ni = newIndexByRow.get(t);
+      const gk = ni != null ? groupOf.get(ni) : null;
+      if (gk && repeated.has(String(t.ticker).toUpperCase())) {
+        if (seenGroup.has(gk)) return;
+        seenGroup.add(gk);
+      }
+      trades.add(i);
+    });
+    const income = new Set();
+    ib.income.forEach((e, i) => { if (!isDupIncome(e)) income.add(i); });
+    return { trades, income };
+  }, [ib, nearDups, crossCheck, ibNewTrades]);
+  React.useEffect(() => { setSelTrades(new Set(defaultSelection.trades)); setSelIncome(new Set(defaultSelection.income)); }, [defaultSelection]);
+  const toggleTrade = (i) => setSelTrades((s) => { const n = new Set(s); if (n.has(i)) n.delete(i); else n.add(i); return n; });
+  const toggleIncome = (i) => setSelIncome((s) => { const n = new Set(s); if (n.has(i)) n.delete(i); else n.add(i); return n; });
+  const selectNew = () => { setSelTrades(new Set(defaultSelection.trades)); setSelIncome(new Set(defaultSelection.income)); };
+  const selectNone = () => { setSelTrades(new Set()); setSelIncome(new Set()); };
+  const pickedCount = selTrades.size + selIncome.size;
 
   // ---- generic ----
   const mapRef = map;
@@ -994,14 +1035,16 @@ function ImportTab({ setTab, recomputeProviderCost }) {
               {ib.trades.length > 0 && (
                 <div className="overflow-x-auto max-h-72 overflow-y-auto">
                   <table className="w-full text-xs">
-                    <thead className="text-[var(--muted)]"><tr>{["date", "ticker", "side", "qty", "ccy", "native", "GBP", "", ""].map((h, i) => <th key={i} className="px-2 py-1 text-left">{h}</th>)}</tr></thead>
+                    <thead className="text-[var(--muted)]"><tr><th className="px-2 py-1 w-6" aria-label="Import?" />{["date", "ticker", "side", "qty", "ccy", "native", "GBP", ""].map((h, i) => <th key={i} className="px-2 py-1 text-left">{h}</th>)}</tr></thead>
                     <tbody className="num">
                       {ib.trades.map((t, i) => {
                         const dup = isDupTrade(t);
                         if (dup && hideDups) return null;
                         const fx = isFxConversion(t.ticker);
+                        const on = selTrades.has(i);
                         return (
-                          <tr key={i} className={"border-t border-[var(--border)] " + (fx ? "opacity-45" : "")}>
+                          <tr key={i} onClick={() => !fx && toggleTrade(i)} className={"border-t border-[var(--border)] cursor-pointer " + (fx ? "opacity-45 cursor-not-allowed" : on ? "bg-[color:color-mix(in_srgb,var(--accent)_7%,transparent)]" : "text-[var(--muted)]")}>
+                            <td className="px-2 py-1"><input type="checkbox" checked={on} disabled={fx} onChange={() => toggleTrade(i)} onClick={(e) => e.stopPropagation()} aria-label={`Import ${t.date} ${t.side} ${t.ticker}`} /></td>
                             <td className="px-2 py-1">{t.date}</td><td className="px-2 py-1">{t.ticker}</td><td className="px-2 py-1">{t.side}</td>
                             <td className="px-2 py-1">{num(t.quantity, t.quantity % 1 ? 4 : 0)}</td><td className="px-2 py-1">{t.nativeCurrency}</td>
                             <td className="px-2 py-1">{num(t.nativeAmount)}</td><td className="px-2 py-1">{t.gbpAmount == null ? "FX on import" : gbp(t.gbpAmount)}</td>
@@ -1009,7 +1052,6 @@ function ImportTab({ setTab, recomputeProviderCost }) {
                               {dup && <span className="text-[11px] uppercase font-semibold px-1.5 py-0.5 rounded-full text-[var(--muted)] border border-[var(--border)]">dup</span>}
                               {fx && <span className="text-[11px] uppercase font-semibold px-1.5 py-0.5 rounded-full text-[var(--muted)] border border-[var(--border)]" title="Currency conversion — not a holding, so it won't be imported">fx</span>}
                             </td>
-                            <td className="px-2 py-1"><button onClick={() => removeIbTrade(i)} title="Remove this row" className="text-[var(--muted)] hover:text-[var(--loss)]"><Trash2 size={13} /></button></td>
                           </tr>
                         );
                       })}
@@ -1020,17 +1062,18 @@ function ImportTab({ setTab, recomputeProviderCost }) {
               {ib.income.length > 0 && (
                 <div className="overflow-x-auto max-h-72 overflow-y-auto">
                   <table className="w-full text-xs">
-                    <thead className="text-[var(--muted)]"><tr>{["date", "ticker", "kind", "GBP", "", ""].map((h, i) => <th key={i} className="px-2 py-1 text-left">{h}</th>)}</tr></thead>
+                    <thead className="text-[var(--muted)]"><tr><th className="px-2 py-1 w-6" aria-label="Import?" />{["date", "ticker", "kind", "GBP", ""].map((h, i) => <th key={i} className="px-2 py-1 text-left">{h}</th>)}</tr></thead>
                     <tbody className="num">
                       {ib.income.map((e, i) => {
                         const dup = isDupIncome(e);
                         if (dup && hideDups) return null;
+                        const on = selIncome.has(i);
                         return (
-                          <tr key={i} className="border-t border-[var(--border)]">
+                          <tr key={i} onClick={() => toggleIncome(i)} className={"border-t border-[var(--border)] cursor-pointer " + (on ? "bg-[color:color-mix(in_srgb,var(--accent)_7%,transparent)]" : "text-[var(--muted)]")}>
+                            <td className="px-2 py-1"><input type="checkbox" checked={on} onChange={() => toggleIncome(i)} onClick={(e2) => e2.stopPropagation()} aria-label={`Import ${e.date} ${e.kind} ${e.ticker || ""}`} /></td>
                             <td className="px-2 py-1">{e.date}</td><td className="px-2 py-1">{e.ticker || "—"}</td><td className="px-2 py-1 capitalize">{e.kind}</td>
                             <td className="px-2 py-1">{e.amount == null ? "FX on import" : gbp(e.amount)}</td>
                             <td className="px-2 py-1">{dup && <span className="text-[11px] uppercase font-semibold px-1.5 py-0.5 rounded-full text-[var(--muted)] border border-[var(--border)]">dup</span>}</td>
-                            <td className="px-2 py-1"><button onClick={() => removeIbIncome(i)} title="Remove this row" className="text-[var(--muted)] hover:text-[var(--loss)]"><Trash2 size={13} /></button></td>
                           </tr>
                         );
                       })}
@@ -1039,9 +1082,12 @@ function ImportTab({ setTab, recomputeProviderCost }) {
                 </div>
               )}
               {note && <div className="text-xs text-[var(--muted)]">{note}</div>}
-              <div className="flex items-center justify-between">
-                <span className="text-xs text-[var(--muted)]">Imports into <strong>{wrapper}</strong>. Trades → ledger, dividends/interest → Income tab. Duplicates are skipped automatically even if not removed above.</span>
-                <button onClick={doImportIb} disabled={importing || (!ib.trades.length && !ib.income.length)} className="btn-accent disabled:opacity-50">{importing ? <RefreshCw size={15} className="animate-spin" /> : <FileUp size={15} />} Import</button>
+              <div className="flex items-center justify-between gap-3 flex-wrap">
+                <span className="text-xs text-[var(--muted)]">
+                  Only <strong>ticked</strong> rows are imported, into <strong>{wrapper}</strong>{account ? <> / <strong>{account}</strong></> : null}. Ticked by default: what&apos;s new — no duplicates, no currency conversions{crossCheck.conflicts.some((c) => c.looksLikeRepeatedRows) ? ", and one copy of each repeated trade" : ""}.{" "}
+                  <button onClick={selectNew} className="text-[var(--accent)] hover:underline">tick what&apos;s new</button> · <button onClick={selectNone} className="text-[var(--accent)] hover:underline">tick none</button>
+                </span>
+                <button onClick={doImportIb} disabled={importing || pickedCount === 0} className="btn-accent disabled:opacity-50">{importing ? <RefreshCw size={15} className="animate-spin" /> : <FileUp size={15} />} Import {pickedCount} selected</button>
               </div>
             </div>
           )}

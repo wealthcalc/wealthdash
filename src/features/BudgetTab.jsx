@@ -1,13 +1,15 @@
 import React, { useState, useMemo, useRef } from "react";
 import { Plus, Trash2, Upload, Check, AlertTriangle, Wand2 } from "lucide-react";
-import { ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, PieChart, Pie, Cell, Sector } from "recharts";
+import { ResponsiveContainer, ComposedChart, Bar, Line, Area, XAxis, YAxis, CartesianGrid, Tooltip, PieChart, Pie, Cell, Sector, ReferenceLine } from "recharts";
 import { monthlyBudget, annualBudget, averageAnnualBudget, forecastAnnualSpend, spendByMonth, trailing12, mergedSpend, spendByCategory, withComparison, monthRange, yearOverlay, discretionaryRunway, suggestBudgetsFromHistory } from "../core/budget.mjs";
 import { effInflation } from "../core/drawdown.mjs";
+import { forecastMonthlySpend, forecastMonthlyIncome, combineCashflow } from "../core/cashflow-forecast.mjs";
+import { investmentIncomeTax, currentTaxYear } from "../core/uk-tax.mjs";
 import { uncategorisedGroups, suggestRule, normaliseMerchant } from "../core/categorise.mjs";
 import { detectRecurring, topMerchants } from "../core/detect-recurring.mjs";
 import { parseStatement, dedupeStatement, PROFILES } from "../core/statement-import.mjs";
 import { expandRecurring, statementCoverage, annualCommitment, FREQUENCIES } from "../core/recurring.mjs";
-import { store, gbp, gbp0, SubTabs, SegmentedControl, uid, todayISO, Field, FormErrors, EnterSubmits, Empty, Stat, useSort, sortRows, SortTh } from "../ui/shared.jsx";
+import { store, gbp, gbp0, num, SubTabs, SegmentedControl, uid, todayISO, Field, FormErrors, EnterSubmits, Empty, Stat, useSort, sortRows, SortTh } from "../ui/shared.jsx";
 import { validateFields, req, pos, isoDate, isoDateOpt, notBefore, nonNeg } from "../core/validate.mjs";
 import useAppStore from "../state/appStore.js";
 import { removeWithUndo } from "../ui/undo.jsx";
@@ -51,7 +53,7 @@ const prevMonth = (m) => {
   return mo === 1 ? `${y - 1}-12` : `${y}-${String(mo - 1).padStart(2, "0")}`;
 };
 
-export default function BudgetTab({ setTab, projectedIncome = 0 }) {
+export default function BudgetTab({ setTab, projectedIncome = 0, incomeCalendar = [] }) {
   const categories = useAppStore((s) => s.budgetCategories), setCategories = useAppStore((s) => s.setBudgetCategories);
   const rules = useAppStore((s) => s.budgetRules), setRules = useAppStore((s) => s.setBudgetRules);
   const spendTxns = useAppStore((s) => s.spendTxns), setSpendTxns = useAppStore((s) => s.setSpendTxns);
@@ -124,7 +126,7 @@ export default function BudgetTab({ setTab, projectedIncome = 0 }) {
   return (
     <div className="space-y-5">
       <SubTabs
-        tabs={[["overview", "Overview"], ["txns", "Transactions"], ["recurring", "Recurring"], ["categories", "Categories & rules"], ["import", "Import statements"]]}
+        tabs={[["overview", "Overview"], ["forecast", "Forecast"], ["txns", "Transactions"], ["recurring", "Recurring"], ["categories", "Categories & rules"], ["import", "Import statements"]]}
         active={sub} onChange={setSub}
       />
 
@@ -137,6 +139,7 @@ export default function BudgetTab({ setTab, projectedIncome = 0 }) {
       )}
 
       {sub === "overview" && <Overview {...{ categories, txns, month, setMonth, setSub, drillTo, incomeEntries, projectedIncome }} />}
+      {sub === "forecast" && <Forecast {...{ categories, txns, recurring, incomeCalendar, setSub, setTab }} />}
       {sub === "txns" && <Transactions {...{ categories, catById, txns, spendTxns, setManual, setSpendTxns, rules, setRules, filter: txnFilter, setFilter: setTxnFilter }} />}
       {sub === "recurring" && <Recurring {...{ recurring, setRecurring, categories, catById, suppressed: recurringOut.suppressed, generated: recurringOut.rows, spendTxns }} />}
       {sub === "categories" && <Categories {...{ categories, setCategories, rules, setRules, catById, txns }} />}
@@ -146,6 +149,136 @@ export default function BudgetTab({ setTab, projectedIncome = 0 }) {
 }
 
 /* ------------------------------- Overview ---------------------------- */
+/* ---- Forecast: the next 12 months, income and spend on one axis ---------
+   Income: the shell's income calendar (gilt coupons, forecast dividends and
+   interest incl. cash-account interest and declared-rate estimates for new
+   holdings). Spend: core/cashflow-forecast.mjs — recurring items on their
+   real dates + a same-calendar-month median for everything else + Plan
+   goals, with a P25–P75 band. Net-of-tax runs GIA income through the tax
+   engine at the stored salary. */
+function Forecast({ categories, txns, recurring, incomeCalendar = [], setSub, setTab }) {
+  const planInputs = useAppStore((st) => st.planInputs) || {};
+  const salary = useAppStore((st) => st.income) || 0;
+  const [netOfTax, setNetOfTax] = useState(() => store.get("cgt.budget.forecast.net", false));
+  React.useEffect(() => store.set("cgt.budget.forecast.net", netOfTax), [netOfTax]);
+  const [includeCapital, setIncludeCapital] = useState(false);
+  const today = todayISO();
+  const inflPct = Number.isFinite(+planInputs.inflation)
+    ? effInflation({ inflation: +planInputs.inflation, inflMode: planInputs.inflMode || "cpi", rpiWedge: +planInputs.rpiWedge || 0 })
+    : 3;
+  const spend = useMemo(() => forecastMonthlySpend({
+    spend: txns, categories, recurring, goals: planInputs.goals || [], currentAge: planInputs.currentAge ?? null,
+    today, inflationPct: inflPct,
+  }), [txns, categories, recurring, planInputs.goals, planInputs.currentAge, today, inflPct]);
+  const year = currentTaxYear(today);
+  const taxFn = useMemo(() => ({ interest, dividends }) => investmentIncomeTax({ salary: +salary || 0, interest, dividends, year }), [salary, year]);
+  const income = useMemo(() => forecastMonthlyIncome({ events: incomeCalendar, today, taxFn, includeCapital }), [incomeCalendar, today, taxFn, includeCapital]);
+  const combined = useMemo(() => combineCashflow({ income, spend, netOfTax }), [income, spend, netOfTax]);
+
+  const fmtMonth = (m) => new Date(m + "-01T00:00:00Z").toLocaleDateString("en-GB", { month: "short", year: "2-digit" });
+  const chartData = combined.months.map((m, i) => ({
+    month: fmtMonth(m.month), key: m.month,
+    scheduled: m.incomeScheduled, estimated: netOfTax ? Math.max(0, m.income - m.incomeScheduled) : m.incomeEstimated,
+    spend: m.spend, band: [m.spendLow, m.spendHigh], cumulative: m.cumulative, net: m.net,
+    committed: spend.months[i].committed, goals: spend.months[i].goals,
+  }));
+  const declaredCount = incomeCalendar.filter((e) => e.declared).length;
+  const cashInterest = incomeCalendar.filter((e) => e.cashAccount).reduce((s, e) => s + e.amount, 0);
+
+  if (!spend.reliable && income.totals.total === 0) {
+    return <Empty msg="The forecast needs some history: import a few months of statements (for the spend shape) and log or import dividends (for the income side). Gilt coupons and cash-account interest appear as soon as they exist." />;
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <Stat label={netOfTax ? "Income next 12m (net of tax)" : "Income next 12m (gross)"} value={gbp0(combined.totals.income)}
+          sub={`${gbp0(income.totals.scheduled)} scheduled · ${gbp0(income.totals.estimated)} estimated${netOfTax ? ` · tax ${gbp0(income.totals.tax)}` : ""}`} />
+        <Stat label="Spend next 12m" value={gbp0(spend.totals.total)} sub={`likely ${gbp0(spend.totals.low)}–${gbp0(spend.totals.high)} · ${gbp0(spend.totals.committed)} committed`} />
+        <Stat label="Net over the year" value={gbp0(combined.totals.net)} tone={combined.totals.net >= 0 ? "gain" : "loss"} big
+          sub={combined.coveragePct != null ? `income covers ${Math.round(combined.coveragePct)}% of spend` : undefined} />
+        <Stat label="Tight months" value={combined.shortfallMonths.length ? String(combined.shortfallMonths.length) : "none"} tone={combined.shortfallMonths.length ? "loss" : "gain"}
+          sub={combined.worstMonth ? `worst ${fmtMonth(combined.worstMonth.month)}: ${gbp0(combined.worstMonth.net)}` : "every month is covered"} />
+      </div>
+
+      <div className="flex items-center gap-3 flex-wrap text-xs">
+        <SegmentedControl ariaLabel="Income basis" value={netOfTax ? "net" : "gross"} onChange={(v) => setNetOfTax(v === "net")}
+          options={[["gross", "Gross income"], ["net", "Net of tax", { title: `GIA dividends and interest taxed on top of a ${gbp0(salary)} salary for ${year}; ISA/SIPP/LISA income is untouched.` }]]} />
+        <label className="flex items-center gap-1.5 text-[var(--muted)]"><input type="checkbox" checked={includeCapital} onChange={(e) => setIncludeCapital(e.target.checked)} /> include gilt redemptions &amp; cash maturities (capital, not income)</label>
+        <span className="text-[var(--muted)]">Spend uprated at {num(inflPct, 1)}% (Assumptions).</span>
+      </div>
+
+      <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-4">
+        <div className="text-sm font-medium mb-2">Month by month</div>
+        <div style={{ height: 300 }}>
+          <ResponsiveContainer width="100%" height="100%">
+            <ComposedChart data={chartData} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
+              <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" vertical={false} />
+              <XAxis dataKey="month" tick={{ fontSize: 11, fill: "var(--muted)" }} />
+              <YAxis tick={{ fontSize: 11, fill: "var(--muted)" }} tickFormatter={(v) => gbp0(v)} width={70} />
+              <Tooltip formatter={(v, name) => [Array.isArray(v) ? `${gbp0(v[0])} – ${gbp0(v[1])}` : gbp0(v), name]} contentStyle={{ background: "var(--panel)", border: "1px solid var(--border)", fontSize: 12 }} />
+              <Area type="monotone" dataKey="band" name="Spend range (P25–P75)" stroke="none" fill="var(--loss)" fillOpacity={0.12} />
+              <Bar dataKey="scheduled" name="Income — scheduled" stackId="inc" fill="var(--gain)" />
+              <Bar dataKey="estimated" name="Income — estimated" stackId="inc" fill="var(--gain)" fillOpacity={0.45} />
+              <Line type="monotone" dataKey="spend" name="Spend (expected)" stroke="var(--loss)" strokeWidth={2} dot={false} />
+              <Line type="monotone" dataKey="cumulative" name="Cumulative net" stroke="var(--accent)" strokeWidth={1.5} strokeDasharray="5 4" dot={false} />
+              <ReferenceLine y={0} stroke="var(--muted)" />
+            </ComposedChart>
+          </ResponsiveContainer>
+        </div>
+        <p className="text-xs text-[var(--muted)] mt-2 leading-relaxed">
+          Solid green is contractual (gilt coupons); pale green is estimated from history, declared rates and cash-account rates. The red line is expected spend — recurring items on their real dates plus the median of the same calendar month in your history, so December looks like December; the shaded band is the middle half of your historical months. Dashed is the running total of income minus spend.
+        </p>
+      </div>
+
+      <div className="rounded-xl border border-[var(--border)] overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead className="bg-[var(--panel2)] text-[var(--muted)] text-xs uppercase tracking-wide">
+            <tr>
+              <th className="text-left px-3 py-2 font-medium">Month</th>
+              <th className="text-right px-3 py-2 font-medium">Income</th>
+              <th className="text-right px-3 py-2 font-medium">Spend</th>
+              <th className="text-right px-3 py-2 font-medium hidden sm:table-cell">of which committed</th>
+              <th className="text-right px-3 py-2 font-medium">Net</th>
+              <th className="text-right px-3 py-2 font-medium">Running</th>
+              <th className="text-left px-3 py-2 font-medium hidden md:table-cell">Notable</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-[var(--border)] bg-[var(--panel)]">
+            {combined.months.map((m, i) => {
+              const sm = spend.months[i];
+              const notable = [...sm.recurringItems.filter((r) => r.amount >= 200).slice(0, 2).map((r) => `${r.label} ${gbp0(r.amount)}`), ...sm.goalItems.map((g) => `${g.label} ${gbp0(g.amount)}`)];
+              return (
+                <tr key={m.month} className={m.net < 0 ? "bg-[color:color-mix(in_srgb,var(--loss)_7%,transparent)]" : ""}>
+                  <td className="px-3 py-1.5 num">{fmtMonth(m.month)}</td>
+                  <td className="px-3 py-1.5 num text-right">{gbp0(m.income)}</td>
+                  <td className="px-3 py-1.5 num text-right" title={`likely ${gbp0(m.spendLow)}–${gbp0(m.spendHigh)}`}>{gbp0(m.spend)}</td>
+                  <td className="px-3 py-1.5 num text-right text-[var(--muted)] hidden sm:table-cell">{gbp0(sm.committed)}</td>
+                  <td className={"px-3 py-1.5 num text-right font-medium " + (m.net >= 0 ? "text-[var(--gain)]" : "text-[var(--loss)]")}>{m.net >= 0 ? "+" : "−"}{gbp0(Math.abs(m.net))}</td>
+                  <td className={"px-3 py-1.5 num text-right " + (m.cumulative >= 0 ? "" : "text-[var(--loss)]")}>{gbp0(m.cumulative)}</td>
+                  <td className="px-3 py-1.5 text-xs text-[var(--muted)] hidden md:table-cell">{notable.join(" · ")}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="text-xs text-[var(--muted)] leading-relaxed space-y-1">
+        <p>
+          Spend rests on {spend.monthsWithData} month{spend.monthsWithData === 1 ? "" : "s"} of history{spend.seasonalCoverage < 12 ? ` (${spend.seasonalCoverage} of the 12 calendar months have their own sample; the rest use the overall median)` : ""}.
+          {" "}Committed items come from <button onClick={() => setSub("recurring")} className="text-[var(--accent)] hover:underline">Recurring</button>; one-offs from the Plan tab&apos;s goals{spend.totals.goals > 0 ? ` (${gbp0(spend.totals.goals)} inside this window)` : ""}.
+        </p>
+        <p>
+          Income: {declaredCount > 0 ? <>{declaredCount} payment{declaredCount === 1 ? "" : "s"} come from <em>declared</em> dividend rates for holdings too new to have a payment history — these firm up as real payments are logged. </> : null}
+          {cashInterest > 0 ? <>{gbp0(cashInterest)} is cash-account interest at the rates you entered. </> : null}
+          Dividend projections are scaled to the units you hold today. Salary, pension income and rent aren&apos;t in this view — it&apos;s what your <em>assets</em> produce against what you spend; the <button onClick={() => setTab && setTab("plan")} className="text-[var(--accent)] hover:underline">Plan</button> tab models the household picture.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 function Overview({ categories, txns, month, setMonth, setSub, drillTo, incomeEntries = [], projectedIncome = 0 }) {
   // Trailing 12 months is the DEFAULT because it's the honest picture: a
   // single month is noisy (annual bills, holidays, a quiet fortnight) and
