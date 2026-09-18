@@ -127,6 +127,8 @@ const useAppStore = create((set) => {
     // need retyping every session; the security boundary that matters is
     // server-side (api/ibkr-flex.mjs never writes it anywhere), not this.
     brokerScope: ls.get("cgt.brokerscope", {}), setBrokerScope: upd("brokerScope"),
+    accounts: ls.get("cgt.accounts", []), setAccounts: upd("accounts"),
+    importLog: ls.get("cgt.importlog", []), setImportLog: upd("importLog"),
     ibkrQueryId: ls.get("cgt.ibkrqueryid", ""), setIbkrQueryId: upd("ibkrQueryId"),
     ibkrToken: ls.get("cgt.ibkrtoken", ""), setIbkrToken: upd("ibkrToken"),
     // Credit cards (Wealth tab) — named revolving-debt balances subtracted

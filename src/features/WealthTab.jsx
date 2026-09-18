@@ -248,7 +248,7 @@ function WealthTab({ model, netWorth = null, setTab }) {
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
           <Stat label="In named accounts" value={gbp0(acctTotal)} sub={`${cashAccounts.length} account${cashAccounts.length === 1 ? "" : "s"}`} />
           <Stat label="Blended rate" value={acctAvgRate != null ? `${num(acctAvgRate, 2)}%` : "—"} sub="balance-weighted, rated accounts only" />
-          <Stat label="Unallocated (manual)" value={gbp0(total.cash - acctTotal)} sub="the Cash column above, per wrapper" />
+          <Stat label="Unallocated" value={gbp0(total.cash - acctTotal)} sub={total.cash - acctTotal > 0 ? "listed below — “name it” to file it" : "everything is in a named account"} />
         </div>
 
         {acctMaturing.length > 0 && (
@@ -258,7 +258,7 @@ function WealthTab({ model, netWorth = null, setTab }) {
           </div>
         )}
 
-        {cashAccounts.length > 0 && (
+        {(cashAccounts.length > 0 || WRAPPERS.some((w) => +cash[w] > 0)) && (
           <div className="rounded-xl border border-[var(--border)] overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="bg-[var(--panel2)] text-[var(--muted)] text-xs uppercase tracking-wide">
@@ -274,6 +274,28 @@ function WealthTab({ model, netWorth = null, setTab }) {
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--border)] bg-[var(--panel)]">
+                {/* The per-wrapper MANUAL figure, shown in the same list as
+                    the named accounts so cash is one list, not two concepts
+                    reconciled by an "Unallocated" line. "Name it" turns the
+                    blob into a proper account in one click (and zeroes the
+                    manual figure so nothing is counted twice). */}
+                {WRAPPERS.filter((w) => +cash[w] > 0).map((w) => (
+                  <tr key={"unalloc-" + w} className="bg-[var(--panel2)]/50">
+                    <td className="px-3 py-2"><span className="text-xs font-medium">{w}</span></td>
+                    <td className="px-3 py-2 text-xs italic text-[var(--muted)]" colSpan={2}>Unallocated — not yet in a named account</td>
+                    <td className="px-3 py-2 text-right"><CurrencyInput value={cash[w] ?? 0} onChange={(v) => setWrapperCash(w, v)} className="w-32 ml-auto" /></td>
+                    <td className="px-3 py-2 text-right text-xs text-[var(--muted)]">—</td>
+                    <td className="px-3 py-2 text-xs text-[var(--muted)]">—</td>
+                    <td className="px-3 py-2 text-xs text-[var(--muted)]">—</td>
+                    <td className="px-3 py-2 text-right whitespace-nowrap">
+                      <button className="text-xs text-[var(--accent)] hover:underline"
+                        title={`Create a named cash account holding this ${gbp0(+cash[w])} and clear the unallocated figure`}
+                        onClick={() => { const bal = +cash[w] || 0; setCashAccounts((p) => [...p, { id: uid(), wrapper: w, label: `${w} cash`, institution: "", balance: bal, rate: null, rateType: "variable", maturityDate: "", notes: "" }]); setWrapperCash(w, ""); }}>
+                        name it →
+                      </button>
+                    </td>
+                  </tr>
+                ))}
                 {acctRows.map((a) => (
                   <tr key={a.id} className="hover:bg-[var(--panel2)]">
                     <td className="px-3 py-2">
@@ -323,7 +345,7 @@ function WealthTab({ model, netWorth = null, setTab }) {
           </div>
           <FormErrors errors={acctErr} />
           <p className="text-xs text-[var(--muted)] leading-relaxed">
-            Additive on top of the manual "Cash" figure per wrapper above — a wrapper's true cash total is the manual/unallocated amount PLUS everything entered here, same principle as the LISA cash/fund-table split on the Pension tab. No compounding or reinvestment is projected: balances and rates are what you last entered, not a forecast.
+            One list for all cash: named accounts plus any unallocated per-wrapper figure (the first rows above), which the Cash column in the wrapper table totals. No compounding or reinvestment is projected: balances and rates are what you last entered, not a forecast.
           </p>
         </EnterSubmits>
       </div>

@@ -20,6 +20,7 @@ import {
 import { refreshAllPrices } from "../ui/priceRefresh.js";
 import { getSyncConfig } from "../state/sync.js";
 import useAppStore from "../state/appStore.js";
+import { importAges as importAgesFromLog } from "../core/import-log.mjs";
 
 // Labels for core/tax-year-end.mjs's checklist item ids — kept in the UI
 // layer (not the pure core module) so the core module stays plain data.
@@ -654,6 +655,18 @@ export default function HomeTab({
   const recurringExpenses = useAppStore((s) => s.recurringExpenses);
   const txns = useAppStore((s) => s.txns);
   const secMeta = useAppStore((s) => s.secMeta), setSecMeta = useAppStore((s) => s.setSecMeta);
+  const importLog = useAppStore((s) => s.importLog);
+  // Import freshness comes from the import LOG (which survives a browser
+  // cleanup and travels with backups); the old device-local timestamp map
+  // is only consulted for sources the log has never seen.
+  const importAgeList = useMemo(() => {
+    const fromLog = importAgesFromLog(importLog || [], todayISO());
+    const seen = new Set(fromLog.map((a) => a.source));
+    const legacy = Object.entries(store.get("cgt.lastImportAt", {}))
+      .filter(([source]) => !seen.has(source))
+      .map(([source, at]) => ({ source, days: Math.floor((new Date(todayISO()) - new Date(at)) / 86400000) }));
+    return [...fromLog, ...legacy];
+  }, [importLog]);
   const avKey = useAppStore((s) => s.avKey), avMeta = useAppStore((s) => s.avMeta);
   const prices = useAppStore((s) => s.prices), setPrices = useAppStore((s) => s.setPrices);
   const dmoReportDate = useAppStore((s) => s.dmoReportDate), setDmoReportDate = useAppStore((s) => s.setDmoReportDate);
@@ -719,11 +732,9 @@ export default function HomeTab({
       stalePriceTickers: staleTickers,
       wrongSourceFunds,
       uncategorisedSpend: uncat, totalSpend: spendTotal,
-      staleImports: Object.entries(store.get("cgt.lastImportAt", {})).map(([source, at]) => ({
-        source, days: Math.floor((new Date(todayISO()) - new Date(at)) / DAY),
-      })),
+      staleImports: importAgeList,
     });
-  }, [model, staleTickers, budgetCategories, budgetRules, spendTxns, recurringExpenses, priceMeta, secMeta]);
+  }, [model, staleTickers, budgetCategories, budgetRules, spendTxns, recurringExpenses, priceMeta, secMeta, importAgeList]);
   const pensionCashflows = useAppStore((s) => s.pensionCashflows);
   // Combined pension XIRR for the SIPP/LISA boxes (core/returns.mjs) —
   // the ledger-based engine can't see pension contribution history (one
@@ -813,9 +824,7 @@ export default function HomeTab({
     })(),
     syncEnabled: !!getSyncConfig().enabled,
     hasData: txns.length > 0,
-    importAges: Object.entries(store.get("cgt.lastImportAt", {})).map(([source, at]) => ({
-      source, days: Math.floor((new Date(todayISO()) - new Date(at)) / 86400000),
-    })),
+    importAges: importAgeList,
     // Gilt redemptions inside 60 days, straight from the income calendar
     // the shell already builds (source "gilt-redemption").
     giltRedemptions: incomeCalendar.filter((e) => {

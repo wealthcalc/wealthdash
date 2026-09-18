@@ -110,7 +110,8 @@ function LedgerTab({ onOpenHolding }) {
     if (!q) return scopedTxns;
     const terms = q.split(/\s+/);
     return scopedTxns.filter((t) => {
-      const hay = `${t.ticker || ""} ${t.note || ""} ${t.account || ""} ${t.date || ""} ${t.side || ""} ${secMeta?.[t.ticker]?.name || ""}`.toLowerCase();
+      // "batch:<id>" — the rows one import added (from Recent imports).
+      const hay = `${t.ticker || ""} ${t.note || ""} ${t.account || ""} ${t.date || ""} ${t.side || ""} ${secMeta?.[t.ticker]?.name || ""} ${t.batchId ? `batch:${t.batchId}` : ""}`.toLowerCase();
       return terms.every((term) => hay.includes(term));
     });
   }, [scopedTxns, q, secMeta]);

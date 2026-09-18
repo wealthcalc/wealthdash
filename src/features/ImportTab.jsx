@@ -9,6 +9,9 @@ import useAppStore from "../state/appStore.js";
 import { shapeFlexPull, shapeCashReport } from "../core/ibkr-flex.mjs";
 import { reconcilePositions, mergeBrokerCoverage } from "../core/position-reconcile.mjs";
 import { partitionFxConversions, nearDuplicateGroups, crossCheckPositions, isFxConversion } from "../core/import-hygiene.mjs";
+import { newBatchId, stampBatch, recordImport, latestUndoable, removeBatch, dropLogEntry } from "../core/import-log.mjs";
+import { knownAccounts, accountPositions, accountHasRows, assignAccount, fromImportSource } from "../core/accounts.mjs";
+import { showUndo } from "../ui/undo.jsx";
 import { detectCorporateActions } from "../core/price-sanity.mjs";
 import { buildPositions } from "../core/portfolio.mjs";
 import { parseISharesWorkbook } from "../core/ishares-eri.mjs";
@@ -82,7 +85,7 @@ const ibkrIdKey = (t) => (t.ibkrId ? `ibkr:${t.ibkrId}` : null);
    basis is excluded. Nothing is auto-corrected: the app can tell you the
    quantity is wrong, but not why, and inventing a date and price to "fix" it
    would put fiction into a tax record. */
-function PositionReconcilePanel({ broker, positions = [], wrapper = "GIA", source = "ibkr" }) {
+function PositionReconcilePanel({ broker, positions = [], wrapper = "GIA", source = "ibkr", scopeLabel = null }) {
   const brokerScope = useAppStore((s) => s.brokerScope), setBrokerScope = useAppStore((s) => s.setBrokerScope);
   const scope = brokerScope?.[source] || {};
   const seenAtBroker = scope.seen || [];
@@ -140,6 +143,11 @@ function PositionReconcilePanel({ broker, positions = [], wrapper = "GIA", sourc
         {summary.clean
           ? `All ${summary.checked} holdings in this statement match your ledger`
           : `${summary.discrepancies} of ${summary.checked} holdings in this statement disagree with your ledger`}
+      </div>
+      <div className="text-[var(--muted)]">
+        {scopeLabel
+          ? <>Compared against the <strong>{scopeLabel}</strong> account&apos;s rows only.</>
+          : <>Compared against every {wrapper} holding — pick an account above (and tag its rows) to scope this to one broker.</>}
       </div>
 
       {!summary.clean && (
@@ -259,8 +267,64 @@ function ImportTab({ setTab, recomputeProviderCost }) {
   const ibkrToken = useAppStore((s) => s.ibkrToken), setIbkrToken = useAppStore((s) => s.setIbkrToken);
   const rsuGrants = useAppStore((s) => s.rsuGrants), setRsuGrants = useAppStore((s) => s.setRsuGrants);
   const rsuEvents = useAppStore((s) => s.rsuEvents), setRsuEvents = useAppStore((s) => s.setRsuEvents);
+  const accounts = useAppStore((s) => s.accounts), setAccounts = useAppStore((s) => s.setAccounts);
+  const importLog = useAppStore((s) => s.importLog), setImportLog = useAppStore((s) => s.setImportLog);
   const [mode, setMode] = useState("ibkr");
   const [wrapper, setWrapper] = useState("GIA");
+  // The ACCOUNT an import lands in (its label goes on every row's `account`
+  // field). Remembered per source so the second IBKR pull doesn't ask
+  // again. Blank is allowed — everything still works, just unscoped.
+  const [account, setAccountState] = useState(() => store.get("cgt.import.account", {})[mode] || "");
+  const setAccount = (label) => { setAccountState(label); store.set("cgt.import.account", { ...store.get("cgt.import.account", {}), [mode]: label }); };
+  React.useEffect(() => { setAccountState(store.get("cgt.import.account", {})[mode] || ""); }, [mode]);
+  const accountList = useMemo(() => knownAccounts(accounts, txns), [accounts, txns]);
+  const [newAccount, setNewAccount] = useState("");
+  const addAccount = () => {
+    const label = newAccount.trim();
+    if (!label) return;
+    if (!accountList.some((a) => a.label === label)) setAccounts((p) => [...(p || []), { id: uid(), label, broker: mode === "ibkr" ? "Interactive Brokers" : mode === "fidelity" ? "Fidelity UK" : "", wrapper }]);
+    setAccount(label); setNewAccount("");
+  };
+  // One-click migration: rows an importer wrote before accounts existed.
+  const sourceLabel = mode === "ibkr" ? "IBKR" : mode === "fidelity" ? "Fidelity UK" : null;
+  const untaggedFromSource = useMemo(() => (sourceLabel ? txns.filter((t) => !String(t.account || "").trim() && fromImportSource(sourceLabel)(t)).length : 0), [txns, sourceLabel]);
+  const tagExisting = () => {
+    if (!account || !sourceLabel) return;
+    const before = txns;
+    const { txns: next, changed } = assignAccount(txns, account, (t) => !String(t.account || "").trim() && fromImportSource(sourceLabel)(t));
+    if (!changed) return;
+    setTxns(next);
+    showUndo({ message: `Tagged ${changed} ${sourceLabel} row${changed === 1 ? "" : "s"} as ${account}`, onUndo: () => setTxns(before) });
+  };
+
+  // ---- import log: every import is a batch, and a batch can be undone ----
+  const logImport = (entry) => setImportLog((log) => recordImport(log, entry));
+  const undoBatch = (batchId) => {
+    const t = removeBatch(txns, batchId), i = removeBatch(incomeEntries, batchId);
+    const pc = removeBatch(pensionCashflows, batchId), er = removeBatch(eriEntries, batchId), rv = removeBatch(rsuEvents, batchId);
+    const n = t.removed.length + i.removed.length + pc.removed.length + er.removed.length + rv.removed.length;
+    if (!n) { setImportLog((log) => dropLogEntry(log, batchId)); return; }
+    if (t.removed.length) setTxns(t.kept);
+    if (i.removed.length) setIncomeEntries(i.kept);
+    if (pc.removed.length) setPensionCashflows(pc.kept);
+    if (er.removed.length) setEriEntries(er.kept);
+    if (rv.removed.length) setRsuEvents(rv.kept);
+    const entry = (importLog || []).find((e) => e.batchId === batchId);
+    setImportLog((log) => dropLogEntry(log, batchId));
+    showUndo({
+      message: `Undid import: ${n} row${n === 1 ? "" : "s"} removed`,
+      onUndo: () => {
+        if (t.removed.length) setTxns((p) => [...p, ...t.removed]);
+        if (i.removed.length) setIncomeEntries((p) => [...p, ...i.removed]);
+        if (pc.removed.length) setPensionCashflows((p) => [...p, ...pc.removed]);
+        if (er.removed.length) setEriEntries((p) => [...p, ...er.removed]);
+        if (rv.removed.length) setRsuEvents((p) => [...p, ...rv.removed]);
+        if (entry) setImportLog((log) => recordImport(log, entry, { now: entry.at }));
+      },
+      ms: 12000,
+    });
+  };
+  const showBatch = (batchId) => { store.set("cgt.ledger.search", `batch:${batchId}`); setTab("ledger"); };
   const [ibkrSource, setIbkrSource] = useState("live"); // "paste" | "live"
   const [fidRaw, setFidRaw] = useState(""); // Fidelity UK CSV paste
   const [flexBusy, setFlexBusy] = useState(false);
@@ -339,8 +403,9 @@ function ImportTab({ setTab, recomputeProviderCost }) {
     const trades = realTrades.map((t) => ({ ...t })), income = ib.income.map((t) => ({ ...t }));
     for (const t of trades) await resolve(t, "gbpAmount");
     for (const t of income) await resolve(t, "amount");
-    const newTxns = trades.filter((t) => t.gbpAmount != null).map((t) => ({ id: uid(), date: t.date, ticker: t.ticker, isin: t.isin, side: t.side, quantity: t.quantity, nativeCurrency: t.nativeCurrency, nativeAmount: t.nativeAmount, fxRate: t.fxRate || 1, gbpAmount: t.gbpAmount, fees: +t.fees || 0, account: t.account || "", wrapper: t.wrapper, note: `${t.source || "IBKR"} import`, ibkrId: t.ibkrId || null }));
-    const newIncome = income.filter((t) => t.amount != null).map((t) => ({ id: uid(), date: t.date, ticker: t.ticker, kind: t.kind, amount: t.amount, wrapper: t.wrapper, note: `${t.source || "IBKR"} import`, ibkrId: t.ibkrId || null }));
+    const batchId = newBatchId();
+    const newTxns = stampBatch(trades.filter((t) => t.gbpAmount != null).map((t) => ({ id: uid(), date: t.date, ticker: t.ticker, isin: t.isin, side: t.side, quantity: t.quantity, nativeCurrency: t.nativeCurrency, nativeAmount: t.nativeAmount, fxRate: t.fxRate || 1, gbpAmount: t.gbpAmount, fees: +t.fees || 0, account: t.account || account || "", wrapper: t.wrapper, note: `${t.source || "IBKR"} import`, ibkrId: t.ibkrId || null })), batchId);
+    const newIncome = stampBatch(income.filter((t) => t.amount != null).map((t) => ({ id: uid(), date: t.date, ticker: t.ticker, kind: t.kind, amount: t.amount, wrapper: t.wrapper, account: t.account || account || "", note: `${t.source || "IBKR"} import`, ibkrId: t.ibkrId || null })), batchId);
     const fxSkipped = (trades.length - newTxns.length) + (income.length - newIncome.length);
     // Prefer an exact IBKR tradeID/transactionID match over the
     // content-based key when a row carries one — see ibkrIdKey's comment.
@@ -353,6 +418,7 @@ function ImportTab({ setTab, recomputeProviderCost }) {
     // last delivered rows (per-device planning aid, not portfolio data).
     const importSource = trades[0]?.source || income[0]?.source || "IBKR";
     store.set("cgt.lastImportAt", { ...store.get("cgt.lastImportAt", {}), [importSource]: new Date().toISOString().slice(0, 10) });
+    logImport({ batchId, source: importSource, account, wrapper, txns: dedTxns.rows.length, income: dedIncome.rows.length, skipped: dupSkipped + fxSkipped });
     setImporting(false);
     const parts = [`Imported ${dedTxns.rows.length} trades and ${dedIncome.rows.length} income rows.`];
     if (dupSkipped) parts.push(`${dupSkipped} duplicate row(s) already in your ledger — skipped.`);
@@ -420,7 +486,11 @@ function ImportTab({ setTab, recomputeProviderCost }) {
   const genericRows = useMemo(() => (!parsed ? [] : parsed.map((r) => mapRow(r, map, normSide, wrapper)).filter((t) => t.date && t.ticker && +t.quantity > 0)), [parsed, map, wrapper]);
   const genericDedup = useMemo(() => dedupeAgainstExisting(genericRows, txns, txnKey), [genericRows, txns]);
   const doImport = () => {
-    setTxns((p) => [...p, ...genericDedup.rows]); setTab("ledger");
+    const batchId = newBatchId();
+    const rows = stampBatch(genericDedup.rows.map((t) => ({ ...t, account: t.account || account || "" })), batchId);
+    setTxns((p) => [...p, ...rows]);
+    logImport({ batchId, source: "Generic CSV", account, wrapper, txns: rows.length, skipped: genericDedup.skipped });
+    setTab("ledger");
   };
 
   // ---- generic dividend/interest CSV ----
@@ -447,7 +517,11 @@ function ImportTab({ setTab, recomputeProviderCost }) {
   const divRows = useMemo(() => (!parsedDiv ? [] : parsedDiv.map((r) => mapDivRow(r, mapDiv, normKind, wrapper)).filter((t) => t.date && t.ticker && t.amount > 0)), [parsedDiv, mapDiv, wrapper]);
   const divDedup = useMemo(() => dedupeAgainstExisting(divRows, incomeEntries, incomeKey), [divRows, incomeEntries]);
   const doImportDiv = () => {
-    setIncomeEntries((p) => [...p, ...divDedup.rows]); setTab("income");
+    const batchId = newBatchId();
+    const rows = stampBatch(divDedup.rows.map((e) => ({ ...e, account: e.account || account || "" })), batchId);
+    setIncomeEntries((p) => [...p, ...rows]);
+    logImport({ batchId, source: "Dividends CSV", account, wrapper, income: rows.length, skipped: divDedup.skipped });
+    setTab("income");
   };
 
   // ---- pension contribution/switch CSV (Citi/L&G, Aviva, or any other provider) ----
@@ -477,9 +551,11 @@ function ImportTab({ setTab, recomputeProviderCost }) {
   const doImportPension = () => {
     if (!pensionProvider.trim()) { setNote("Enter the provider name first — contributions are grouped and allocated by provider."); return; }
     const provider = pensionProvider.trim();
-    const rows = pensionDedup.rows.map((r) => ({ id: uid(), ...r, gbpAmount: r.ccy === "GBP" ? r.nativeAmount : null }));
+    const batchId = newBatchId();
+    const rows = stampBatch(pensionDedup.rows.map((r) => ({ id: uid(), ...r, gbpAmount: r.ccy === "GBP" ? r.nativeAmount : null })), batchId);
     setPensionCashflows((p) => [...p, ...rows]);
     if (recomputeProviderCost) recomputeProviderCost(provider, [...pensionCashflows, ...rows]);
+    logImport({ batchId, source: `Pension contributions (${provider})`, other: rows.length, skipped: pensionDedup.skipped });
     setTab("pension");
   };
 
@@ -540,8 +616,11 @@ function ImportTab({ setTab, recomputeProviderCost }) {
       if (e.ticker && e.periodEnd && e.distributionDate && e.perShare) toAdd.push(e);
     }
     if (!toAdd.length) return;
-    const { rows: uniqueAdd, skipped: dupEri } = dedupeAgainstExisting(toAdd, eriEntries, eriKey);
+    const { rows: uniqueAddRaw, skipped: dupEri } = dedupeAgainstExisting(toAdd, eriEntries, eriKey);
+    const batchId = newBatchId();
+    const uniqueAdd = stampBatch(uniqueAddRaw, batchId);
     if (uniqueAdd.length) setEriEntries((p) => [...p, ...uniqueAdd]);
+    logImport({ batchId, source: "iShares ERI", other: uniqueAdd.length, skipped: dupEri });
     const unresolvedFx = toAdd.filter((e) => e.currency !== "GBP" && e.currency !== "GBp" && !e.fxRate).length;
     const parts = [`Imported ${uniqueAdd.length} ERI entries.`];
     if (dupEri) parts.push(`${dupEri} duplicate${dupEri === 1 ? "" : "s"} already recorded — skipped.`);
@@ -596,9 +675,11 @@ function ImportTab({ setTab, recomputeProviderCost }) {
     if (!rsuResolved) return;
     const idMap = new Map(rsuResolved.grants.map((g) => [g.id, g.isNew ? uid() : g.id]));
     const newGrants = rsuResolved.grants.filter((g) => g.isNew).map((g) => ({ id: idMap.get(g.id), ticker: g.ticker, grantDate: g.grantDate, note: g.note }));
-    const newEvents = rsuResolved.events.filter((e) => !e.dup).map((e) => ({ id: uid(), grantId: idMap.get(e.grantId), type: e.type, date: e.date, shares: e.shares, priceNative: e.priceNative, fxRate: e.fxRate, note: e.note }));
+    const batchId = newBatchId();
+    const newEvents = stampBatch(rsuResolved.events.filter((e) => !e.dup).map((e) => ({ id: uid(), grantId: idMap.get(e.grantId), type: e.type, date: e.date, shares: e.shares, priceNative: e.priceNative, fxRate: e.fxRate, note: e.note })), batchId);
     if (newGrants.length) setRsuGrants((p) => [...p, ...newGrants]);
     if (newEvents.length) setRsuEvents((p) => [...p, ...newEvents]);
+    logImport({ batchId, source: "RSU vest history", other: newEvents.length, skipped: rsuResolved.events.length - newEvents.length });
     const dupSkipped = rsuResolved.events.length - newEvents.length;
     const parts = [`Imported ${newGrants.length} grant${newGrants.length === 1 ? "" : "s"} and ${newEvents.length} event${newEvents.length === 1 ? "" : "s"}.`];
     if (dupSkipped) parts.push(`${dupSkipped} duplicate event${dupSkipped === 1 ? "" : "s"} already recorded — skipped.`);
@@ -628,7 +709,64 @@ function ImportTab({ setTab, recomputeProviderCost }) {
             </button>
           ))}
           {wrapper !== "GIA" && <span className="text-xs text-[var(--muted)] ml-1">{wrapper} is tax-sheltered — these rows won't affect CGT or income tax.</span>}
+          <span className="basis-full sm:basis-auto sm:ml-4 flex items-center gap-2 flex-wrap">
+            <span className="text-xs font-medium text-[var(--muted)]">Account:</span>
+            <select className="input py-1 text-xs" value={accountList.some((x) => x.label === account) ? account : ""} onChange={(e) => setAccount(e.target.value)} aria-label="Account these rows belong to">
+              <option value="">— none —</option>
+              {accountList.map((x) => <option key={x.label} value={x.label}>{x.label}{x.broker ? ` (${x.broker})` : ""}</option>)}
+            </select>
+            <span className="flex items-center gap-1">
+              <input value={newAccount} onChange={(e) => setNewAccount(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") addAccount(); }}
+                placeholder="new account, e.g. IBKR GIA" className="input py-1 text-xs w-44" aria-label="New account label" />
+              <button onClick={addAccount} className="text-xs text-[var(--accent)] hover:underline" disabled={!newAccount.trim()}>add</button>
+            </span>
+            {account && untaggedFromSource > 0 && (
+              <button onClick={tagExisting} className="text-xs text-[var(--accent)] hover:underline" title={`Rows written by the ${sourceLabel} importer before accounts existed have a blank account. Tag them as ${account} so this account's reconciliation covers them.`}>
+                tag {untaggedFromSource} earlier {sourceLabel} row{untaggedFromSource === 1 ? "" : "s"} as {account}
+              </button>
+            )}
+          </span>
+          <span className="basis-full text-[11px] text-[var(--muted)]">
+            The account is written onto each imported row. With one, the broker reconciliation below compares this statement against <em>this account&apos;s</em> rows only — so holdings at a different broker in the same wrapper stop appearing as differences.
+          </span>
         </div>
+      )}
+
+      {/* recent imports — every batch, undoable whole */}
+      {(importLog || []).length > 0 && (
+        <details className="rounded-xl border border-[var(--border)] bg-[var(--panel)]">
+          <summary className="cursor-pointer select-none px-4 py-2.5 text-sm font-medium flex items-center gap-2 list-none">
+            Recent imports
+            <span className="text-xs font-normal text-[var(--muted)]">— {importLog.length} batch{importLog.length === 1 ? "" : "es"}{latestUndoable(importLog) ? ` · last: ${latestUndoable(importLog).source}, ${String(latestUndoable(importLog).at).slice(0, 10)}` : ""}</span>
+            {latestUndoable(importLog) && (
+              <button onClick={(e) => { e.preventDefault(); undoBatch(latestUndoable(importLog).batchId); }}
+                className="ml-auto text-xs font-medium px-2.5 py-1 rounded-lg border border-[var(--loss)] text-[var(--loss)] hover:bg-[color:color-mix(in_srgb,var(--loss)_10%,transparent)]">
+                Undo last import
+              </button>
+            )}
+          </summary>
+          <div className="px-4 pb-3 border-t border-[var(--border)]">
+            <table className="w-full text-xs mt-2">
+              <thead className="text-[var(--muted)] uppercase tracking-wide text-[10px]"><tr><th className="text-left py-1 font-medium">When</th><th className="text-left py-1 font-medium">Source</th><th className="text-left py-1 font-medium">Account</th><th className="text-right py-1 font-medium">Added</th><th className="text-right py-1 font-medium">Skipped</th><th className="py-1" /></tr></thead>
+              <tbody className="divide-y divide-[var(--border)]">
+                {importLog.slice(0, 15).map((e) => (
+                  <tr key={e.batchId}>
+                    <td className="py-1.5 num">{String(e.at).slice(0, 16).replace("T", " ")}</td>
+                    <td className="py-1.5">{e.source}</td>
+                    <td className="py-1.5 text-[var(--muted)]">{e.account || "—"}</td>
+                    <td className="py-1.5 num text-right">{[e.txns && `${e.txns} trades`, e.income && `${e.income} income`, e.other && `${e.other} rows`].filter(Boolean).join(", ") || "nothing"}</td>
+                    <td className="py-1.5 num text-right text-[var(--muted)]">{e.skipped || 0}</td>
+                    <td className="py-1.5 text-right whitespace-nowrap">
+                      {(e.txns > 0 || e.income > 0) && <button onClick={() => showBatch(e.batchId)} className="text-[var(--accent)] hover:underline mr-3">show rows</button>}
+                      {(e.txns > 0 || e.income > 0 || e.other > 0) && <button onClick={() => undoBatch(e.batchId)} className="text-[var(--loss)] hover:underline">undo</button>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <p className="text-[11px] text-[var(--muted)] mt-2">Undo removes exactly the rows that import added (they carry its batch id) and can itself be undone from the toast for a few seconds. Imports made before this log existed aren&apos;t listed — those rows have no batch id.</p>
+          </div>
+        </details>
       )}
 
       {mode === "fidelity" && (
@@ -674,7 +812,10 @@ function ImportTab({ setTab, recomputeProviderCost }) {
                   IBKR cash balance{cashReport.length > 1 ? "s" : ""}: {cashReport.map((c) => `${num(c.endingCash, 2)} ${c.currency}`).join(", ")} — a reconciliation check against the Wealth tab, not imported automatically.
                 </div>
               )}
-              <PositionReconcilePanel broker={ib?.brokerPositions} positions={positions} wrapper={wrapper} source="ibkr" />
+              <PositionReconcilePanel broker={ib?.brokerPositions}
+                positions={account && accountHasRows(txns, account) ? accountPositions(txns, account, wrapper) : positions}
+                scopeLabel={account && accountHasRows(txns, account) ? account : null}
+                wrapper={wrapper} source={account ? `ibkr:${account}` : "ibkr"} />
             </div>
           )}
 

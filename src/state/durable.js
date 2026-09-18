@@ -56,6 +56,12 @@ export const PERSIST_KEYS = {
   // without it, holdings at a SECOND broker in the same wrapper are reported
   // as discrepancies on every single import, with no way to dismiss them.
   brokerScope: "cgt.brokerscope",
+  // Broker accounts as a first-class list ({id,label,broker,wrapper}) — the
+  // label is what transactions carry in `account`. See core/accounts.mjs.
+  accounts: "cgt.accounts",
+  // One entry per import batch; rows carry the batchId so an import can be
+  // undone whole. See core/import-log.mjs.
+  importLog: "cgt.importlog",
   ibkrQueryId: "cgt.ibkrqueryid",
   ibkrToken: "cgt.ibkrtoken",
   creditCards: "cgt.creditcards",

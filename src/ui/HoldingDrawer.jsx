@@ -206,7 +206,7 @@ export default function HoldingDrawer({ ticker, onClose, positions = [], pools =
               <div className="rounded-lg border border-[var(--border)] overflow-hidden">
                 <table className="w-full text-xs">
                   <thead className="bg-[var(--panel2)] text-[var(--muted)] uppercase tracking-wide text-[10px]">
-                    <tr><th className="text-left px-2 py-1 font-medium">Date</th><th className="text-left px-2 py-1 font-medium">Side</th><th className="text-right px-2 py-1 font-medium">Qty</th><th className="text-right px-2 py-1 font-medium">£/unit</th><th className="text-right px-2 py-1 font-medium">GBP</th><th className="text-left px-2 py-1 font-medium">Wrapper</th></tr>
+                    <tr><th className="text-left px-2 py-1 font-medium">Date</th><th className="text-left px-2 py-1 font-medium">Side</th><th className="text-right px-2 py-1 font-medium">Qty</th><th className="text-right px-2 py-1 font-medium">£/unit</th><th className="text-right px-2 py-1 font-medium">GBP</th><th className="text-left px-2 py-1 font-medium">Where</th></tr>
                   </thead>
                   <tbody className="divide-y divide-[var(--border)]">
                     {trades.map((t) => (
@@ -216,7 +216,7 @@ export default function HoldingDrawer({ ticker, onClose, positions = [], pools =
                         <td className="px-2 py-1 num text-right">{num(+t.quantity || 0, (+t.quantity || 0) % 1 ? 4 : 0)}</td>
                         <td className="px-2 py-1 num text-right text-[var(--muted)]">{+t.quantity ? gbp((+t.gbpAmount || 0) / +t.quantity) : "—"}</td>
                         <td className="px-2 py-1 num text-right">{gbp(+t.gbpAmount || 0)}</td>
-                        <td className="px-2 py-1"><WrapperChip wrapper={t.wrapper || "GIA"} /></td>
+                        <td className="px-2 py-1 whitespace-nowrap"><WrapperChip wrapper={t.wrapper || "GIA"} />{t.account && <span className="ml-1 text-[10px] text-[var(--muted)]">{t.account}</span>}</td>
                       </tr>
                     ))}
                   </tbody>

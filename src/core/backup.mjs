@@ -35,7 +35,7 @@
    ====================================================================== */
 import { PERSIST_KEYS } from "../state/durable.js";
 
-export const BACKUP_VERSION = 19;
+export const BACKUP_VERSION = 20;
 
 export const EXPORT_EXCLUDED = ["dark", "tab", "dmoReportDate", "avKey", "ibkrToken"];
 export const RESTORE_ONLY = ["avKey", "ibkrToken"];
@@ -45,7 +45,7 @@ export const ID_ARRAYS = [
   "otherLiabilities", "cashAccounts", "privateHoldings", "privateEvents", "rsuGrants",
   "rsuEvents", "deferredCashAwards", "deferredCashVests", "creditCards", "scenarios",
   "budgetCategories", "budgetRules", "spendTxns", "recurringExpenses",
-  "allocationGroups",
+  "allocationGroups", "accounts", "importLog",
 ];
 // Keys merged into current state rather than replacing it.
 export const MERGE_KEYS = ["secMeta"];
@@ -66,7 +66,7 @@ const TYPES = {
   lgimIgnored: "array",
   allocationGroups: "array", allocationAssignments: "object",
   income: "number", carried: "number",
-  brokerScope: "object",
+  brokerScope: "object", accounts: "array", importLog: "array",
   ibkrQueryId: "string", avKey: "string", ibkrToken: "string",
 };
 
