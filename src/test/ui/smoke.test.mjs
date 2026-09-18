@@ -14,6 +14,7 @@ import React from "react";
 import { renderToString } from "react-dom/server";
 
 import { buildWealthModel } from "../../core/portfolio.mjs";
+import { giltAnalytics } from "../../core/gilts.mjs";
 import { DesktopSidebar, SubTabBar, SCREENS, LEAF_LABELS, screenOf } from "../../ui/Sidebar.jsx";
 import CommandPalette from "../../ui/CommandPalette.jsx";
 import PlanHealthCard from "../../ui/PlanHealthCard.jsx";
@@ -248,6 +249,39 @@ test("GiltsTab keeps the registration panel up even when analytics fail", () => 
   assert.ok(html.includes("Register a gilt"), "the register form survives a failed analytics run");
   assert.ok(html.includes("Redemption"), "and its fields with it");
   assert.ok(html.includes("DMO"), "including the pick-from-the-DMO-list route");
+});
+
+test("GiltsTab prices the ladder as one instrument: portfolio YTM, net-of-tax, duration", () => {
+  // The whole point of the panel is that these are portfolio-level figures,
+  // not a repeat of the per-row GRY — so the test asserts the labels that
+  // say so, and that a priced ladder gets past the "needs a price" guard.
+  const secMeta = {
+    TG30: { kind: "gilt", coupon: 0.375, maturity: "2030-10-22" },
+    TG35: { kind: "gilt", coupon: 4.5, maturity: "2035-03-07" },
+  };
+  const txns = [
+    { date: "2025-06-02", ticker: "TG30", side: "BUY", quantity: 20000, wrapper: "GIA", gbpAmount: 17000, nativeCurrency: "GBP", nativeAmount: 17000 },
+    { date: "2025-06-02", ticker: "TG35", side: "BUY", quantity: 10000, wrapper: "ISA", gbpAmount: 10100 },
+  ];
+  const data = giltAnalytics({ txns, secMeta, prices: { TG30: 0.8832, TG35: 1.0115 }, asOf: "2026-09-18" });
+  const html = renderToString(React.createElement(GiltsTab, { data })).replaceAll("&amp;", "&").replaceAll("<!-- -->", "");
+  assert.ok(html.includes("Yield to maturity — the ladder as one instrument"));
+  assert.ok(html.includes("Portfolio YTM"), "the headline figure is present");
+  assert.ok(!html.includes("Portfolio yield needs a price"), "both holdings are priced, so the guard is off");
+  assert.ok(html.includes("Modified duration"));
+  assert.ok(html.includes("Cash still to come"));
+  assert.ok(html.includes("value-weighted GRY"), "the cross-check is shown beside the headline, not instead of it");
+  assert.ok(html.includes("Duration"), "the per-row duration column");
+  assert.ok(html.includes("tax-free") || html.includes("% net"), "per-row after-tax yield");
+});
+
+test("GiltsTab says which holding is unpriced rather than showing a portfolio yield that ignores it", () => {
+  const secMeta = { TG30: { kind: "gilt", coupon: 0.375, maturity: "2030-10-22" } };
+  const txns = [{ date: "2025-06-02", ticker: "TG30", side: "BUY", quantity: 20000, wrapper: "GIA", gbpAmount: 17000 }];
+  const data = giltAnalytics({ txns, secMeta, prices: {}, asOf: "2026-09-18" });
+  const html = renderToString(React.createElement(GiltsTab, { data })).replaceAll("&amp;", "&").replaceAll("<!-- -->", "");
+  assert.ok(html.includes("Portfolio yield needs a price"));
+  assert.ok(html.includes("TG30"));
 });
 
 test("SyncTab renders the disabled state with both setup paths", () => {

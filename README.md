@@ -2688,9 +2688,58 @@ conversion, and where the statement's own position report says a trade was
 reported several times over, only the first of that group. "Tick what's new /
 tick none" controls; the button says how many.
 
+## The gilt ladder priced as one instrument
+The Gilts tab listed a GRY per holding and stopped there, which leaves the
+obvious question — *what am I actually earning on the money I have in gilts?*
+— unanswered. `core/gilt-portfolio.mjs` answers it, and the arithmetic matters
+more than it looks:
+
+**Portfolio YTM** is one XIRR: today's total dirty value out, every remaining
+coupon and redemption in, on its own date. It is deliberately *not* the
+value-weighted average of the per-gilt GRYs, because that average treats money
+committed for twenty years as interchangeable with money committed for two.
+The weighted figure is still computed and shown beside it as a cross-check
+(they agree closely on a flat curve, and the gap is informative when they
+don't). The basis follows the tab's existing today's-money/cash-expected
+toggle, so the headline says which it is: `real`, `nominal`, or
+`nominal-projected` when index-linked cash rests on the inflation assumption.
+
+**After tax on the coupons** is the UK reason to hold gilts directly rather
+than through a bond fund. The coupon is taxable savings income unsheltered;
+the pull from a sub-par price back to £100 is exempt (TCGA 1992 s115). So a
+0.375% gilt at 88 and a 4.5% gilt at 101 can share a gross yield and differ by
+well over a percentage point net — and which one is right for *this* person
+depends on their marginal rate, which is probed out of the same tax engine the
+Income tab uses (`investmentIncomeTax`) at the stored salary plus this
+ladder's own unsheltered coupons, and can be overridden. Sheltered rows say
+"tax-free" rather than repeating the gross number as if it were a result.
+
+**Duration** is price sensitivity, not time. Macaulay is the PV-weighted
+average time to each cashflow; modified divides by (1 + y/2) for the
+semi-annual convention. It's reported as "£ per 1%" because that's the
+decision-relevant form, with the standing caveat that it only bites if you
+sell early — gilts redeem at par regardless.
+
+**Yield on cost** is the GRY at each purchase's own date and price,
+nominal-weighted across BUYs: what you locked in, as against what a buyer
+today would get. Approximate for linkers (historic index ratios aren't kept,
+so today's stands in — and it says so).
+
+**Maturity profile** plots coupons and redemptions by calendar year, filling
+empty years rather than skipping them, so a lumpy ladder looks lumpy.
+
+**Yield curve and gap-filling.** The coverage table already named the years a
+ladder falls short. It now offers to fetch the DMO's full daily list, plot the
+whole curve (conventional and index-linked as separate series — one is
+nominal, the other real, and a shared axis would invite exactly the wrong
+comparison), and name the gilts that actually mature in each gap year with the
+nominal that would close it and what that costs today. Rump stocks are
+excluded: they barely trade and their quoted yields aren't obtainable. This is
+arithmetic on published prices, not advice, and the panel says so.
+
 ## Tests
 ```
-npm test        # node --test: 611 core tests + 12 UI smoke tests (test:ui)
+npm test        # node --test: 1001 core tests + 39 UI smoke tests (test:ui)
 ```
 
 ## Deploy (recommended: Git → new Vercel project)
